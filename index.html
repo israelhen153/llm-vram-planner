@@ -9,12 +9,12 @@
 <meta property="og:title" content="LLM VRAM Planner — GPU Memory & Deployment Tool">
 <meta property="og:description" content="Plan GPU memory for LLM inference and training. vLLM command generator, 3-tier cost comparison, real benchmark data, PDF report export. Free and open source.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://raw.githubusercontent.com/israelhen153/llm-vram-planner/main/assets/og-image.png">
+<meta property="og:image" content="https://raw.githubusercontent.com/YOURUSERNAME/llm-vram-planner/main/assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="LLM VRAM Planner">
 <meta name="twitter:description" content="GPU memory planning for LLM deployment. vLLM commands, cost comparison, benchmark data, PDF reports. Free, offline, open source.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧮</text></svg>">
-<link rel="canonical" href="https://israelhen153.github.io/llm-vram-planner/">
+<link rel="canonical" href="https://YOURUSERNAME.github.io/llm-vram-planner/">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.6.0/tabler-icons.min.css">
 <style>
 /* =============================================================================
@@ -157,6 +157,23 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
 .compare-card .row .val { font-weight: 500; }
 
 /* =============================================================================
+   Mode toggle — engineer vs executive
+   ============================================================================= */
+.mode-toggle { display: flex; border-radius: var(--radius); overflow: hidden; border: .5px solid var(--border); margin: 0 0 16px; width: fit-content; }
+.mode-toggle button { padding: 8px 20px; font-size: 13px; cursor: pointer; border: none; background: var(--bg-secondary); color: var(--text-secondary); display: flex; align-items: center; gap: 6px; transition: all .2s; }
+.mode-toggle button.active { background: var(--accent); color: white; font-weight: 500; }
+.mode-toggle button:not(.active):hover { background: var(--bg-tertiary); }
+body.exec-mode .engineer-only { display: none !important; }
+body.exec-mode .section-title { font-size: 14px; }
+.exec-summary { display: none; background: var(--bg-secondary); border-radius: var(--radius-lg); padding: 20px; margin: 0 0 20px; border: .5px solid var(--border); }
+body.exec-mode .exec-summary { display: block; }
+.exec-summary .exec-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: .5px solid var(--border); }
+.exec-summary .exec-row:last-child { border: none; }
+.exec-summary .exec-label { font-size: 13px; color: var(--text-secondary); }
+.exec-summary .exec-value { font-size: 15px; font-weight: 500; }
+.exec-summary .exec-headline { font-size: 20px; font-weight: 500; margin: 0 0 12px; }
+
+/* =============================================================================
    Action bar
    ============================================================================= */
 .action-bar { display: flex; gap: 6px; margin: 0 0 10px; flex-wrap: wrap; }
@@ -172,7 +189,7 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
 <h1><i class="ti ti-cpu" style="font-size:22px;vertical-align:-3px;margin-right:4px"></i> LLM VRAM planner</h1>
 <p class="subtitle">Plan GPU memory, throughput, and deployment. Pick a preset, import config.json / safetensors index, or enter manually.
   <span style="display:inline-flex;gap:6px;margin-left:8px;vertical-align:middle">
-    <a href="https://github.com/israelhen153/llm-vram-planner" target="_blank" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--bg-secondary);color:var(--text-secondary);text-decoration:none;border:.5px solid var(--border)"><i class="ti ti-brand-github" style="font-size:13px"></i> GitHub</a>
+    <a href="https://github.com/YOURUSERNAME/llm-vram-planner" target="_blank" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--bg-secondary);color:var(--text-secondary);text-decoration:none;border:.5px solid var(--border)"><i class="ti ti-brand-github" style="font-size:13px"></i> GitHub</a>
     <span style="font-size:11px;padding:2px 8px;border-radius:4px;background:var(--accent-bg);color:var(--accent-text)">v1.0.0</span>
   </span>
 </p>
@@ -182,6 +199,20 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
   <button onclick="saveSnapshot()"><i class="ti ti-device-floppy" style="font-size:14px"></i> Save snapshot</button>
   <button onclick="copyURL()"><i class="ti ti-link" style="font-size:14px"></i> Share URL</button>
 </div>
+
+<div class="mode-toggle">
+  <button id="mode-exec" onclick="setMode('exec')"><i class="ti ti-presentation" style="font-size:15px"></i> Executive</button>
+  <button id="mode-eng" class="active" onclick="setMode('eng')"><i class="ti ti-tool" style="font-size:15px"></i> Engineer</button>
+</div>
+
+<div id="exec-banner" style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:var(--radius);background:var(--accent-bg);color:var(--accent-text);font-size:12px;margin:0 0 16px;cursor:pointer" onclick="setMode('exec');this.style.display='none'">
+  <i class="ti ti-presentation" style="font-size:15px"></i>
+  <span>Presenting to stakeholders? <b>Switch to Executive view →</b></span>
+  <span style="margin-left:auto;opacity:.6;font-size:11px" onclick="event.stopPropagation();this.parentElement.style.display='none'">✕</span>
+</div>
+
+<!-- Executive summary — only visible in exec mode -->
+<div class="exec-summary" id="exec-summary"></div>
 
 <!-- ==========================================================================
      Model configuration
@@ -199,7 +230,7 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
         <optgroup label="Mistral"><option value="mistral-sm4-24b">Mistral Small 4 24B</option><option value="mistral-lg-123b">Mistral Large 123B</option></optgroup>
       </select>
     </div>
-    <div class="field"><label>Weight precision</label>
+    <div class="field engineer-only"><label>Weight precision</label>
       <select id="weight-precision" onchange="recalculate()">
         <option value="2">BF16 / FP16 (2.0 B/param)</option>
         <option value="1">FP8 (1.0 B/param)</option>
@@ -213,7 +244,7 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
       </select>
     </div>
   </div>
-  <div class="grid-2" style="margin-top:8px">
+  <div class="grid-2 engineer-only" style="margin-top:8px">
     <div class="field"><label>KV cache precision</label>
       <select id="kv-precision" onchange="recalculate()">
         <option value="2" selected>BF16 (2 bytes/value) — default</option>
@@ -221,8 +252,8 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
       </select>
     </div>
   </div>
-  <label class="toggle-row"><input type="checkbox" id="show-manual" onchange="document.getElementById('manual-params').style.display=this.checked?'block':'none'"> Show manual parameters</label>
-  <div id="manual-params" style="display:none">
+  <label class="toggle-row engineer-only"><input type="checkbox" id="show-manual" onchange="document.getElementById('manual-params').style.display=this.checked?'block':'none'"> Show manual parameters</label>
+  <div id="manual-params" class="engineer-only" style="display:none">
     <div class="grid-2" style="margin-top:6px">
       <div class="field"><label>Parameters (B)</label><div class="slider-row"><input type="range" min="1" max="700" value="26" step="1" id="param-count" oninput="recalculate()"><span class="slider-value" id="param-count-display">26B</span></div></div>
       <div class="field"><label>MoE active %</label><div class="slider-row"><input type="range" min="1" max="100" value="15" step="1" id="active-percent" oninput="recalculate()"><span class="slider-value" id="active-percent-display">15%</span></div></div>
@@ -237,7 +268,7 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
 <!-- ==========================================================================
      Import config.json / safetensors
      ========================================================================== -->
-<div class="section">
+<div class="section engineer-only">
   <div class="section-title"><i class="ti ti-file-import"></i> Import config</div>
   <div class="import-box" id="import-box" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleFileDrop(event)">
     <div class="import-row">
@@ -276,7 +307,7 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
       </select>
     </div>
     <div class="field"><label>GPU count</label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
-    <div class="field"><label>Interconnect</label>
+    <div class="field engineer-only"><label>Interconnect</label>
       <select id="interconnect" onchange="recalculate()"><option value="1">NVLink / NVSwitch</option><option value="0">PCIe only</option></select>
     </div>
   </div>
@@ -300,9 +331,9 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
         <option value="realtime-api">Real-time API — ultra-low latency, high concurrency</option>
       </select>
     </div>
-    <div class="field"><label id="workload-hint" style="color:var(--text-muted);font-style:italic">&nbsp;</label></div>
+    <div class="field engineer-only"><label id="workload-hint" style="color:var(--text-muted);font-style:italic">&nbsp;</label></div>
   </div>
-  <div class="grid-2">
+  <div class="grid-2 engineer-only">
     <div class="field"><label>Context length</label><div class="slider-row"><input type="range" min="1024" max="131072" value="8192" step="1024" id="context-length" oninput="recalculate()"><span class="slider-value" id="context-length-display">8K</span></div></div>
     <div class="field"><label>Concurrent requests</label><div class="slider-row"><input type="range" min="1" max="256" value="1" step="1" id="concurrency" oninput="recalculate()"><span class="slider-value" id="concurrency-display">1</span></div></div>
   </div>
@@ -311,7 +342,7 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
 <!-- ==========================================================================
      Training estimation (togglable)
      ========================================================================== -->
-<div class="section">
+<div class="section engineer-only">
   <div class="section-title"><i class="ti ti-school"></i> Training estimation</div>
   <label class="toggle-row"><input type="checkbox" id="training-enabled" onchange="document.getElementById('training-config').style.display=this.checked?'block':'none';recalculate()"> Enable training VRAM estimation</label>
   <div id="training-config" style="display:none">
@@ -338,8 +369,8 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
      ========================================================================== -->
 <div class="section">
   <div class="section-title"><i class="ti ti-chart-bar"></i> VRAM breakdown</div>
-  <div id="strategy-badges"></div>
-  <div class="legend">
+  <div id="strategy-badges" class="engineer-only"></div>
+  <div class="legend engineer-only">
     <span><i style="background:#7F77DD"></i>Weights</span>
     <span><i style="background:#EF9F27"></i>KV cache</span>
     <span><i style="background:#1D9E75"></i>Activations</span>
@@ -347,25 +378,25 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
     <span><i style="background:var(--bg-secondary);border:.5px solid var(--border)"></i>Free</span>
   </div>
   <div id="gpu-cards"></div>
-  <div id="metrics-output"></div>
+  <div id="metrics-output" class="engineer-only"></div>
   <div id="verdict-output"></div>
 </div>
 
-<div class="section"><div class="section-title"><i class="ti ti-arrows-maximize"></i> Capacity limits</div><div id="capacity-output"></div></div>
-<div class="section"><div class="section-title"><i class="ti ti-bolt"></i> Throughput</div><div id="throughput-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-arrows-maximize"></i> Capacity limits</div><div id="capacity-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-bolt"></i> Throughput</div><div id="throughput-output"></div></div>
 <div class="section"><div class="section-title"><i class="ti ti-currency-dollar"></i> Cost</div><div id="cost-output"></div></div>
-<div class="section"><div class="section-title"><i class="ti ti-terminal-2"></i> vLLM command</div><div id="command-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-terminal-2"></i> vLLM command</div><div id="command-output"></div></div>
 <div class="section"><div class="section-title"><i class="ti ti-columns"></i> Comparison <span style="font-size:11px;font-weight:400;color:var(--text-muted);text-transform:none;letter-spacing:0">(save snapshots to compare)</span></div><div id="comparison-output"></div></div>
 
-<div class="note-box" id="notes-output"></div>
+<div class="note-box engineer-only" id="notes-output"></div>
 
 <!-- Footer -->
 <div style="margin:24px 0 0;padding:16px 0 0;border-top:.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
   <div style="font-size:12px;color:var(--text-muted)"><b>LLM VRAM Planner</b> v1.0.0 · Free and open source</div>
   <div style="display:flex;gap:10px;font-size:12px">
-    <a href="https://github.com/israelhen153/llm-vram-planner" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-brand-github" style="font-size:14px"></i> Source</a>
-    <a href="https://github.com/israelhen153/llm-vram-planner/blob/main/CONTRIBUTING.md" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-git-pull-request" style="font-size:14px"></i> Contribute benchmarks</a>
-    <a href="https://github.com/israelhen153/llm-vram-planner/issues" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-bug" style="font-size:14px"></i> Report issue</a>
+    <a href="https://github.com/YOURUSERNAME/llm-vram-planner" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-brand-github" style="font-size:14px"></i> Source</a>
+    <a href="https://github.com/YOURUSERNAME/llm-vram-planner/blob/main/CONTRIBUTING.md" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-git-pull-request" style="font-size:14px"></i> Contribute benchmarks</a>
+    <a href="https://github.com/YOURUSERNAME/llm-vram-planner/issues" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-bug" style="font-size:14px"></i> Report issue</a>
   </div>
 </div>
 
@@ -1043,6 +1074,7 @@ function recalculate() {
   const computed = computeInference(state);
 
   renderSliderLabels(state);
+  renderExecutiveSummary(state, computed);
   renderStrategyBadges(state, computed);
   renderGPUCards(state, computed);
   renderMetrics(computed);
@@ -1055,6 +1087,53 @@ function recalculate() {
   renderComparisons();
   renderNotes(state);
   updateURLHash();
+}
+
+/* =============================================================================
+   Mode toggle — engineer vs executive
+   ============================================================================= */
+function setMode(mode) {
+  const isExec = mode === 'exec';
+  document.body.classList.toggle('exec-mode', isExec);
+  document.getElementById('mode-exec').classList.toggle('active', isExec);
+  document.getElementById('mode-eng').classList.toggle('active', !isExec);
+  recalculate();
+}
+
+function renderExecutiveSummary(state, computed) {
+  if (!document.body.classList.contains('exec-mode')) return;
+
+  const preset = MODEL_PRESETS[state.presetKey];
+  const modelName = preset
+    ? document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text
+    : (importedModelId || state.params + 'B model');
+
+  const verdictColor = computed.comfortable ? '--success' : computed.fits ? '--warning' : '--danger';
+  const verdictLabel = computed.comfortable ? 'READY TO DEPLOY' : computed.fits ? 'TIGHT — RISK OF OOM' : 'DOES NOT FIT';
+  const verdictIcon = computed.comfortable ? 'ti-check' : computed.fits ? 'ti-alert-triangle' : 'ti-x';
+
+  const monthlyCheapest = Math.round(computed.hourlySpot * 730);
+  const monthlyExpensive = Math.round(computed.hourlyHyper * 730);
+
+  let html = `<p class="exec-headline"><i class="ti ${verdictIcon}" style="color:var(${verdictColor});margin-right:6px"></i>${modelName}</p>`;
+
+  // Verdict badge
+  html += `<div style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--radius);background:var(${verdictColor}-bg);color:var(${verdictColor}-text);font-weight:500;font-size:14px;margin:0 0 16px"><i class="ti ${verdictIcon}" style="font-size:16px"></i>${verdictLabel}</div>`;
+
+  // Key metrics in clean rows
+  html += `<div class="exec-row"><span class="exec-label">Hardware</span><span class="exec-value">${state.gpuCount}× ${state.gpuName}</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB per GPU (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%)</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Max concurrent users (8K context)</span><span class="exec-value">${Math.max(computed.maxConcurrentAt8K, 0)}</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Est. throughput</span><span class="exec-value">~${formatTokens(computed.estimatedTokensPerSec)} tokens/sec</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
+  html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
+
+  if (!computed.fits) {
+    const needed = Math.ceil(computed.totalGB / (state.gpuGB * 0.9));
+    html += `<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);background:var(--danger-bg);color:var(--danger-text);font-size:13px"><i class="ti ti-alert-triangle" style="margin-right:4px"></i><b>Action needed:</b> This model requires ${needed}+ GPUs of this type, or a lower precision (e.g. INT4), or a smaller model. Current configuration cannot serve this model.</div>`;
+  }
+
+  setHTML('exec-summary', html);
 }
 
 /* =============================================================================
@@ -1144,5 +1223,9 @@ function copyURL() {
 if (!loadURLHash()) applyPreset();
 recalculate();
 </script>
+<!-- Analytics — GoatCounter (privacy-friendly, no cookies, GDPR-compliant) -->
+<!-- Sign up at https://www.goatcounter.com → replace YOURSITE below -->
+<script data-goatcounter="https://israelhen153.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </body>
 </html>

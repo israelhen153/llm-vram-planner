@@ -20,6 +20,16 @@ for f in "${FILES[@]}"; do
     fi
 done
 
+# GoatCounter analytics (optional)
+if [ -n "${2:-}" ]; then
+    sed -i "s/YOURSITE/$2/g" index.html
+    echo "Updated GoatCounter to $2.goatcounter.com"
+else
+    echo ""
+    echo "TIP: To enable analytics, sign up at https://www.goatcounter.com"
+    echo "Then run: sed -i 's/YOURSITE/your-site-code/g' index.html"
+fi
+
 echo ""
 echo "Done. Next steps:"
 echo "  1. git init && git add -A && git commit -m 'Initial commit'"
