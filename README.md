@@ -4,7 +4,7 @@
 
 I was deploying vLLM on an air-gapped server and spent 3 hours fighting CUDA version mismatches, wrong PyTorch wheels, and OOM crashes — all because there was no tool that answered "does this model fit on my GPU, and what flags do I pass to vLLM?" in one place. So I built one.
 
-> **[Use it now →](https://YOURUSERNAME.github.io/llm-vram-planner/)**  ·  Single HTML file  ·  Works offline  ·  No signup
+> **[Use it now →](https://israelhen153.github.io/llm-vram-planner/)**  ·  Single HTML file  ·  Works offline  ·  No signup
 
 <!-- TODO: Replace with actual screenshot (1200×630px, engineer mode, configured with a model) -->
 <!-- ![LLM VRAM Planner](assets/screenshot.png) -->
@@ -31,7 +31,7 @@ It also does things no other VRAM calculator does:
 ## Quick start
 
 ### Use online
-**[YOURUSERNAME.github.io/llm-vram-planner](https://YOURUSERNAME.github.io/llm-vram-planner/)**
+**[israelhen153.github.io/llm-vram-planner](https://israelhen153.github.io/llm-vram-planner/)**
 
 ### Use offline
 Download `index.html`. Open in any browser. Done.
@@ -72,7 +72,7 @@ See [ROADMAP.md](ROADMAP.md) for details.
 
 **The most valuable contribution is benchmark data.** If you've measured vLLM throughput on real hardware, add one entry to `benchmarks/data.json` and open a PR. See [CONTRIBUTING.md](CONTRIBUTING.md) for the format — it takes 2 minutes.
 
-Bug reports and feature requests welcome via [Issues](https://github.com/YOURUSERNAME/llm-vram-planner/issues).
+Bug reports and feature requests welcome via [Issues](https://github.com/israelhen153/llm-vram-planner/issues).
 
 ---
 

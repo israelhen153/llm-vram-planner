@@ -118,7 +118,7 @@ If your GPU isn't listed, add it and document the specs in your PR description.
 
 ## Other contributions
 
-- **Bug reports**: [open an issue](https://github.com/YOURUSERNAME/llm-vram-planner/issues) with steps to reproduce
+- **Bug reports**: [open an issue](https://github.com/israelhen153/llm-vram-planner/issues) with steps to reproduce
 - **Feature requests**: open an issue with the use case, not just the feature
 - **Code changes**: open an issue first to discuss before submitting a PR
 - **Model presets**: add to the `PR` object in `index.html` — include all architecture params
