@@ -109,6 +109,17 @@ llm-vram-planner/
 
 ---
 
+## Roadmap
+
+- **v1.0.0** (current) — NVIDIA GPUs, vLLM, ship it
+- **v1.1.0** — AMD GPUs (MI210, MI250X, MI300X, MI325X, RX 7900 XTX + ROCm)
+- **v1.2.0** — Apple Silicon (M1-M4, unified memory, Ollama/llama.cpp/MLX)
+- **v2.0.0** — UI polish, guided wizard, mobile layout, PWA
+
+See [ROADMAP.md](ROADMAP.md) for full details and scope per version.
+
+---
+
 ## Contributing
 
 The most valuable contribution is **benchmark data**. If you've measured vLLM throughput on specific hardware, add it to [`benchmarks/data.json`](benchmarks/data.json). See [CONTRIBUTING.md](CONTRIBUTING.md) for the format.
