@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LLM VRAM Planner — GPU Memory, Throughput & Deployment Tool</title>
+<meta name="description" content="Plan GPU memory for LLM inference and training. Generate vLLM commands, compare costs across AWS/GCP/Lambda/spot, export PDF reports. Works offline. Open source.">
+<meta name="keywords" content="LLM VRAM calculator, GPU memory planner, vLLM, A100, H100, B200, inference, LoRA, QLoRA, training VRAM, KV cache, tensor parallel">
+<meta property="og:title" content="LLM VRAM Planner — GPU Memory & Deployment Tool">
+<meta property="og:description" content="Plan GPU memory for LLM inference and training. vLLM command generator, 3-tier cost comparison, real benchmark data, PDF report export. Free and open source.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://raw.githubusercontent.com/israelhen153/llm-vram-planner/main/assets/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="LLM VRAM Planner">
+<meta name="twitter:description" content="GPU memory planning for LLM deployment. vLLM commands, cost comparison, benchmark data, PDF reports. Free, offline, open source.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧮</text></svg>">
+<link rel="canonical" href="https://israelhen153.github.io/llm-vram-planner/">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.6.0/tabler-icons.min.css">
+<style>
+:root{--bg:#fafaf8;--bg2:#f1efe8;--bg3:#e8e6df;--fg:#1a1a18;--fg2:#5f5e5a;--fg3:#888780;--bd:#d3d1c7;--r:8px;--rl:12px;--acc:#534AB7;--acc-bg:#EEEDFE;--acc-tx:#3C3489;--ok:#0F6E56;--ok-bg:#E1F5EE;--ok-tx:#085041;--warn:#BA7517;--warn-bg:#FAEEDA;--warn-tx:#633806;--err:#A32D2D;--err-bg:#FCEBEB;--err-tx:#791F1F;font-family:'Segoe UI',system-ui,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a18;--bg2:#2c2c2a;--bg3:#3d3d3a;--fg:#e8e6df;--fg2:#b4b2a9;--fg3:#888780;--bd:#5f5e5a;--acc-bg:#26215C;--acc-tx:#CECBF6;--ok-bg:#04342C;--ok-tx:#9FE1CB;--warn-bg:#412402;--warn-tx:#FAC775;--err-bg:#501313;--err-tx:#F7C1C1}}
+*{box-sizing:border-box;margin:0}body{background:var(--bg);color:var(--fg);padding:20px;max-width:920px;margin:0 auto;font-size:14px;line-height:1.5}
+h1{font-size:20px;font-weight:500;margin:0 0 4px}.sub{font-size:13px;color:var(--fg2);margin:0 0 20px}
+.section{margin:0 0 20px}.st{font-size:13px;font-weight:500;color:var(--fg2);text-transform:uppercase;letter-spacing:.5px;margin:0 0 10px;display:flex;align-items:center;gap:6px}.st i{font-size:16px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.g4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
+@media(max-width:640px){.g2,.g3,.g4{grid-template-columns:1fr}}
+.f{display:flex;flex-direction:column;gap:4px}.f label{font-size:12px;color:var(--fg2)}
+.f select,.f input[type=number],.f input[type=text]{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--r);padding:7px 10px;font-size:13px;color:var(--fg);width:100%;outline:none}
+.f select:focus,.f input:focus{border-color:var(--acc)}
+.sr{display:flex;align-items:center;gap:8px}.sr input[type=range]{flex:1;height:4px;appearance:none;background:var(--bg3);border-radius:2px;outline:none}
+.sr input[type=range]::-webkit-slider-thumb{appearance:none;width:16px;height:16px;border-radius:50%;background:var(--acc);cursor:pointer}
+.sr .sv{font-size:13px;font-weight:500;min-width:56px;text-align:right}
+.tr{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--fg2);cursor:pointer;margin:6px 0}.tr input{accent-color:var(--acc)}
+.gg{display:grid;gap:8px;margin:10px 0}
+.gc{background:var(--bg2);border-radius:var(--rl);padding:10px 12px;border:.5px solid var(--bd)}
+.gc .gt{font-size:12px;font-weight:500;margin:0 0 6px;display:flex;align-items:center;gap:6px}.gc .gt i{font-size:14px;color:var(--fg3)}
+.bar{height:24px;border-radius:6px;overflow:hidden;border:.5px solid var(--bd);display:flex;margin:0 0 4px}
+.bar div{height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;overflow:hidden;white-space:nowrap;transition:width .3s}
+.gc .gd{font-size:11px;color:var(--fg3);margin:0}
+.nvl{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:1px 6px;border-radius:var(--r);background:var(--acc-bg);color:var(--acc-tx);margin-left:6px}
+.ms{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:10px 0}
+.mc{background:var(--bg2);border-radius:var(--r);padding:8px 10px}.mc .ml{font-size:11px;color:var(--fg2);margin:0 0 1px}.mc .mn{font-size:17px;font-weight:500;margin:0}
+.vd{padding:10px 12px;border-radius:var(--r);font-size:13px;margin:10px 0}.vd i{margin-right:4px;font-size:15px;vertical-align:-2px}
+.cb{background:var(--bg2);border:.5px solid var(--bd);border-radius:var(--r);padding:10px 12px;font-family:'SF Mono',Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;position:relative;margin:8px 0;line-height:1.6;color:var(--fg)}
+.cb .cpb{position:absolute;top:6px;right:6px;background:var(--bg);border:.5px solid var(--bd);border-radius:var(--r);padding:4px 8px;font-size:11px;cursor:pointer;color:var(--fg2);display:flex;align-items:center;gap:4px}.cb .cpb:hover{background:var(--bg3)}
+.rg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}@media(max-width:640px){.rg{grid-template-columns:1fr}}
+.rc{background:var(--bg2);border-radius:var(--rl);padding:12px 14px;border:.5px solid var(--bd)}.rc .rl{font-size:12px;color:var(--fg2);margin:0 0 2px}.rc .rv{font-size:22px;font-weight:500;margin:0 0 2px}.rc .rs{font-size:11px;color:var(--fg3);margin:0}
+.cr{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg2);border-radius:var(--r);margin:8px 0;font-size:13px;flex-wrap:wrap}.cr .cv{font-weight:500;font-size:16px}
+.note{font-size:11px;color:var(--fg3);margin:8px 0 0;padding:8px 10px;border-radius:var(--r);background:var(--bg2);line-height:1.5}.note i{font-size:13px;vertical-align:-2px;margin-right:3px}
+.lg{display:flex;gap:12px;margin:6px 0;flex-wrap:wrap}.lg span{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--fg2)}.lg span i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:var(--r)}
+.tb{height:8px;border-radius:4px;background:var(--bg3);margin:6px 0;overflow:hidden}.tb div{height:100%;border-radius:4px;transition:width .3s}
+.ib{background:var(--bg2);border:1.5px dashed var(--bd);border-radius:var(--rl);padding:14px;margin:0 0 12px;transition:border-color .2s}
+.ib.drag-over{border-color:var(--acc);background:var(--acc-bg)}
+.ir{display:flex;gap:8px;margin:0 0 10px}.ir input[type=text]{flex:1;font-family:'SF Mono',Consolas,monospace}
+.ir button,.ub{background:var(--acc-bg);color:var(--acc-tx);border:.5px solid var(--acc);border-radius:var(--r);padding:6px 14px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:500}.ir button:hover,.ub:hover{opacity:.85}
+.ior{text-align:center;font-size:12px;color:var(--fg3);margin:0 0 10px}
+.uz{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}.uz input[type=file]{display:none}
+.pf{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:10px 0}
+.pi{background:var(--bg);border-radius:var(--r);padding:6px 10px;border:.5px solid var(--bd)}.pi .pl{font-size:11px;color:var(--fg3);margin:0}.pi .pv{font-size:14px;font-weight:500;margin:0}
+.is{font-size:12px;margin:8px 0 0;padding:6px 10px;border-radius:var(--r)}.is.ok{background:var(--ok-bg);color:var(--ok-tx)}.is.err{background:var(--err-bg);color:var(--err-tx)}.is.loading{background:var(--warn-bg);color:var(--warn-tx)}
+.cmp-grid{display:grid;gap:10px;margin:10px 0}.cmp-card{background:var(--bg2);border-radius:var(--rl);padding:12px 14px;border:.5px solid var(--bd);position:relative}
+.cmp-card .cmp-rm{position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;color:var(--fg3);font-size:16px;padding:2px}.cmp-card .cmp-rm:hover{color:var(--err)}
+.cmp-card .cmp-name{font-size:13px;font-weight:500;margin:0 0 6px}.cmp-card .cmp-row{display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:.5px solid var(--bd)}.cmp-card .cmp-row:last-child{border:none}
+.cmp-card .cmp-row .cl{color:var(--fg2)}.cmp-card .cmp-row .cv2{font-weight:500}
+.act-bar{display:flex;gap:6px;margin:0 0 10px;flex-wrap:wrap}
+.act-bar button{background:var(--bg);border:.5px solid var(--bd);border-radius:var(--r);padding:6px 12px;font-size:12px;cursor:pointer;color:var(--fg2);display:flex;align-items:center;gap:4px}.act-bar button:hover{background:var(--bg2);border-color:var(--acc)}
+</style>
+</head>
+<body>
+
+<h1><i class="ti ti-cpu" style="font-size:22px;vertical-align:-3px;margin-right:4px"></i> LLM VRAM planner</h1>
+<p class="sub">Plan GPU memory, throughput, and deployment. Pick a preset, import config.json / safetensors index, or enter manually.
+<span style="display:inline-flex;gap:6px;margin-left:8px;vertical-align:middle">
+<a href="https://github.com/israelhen153/llm-vram-planner" target="_blank" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--bg2);color:var(--fg2);text-decoration:none;border:.5px solid var(--bd)"><i class="ti ti-brand-github" style="font-size:13px"></i> GitHub</a>
+<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:var(--acc-bg);color:var(--acc-tx)">v1.0.0</span>
+</span>
+</p>
+
+<div class="act-bar">
+  <button onclick="exportSummary()"><i class="ti ti-clipboard-copy" style="font-size:14px"></i> Copy report</button>
+  <button onclick="saveSnapshot()"><i class="ti ti-device-floppy" style="font-size:14px"></i> Save snapshot</button>
+  <button onclick="copyURL()"><i class="ti ti-link" style="font-size:14px"></i> Share URL</button>
+</div>
+
+<div class="section">
+  <div class="st"><i class="ti ti-box-model"></i> Model</div>
+  <div class="g2">
+    <div class="f"><label>Preset</label>
+      <select id="preset" onchange="applyPreset()">
+        <option value="">Custom (manual)</option>
+        <optgroup label="Llama"><option value="llama31-8b">Llama 3.1 8B</option><option value="llama31-70b">Llama 3.1 70B</option><option value="llama33-70b">Llama 3.3 70B</option><option value="llama4-109b">Llama 4 Scout 109B MoE</option></optgroup>
+        <optgroup label="Qwen"><option value="qwen3-8b">Qwen 3 8B</option><option value="qwen3-30b">Qwen 3 30B-A3B MoE</option><option value="qwen25-coder-32b">Qwen 2.5 Coder 32B</option><option value="qwen35-397b">Qwen 3.5 397B MoE</option><option value="qwen3-coder-480b">Qwen 3 Coder 480B MoE</option></optgroup>
+        <optgroup label="Gemma"><option value="gemma4-e4b">Gemma 4 E4B</option><option value="gemma4-26b" selected>Gemma 4 26B MoE</option><option value="gemma4-31b">Gemma 4 31B Dense</option></optgroup>
+        <optgroup label="DeepSeek"><option value="dsv3-671b">DeepSeek-V3 671B MoE</option><option value="dsr1-671b">DeepSeek-R1 671B MoE</option></optgroup>
+        <optgroup label="Mistral"><option value="mistral-sm4-24b">Mistral Small 4 24B</option><option value="mistral-lg-123b">Mistral Large 123B</option></optgroup>
+      </select>
+    </div>
+    <div class="f"><label>Weight precision</label>
+      <select id="prec" onchange="calc()">
+        <option value="2">BF16 / FP16 (2.0 B/param)</option>
+        <option value="1">FP8 (1.0 B/param)</option>
+        <option value="0.63">GGUF Q4_K_M (0.63 B/param)</option>
+        <option value="0.5" selected>INT4 / AWQ / GPTQ (0.50 B/param)</option>
+        <option value="0.71">GGUF Q5_K_M (0.71 B/param)</option>
+        <option value="0.82">GGUF Q6_K (0.82 B/param)</option>
+        <option value="1.1">GGUF Q8_0 (1.1 B/param)</option>
+        <option value="0.35">GGUF Q2_K (0.35 B/param)</option>
+        <option value="0.5">GGUF Q3_K_M (0.50 B/param)</option>
+      </select>
+    </div>
+  </div>
+  <div class="g2" style="margin-top:8px">
+    <div class="f"><label>KV cache precision</label>
+      <select id="kvprec" onchange="calc()">
+        <option value="2" selected>BF16 (2 bytes/value) — default</option>
+        <option value="1">FP8 (1 byte/value) — --kv-cache-dtype fp8</option>
+      </select>
+    </div>
+  </div>
+  <label class="tr"><input type="checkbox" id="show-manual" onchange="document.getElementById('manual').style.display=this.checked?'block':'none'"> Show manual parameters</label>
+  <div id="manual" style="display:none">
+    <div class="g2" style="margin-top:6px">
+      <div class="f"><label>Parameters (B)</label><div class="sr"><input type="range" min="1" max="700" value="26" step="1" id="params" oninput="calc()"><span class="sv" id="params-out">26B</span></div></div>
+      <div class="f"><label>MoE active %</label><div class="sr"><input type="range" min="1" max="100" value="15" step="1" id="active" oninput="calc()"><span class="sv" id="active-out">15%</span></div></div>
+      <div class="f"><label>Layers</label><div class="sr"><input type="range" min="4" max="128" value="26" step="1" id="layers" oninput="calc()"><span class="sv" id="layers-out">26</span></div></div>
+      <div class="f"><label>KV heads</label><div class="sr"><input type="range" min="1" max="128" value="16" step="1" id="kvheads" oninput="calc()"><span class="sv" id="kvheads-out">16</span></div></div>
+      <div class="f"><label>Head dimension</label><div class="sr"><input type="range" min="32" max="512" value="128" step="16" id="hdim" oninput="calc()"><span class="sv" id="hdim-out">128</span></div></div>
+      <div class="f"><label>Shared experts</label><div class="sr"><input type="range" min="0" max="16" value="0" step="1" id="shared-exp" oninput="calc()"><span class="sv" id="shared-exp-out">0</span></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="st"><i class="ti ti-file-import"></i> Import config</div>
+  <div class="ib" id="import-box" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleDrop(event)">
+    <div class="ir">
+      <input type="text" id="hf-model-id" placeholder="HuggingFace ID (e.g. Qwen/Qwen3-8B)" onkeydown="if(event.key==='Enter')fetchHF()">
+      <button onclick="fetchHF()"><i class="ti ti-cloud-download" style="font-size:15px"></i> Fetch</button>
+    </div>
+    <div class="ior">or drop / upload a file</div>
+    <div class="uz">
+      <button class="ub" onclick="document.getElementById('f-cfg').click()"><i class="ti ti-file-code" style="font-size:15px"></i> config.json</button>
+      <button class="ub" onclick="document.getElementById('f-st').click()"><i class="ti ti-file-database" style="font-size:15px"></i> safetensors index</button>
+      <input type="file" id="f-cfg" accept=".json" onchange="handleFile(this.files[0],'cfg')">
+      <input type="file" id="f-st" accept=".json" onchange="handleFile(this.files[0],'st')">
+    </div>
+    <div id="imp-st"></div><div id="imp-pf"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="st"><i class="ti ti-server"></i> GPU configuration</div>
+  <div class="g3">
+    <div class="f"><label>GPU model</label>
+      <select id="gpu" onchange="calc()">
+        <option value="16|320|0.76|0.35|0.15" data-n="T4 16GB">T4 16 GB</option>
+        <option value="24|936|0.75|0.45|0.29" data-n="RTX 4090 24GB">RTX 4090 24 GB</option>
+        <option value="40|1555|3.67|1.29|0.63" data-n="A100 40GB" selected>A100 40 GB</option>
+        <option value="48|864|2.80|1.30|0.90" data-n="L40S 48GB">L40S 48 GB</option>
+        <option value="80|2039|4.50|1.79|0.99" data-n="A100 80GB">A100 80 GB</option>
+        <option value="80|3352|12.30|3.99|2.25" data-n="H100 80GB">H100 80 GB</option>
+        <option value="96|1800|5.00|3.50|2.00" data-n="RTX PRO 6000">RTX PRO 6000 96 GB</option>
+        <option value="192|8000|14.24|5.50|2.12" data-n="B200 192GB">B200 192 GB</option>
+      </select>
+    </div>
+    <div class="f"><label>GPU count</label><div class="sr"><input type="range" min="1" max="128" value="1" step="1" id="ngpu" oninput="calc()"><span class="sv" id="ngpu-out">1</span></div></div>
+    <div class="f"><label>Interconnect</label>
+      <select id="nvlink" onchange="calc()"><option value="1">NVLink / NVSwitch</option><option value="0">PCIe only</option></select>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="st"><i class="ti ti-adjustments"></i> Workload</div>
+  <div class="g2" style="margin-bottom:8px">
+    <div class="f"><label>Workload profile</label>
+      <select id="workload" onchange="applyWorkload()">
+        <option value="">Custom</option>
+        <option value="chat">Chat / assistant — low latency, moderate context</option>
+        <option value="code-assist">Coding assistant — longer context, few users</option>
+        <option value="code-agent">Coding agent (Claude Code-style) — very long context, sequential</option>
+        <option value="rag">RAG pipeline — short context, high throughput</option>
+        <option value="doc-analysis">Document analysis — very long context, low concurrency</option>
+        <option value="batch">Batch processing — throughput only, offline</option>
+        <option value="realtime-api">Real-time API — ultra-low latency, high concurrency</option>
+      </select>
+    </div>
+    <div class="f"><label id="workload-hint" style="color:var(--fg3);font-style:italic">&nbsp;</label></div>
+  </div>
+  <div class="g2">
+    <div class="f"><label>Context length</label><div class="sr"><input type="range" min="1024" max="131072" value="8192" step="1024" id="ctx" oninput="calc()"><span class="sv" id="ctx-out">8K</span></div></div>
+    <div class="f"><label>Concurrent requests</label><div class="sr"><input type="range" min="1" max="256" value="1" step="1" id="conc" oninput="calc()"><span class="sv" id="conc-out">1</span></div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="st"><i class="ti ti-school"></i> Training estimation</div>
+  <label class="tr"><input type="checkbox" id="train-on" onchange="document.getElementById('train-cfg').style.display=this.checked?'block':'none';calc()"> Enable training VRAM estimation</label>
+  <div id="train-cfg" style="display:none">
+    <div class="g3" style="margin-top:6px">
+      <div class="f"><label>Method</label>
+        <select id="train-method" onchange="calc()">
+          <option value="full">Full fine-tune</option>
+          <option value="lora" selected>LoRA</option>
+          <option value="qlora">QLoRA (4-bit base + LoRA)</option>
+        </select>
+      </div>
+      <div class="f"><label>Optimizer</label>
+        <select id="train-optim" onchange="calc()">
+          <option value="adam" selected>AdamW (8 B/param)</option>
+          <option value="sgd">SGD (4 B/param)</option>
+          <option value="adam8">8-bit Adam (4 B/param)</option>
+        </select>
+      </div>
+      <div class="f"><label>Gradient checkpointing</label>
+        <select id="train-gc" onchange="calc()">
+          <option value="1" selected>Enabled (saves VRAM)</option>
+          <option value="0">Disabled (faster)</option>
+        </select>
+      </div>
+    </div>
+    <div class="g3" style="margin-top:8px">
+      <div class="f"><label>Batch size (per GPU)</label><div class="sr"><input type="range" min="1" max="32" value="1" step="1" id="train-bs" oninput="calc()"><span class="sv" id="train-bs-out">1</span></div></div>
+      <div class="f"><label>Sequence length</label><div class="sr"><input type="range" min="256" max="32768" value="2048" step="256" id="train-seq" oninput="calc()"><span class="sv" id="train-seq-out">2K</span></div></div>
+      <div class="f"><label>LoRA rank</label><div class="sr"><input type="range" min="4" max="256" value="16" step="4" id="train-rank" oninput="calc()"><span class="sv" id="train-rank-out">16</span></div></div>
+    </div>
+    <div class="g2" style="margin-top:8px">
+      <div class="f"><label>LoRA target modules</label><div class="sr"><input type="range" min="1" max="8" value="4" step="1" id="train-targets" oninput="calc()"><span class="sv" id="train-targets-out">4</span></div></div>
+      <div class="f"><label>Hidden size (auto from model or manual)</label><div class="sr"><input type="range" min="1024" max="16384" value="3072" step="256" id="train-hs" oninput="calc()"><span class="sv" id="train-hs-out">3072</span></div></div>
+    </div>
+  </div>
+  <div id="train-results"></div>
+</div>
+
+<div class="section">
+  <div class="st"><i class="ti ti-chart-bar"></i> VRAM breakdown</div>
+  <div id="strat-line"></div>
+  <div class="lg"><span><i style="background:#7F77DD"></i>Weights</span><span><i style="background:#EF9F27"></i>KV cache</span><span><i style="background:#1D9E75"></i>Activations</span><span><i style="background:#888780"></i>Overhead</span><span><i style="background:var(--bg2);border:.5px solid var(--bd)"></i>Free</span></div>
+  <div id="gpu-arch"></div><div id="metrics-grid"></div><div id="verdict-box"></div>
+</div>
+<div class="section"><div class="st"><i class="ti ti-arrows-maximize"></i> Capacity limits</div><div id="rev-cards"></div></div>
+<div class="section"><div class="st"><i class="ti ti-bolt"></i> Throughput</div><div id="tp-sec"></div></div>
+<div class="section"><div class="st"><i class="ti ti-currency-dollar"></i> Cost</div><div id="cost-sec"></div></div>
+<div class="section"><div class="st"><i class="ti ti-terminal-2"></i> vLLM command</div><div id="cmd-sec"></div></div>
+<div class="section"><div class="st"><i class="ti ti-columns"></i> Comparison <span style="font-size:11px;font-weight:400;color:var(--fg3);text-transform:none;letter-spacing:0">(save snapshots to compare)</span></div><div id="cmp-sec"></div></div>
+<div class="note" id="notes-sec"></div>
+
+<div style="margin:24px 0 0;padding:16px 0 0;border-top:.5px solid var(--bd);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+  <div style="font-size:12px;color:var(--fg3)">
+    <b>LLM VRAM Planner</b> v1.0.0 · Free and open source
+  </div>
+  <div style="display:flex;gap:10px;font-size:12px">
+    <a href="https://github.com/israelhen153/llm-vram-planner" target="_blank" style="color:var(--acc-tx);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-brand-github" style="font-size:14px"></i> Source</a>
+    <a href="https://github.com/israelhen153/llm-vram-planner/blob/main/CONTRIBUTING.md" target="_blank" style="color:var(--acc-tx);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-git-pull-request" style="font-size:14px"></i> Contribute benchmarks</a>
+    <a href="https://github.com/israelhen153/llm-vram-planner/issues" target="_blank" style="color:var(--acc-tx);text-decoration:none;display:flex;align-items:center;gap:3px"><i class="ti ti-bug" style="font-size:14px"></i> Report issue</a>
+  </div>
+</div>
+
+<script>
+let importedHfId=null, snapshots=[];
+
+const PR={
+  'llama31-8b':{p:8,l:32,kv:8,hd:128,a:100,moe:false,se:0,hf:'meta-llama/Llama-3.1-8B-Instruct'},
+  'llama31-70b':{p:70,l:80,kv:8,hd:128,a:100,moe:false,se:0,hf:'meta-llama/Llama-3.1-70B-Instruct'},
+  'llama33-70b':{p:70,l:80,kv:8,hd:128,a:100,moe:false,se:0,hf:'meta-llama/Llama-3.3-70B-Instruct'},
+  'llama4-109b':{p:109,l:48,kv:8,hd:128,a:16,moe:true,se:0,hf:'meta-llama/Llama-4-Scout-109B-A17B'},
+  'qwen3-8b':{p:8,l:36,kv:8,hd:128,a:100,moe:false,se:0,hf:'Qwen/Qwen3-8B'},
+  'qwen3-30b':{p:30,l:48,kv:8,hd:128,a:10,moe:true,se:0,hf:'Qwen/Qwen3-30B-A3B'},
+  'qwen25-coder-32b':{p:32,l:64,kv:8,hd:128,a:100,moe:false,se:0,hf:'Qwen/Qwen2.5-Coder-32B-Instruct'},
+  'qwen35-397b':{p:397,l:94,kv:8,hd:128,a:4,moe:true,se:0,hf:'Qwen/Qwen3.5-397B-A17B'},
+  'qwen3-coder-480b':{p:480,l:94,kv:8,hd:128,a:7,moe:true,se:0,hf:'Qwen/Qwen3-Coder-480B-A35B-Instruct'},
+  'gemma4-e4b':{p:4,l:26,kv:4,hd:256,a:100,moe:false,se:0,hf:'google/gemma-4-E4B-it'},
+  'gemma4-26b':{p:26,l:26,kv:16,hd:128,a:15,moe:true,se:0,hf:'google/gemma-4-26B-A4B-it'},
+  'gemma4-31b':{p:31,l:34,kv:16,hd:128,a:100,moe:false,se:0,hf:'google/gemma-4-31B-it'},
+  'dsv3-671b':{p:671,l:61,kv:1,hd:128,a:5,moe:true,se:1,hf:'deepseek-ai/DeepSeek-V3'},
+  'dsr1-671b':{p:671,l:61,kv:1,hd:128,a:5,moe:true,se:1,hf:'deepseek-ai/DeepSeek-R1'},
+  'mistral-sm4-24b':{p:24,l:40,kv:8,hd:128,a:100,moe:false,se:0,hf:'mistralai/Mistral-Small-4-24B-Instruct-2503'},
+  'mistral-lg-123b':{p:123,l:88,kv:8,hd:128,a:100,moe:false,se:0,hf:'mistralai/Mistral-Large-Instruct-2411'},
+};
+
+const WORKLOADS={
+  'chat':       {ctx:8192,  conc:20,  hint:'Optimize for latency. 8K ctx handles most conversations. Model ≥8B for quality.'},
+  'code-assist':{ctx:16384, conc:4,   hint:'Longer context for file-level understanding. Low concurrency, single dev or small team.'},
+  'code-agent': {ctx:65536, conc:1,   hint:'Agents like Claude Code consume 32-64K context per task. Sequential, latency tolerant. Needs large VRAM for KV cache.'},
+  'rag':        {ctx:4096,  conc:50,  hint:'Short retrieved chunks. High throughput matters more than context length. Batch inference.'},
+  'doc-analysis':{ctx:131072,conc:1,  hint:'Full documents in context. 128K needs massive KV cache. Often single-user with long processing.'},
+  'batch':      {ctx:2048,  conc:1,   hint:'Offline processing. Maximize throughput via large batch sizes, not concurrency. Short outputs.'},
+  'realtime-api':{ctx:4096, conc:100, hint:'High-traffic API endpoint. P99 latency critical. Short context, many users. Consider smaller quantized models.'},
+};
+
+// Benchmark data: measured vLLM tok/s from published benchmarks (2025-2026)
+// Key: "paramRange-gpu" → {tokS, source, note, precision}
+// paramRange: "7-8b", "13-14b", "27-32b", "70b"
+// Sources cited inline
+const BENCHMARKS={
+  // A100 80GB — from DatabaseMart vLLM benchmarks, BF16, batch throughput
+  '7b-a100-80':  {tokS:3363, src:'DatabaseMart A100 benchmark', note:'DeepSeek-R1-Distill-Qwen-7B, BF16, batch', prec:'bf16'},
+  '8b-a100-80':  {tokS:3200, src:'DatabaseMart A100 benchmark', note:'Llama 3.1 8B, BF16, batch throughput', prec:'bf16'},
+  '14b-a100-80': {tokS:3004, src:'DatabaseMart A100 benchmark', note:'DeepSeek-R1-Distill-Qwen-14B, BF16, batch', prec:'bf16'},
+  '32b-a100-80': {tokS:1200, src:'DatabaseMart A100 benchmark', note:'DeepSeek-R1-Distill-Qwen-32B, BF16, batch est.', prec:'bf16'},
+  // H100 80GB — from MorphLLM/community benchmarks, BF16
+  '8b-h100-80':  {tokS:12500, src:'MorphLLM vLLM benchmarks', note:'Llama 8B, BF16, batch throughput', prec:'bf16'},
+  '14b-h100-80': {tokS:7500,  src:'MorphLLM vLLM benchmarks', note:'14B class, BF16, batch est.', prec:'bf16'},
+  '27b-h100-80': {tokS:4500,  src:'Community benchmark', note:'Gemma 27B class, BF16, batch', prec:'bf16'},
+  '70b-h100-80': {tokS:1800,  src:'Community benchmark', note:'Llama 70B, BF16, 2×H100 TP=2', prec:'bf16'},
+  // B200 192GB — from Google Cloud Medium article
+  '27b-b200-192':{tokS:9500,  src:'Google Cloud (Medium)', note:'Qwen 3.5 27B FP8, single B200, vLLM+MTP', prec:'fp8'},
+  // A100 40GB — extrapolated from 80GB (less KV cache headroom = lower batch throughput)
+  '7b-a100-40':  {tokS:2500,  src:'Est. from A100 80GB data', note:'~75% of A100 80GB (less KV room for batching)', prec:'bf16'},
+  '8b-a100-40':  {tokS:2400,  src:'Est. from A100 80GB data', note:'~75% of A100 80GB (less KV room for batching)', prec:'bf16'},
+  // RTX 4090 — from Hardware Corner / community, single-user decode (not batch)
+  '8b-rtx4090-24':{tokS:104, src:'Hardware Corner', note:'Q4_K_XL, 16K ctx, single-user decode, llama.cpp', prec:'q4'},
+  '14b-rtx4090-24':{tokS:69, src:'Hardware Corner', note:'Q4, single-user decode, llama.cpp', prec:'q4'},
+};
+
+function lookupBenchmark(params,gpuName,gpuGb){
+  // Map param count to size bucket
+  let sz='';
+  if(params<=4)sz='4b';
+  else if(params<=8)sz='8b';
+  else if(params<=10)sz='7b';
+  else if(params<=14)sz='14b';
+  else if(params<=30)sz='27b';
+  else if(params<=40)sz='32b';
+  else if(params<=80)sz='70b';
+  else return null;
+  // Map GPU name to key
+  let gpuKey='';
+  if(gpuName.includes('A100')&&gpuGb>=80)gpuKey='a100-80';
+  else if(gpuName.includes('A100')&&gpuGb<80)gpuKey='a100-40';
+  else if(gpuName.includes('H100'))gpuKey='h100-80';
+  else if(gpuName.includes('B200'))gpuKey='b200-192';
+  else if(gpuName.includes('4090'))gpuKey='rtx4090-24';
+  else return null;
+  return BENCHMARKS[sz+'-'+gpuKey]||BENCHMARKS[(params<=8?'7b':'8b')+'-'+gpuKey]||null;
+}
+
+function applyWorkload(){
+  const k=document.getElementById('workload').value;
+  if(!k){document.getElementById('workload-hint').innerHTML='&nbsp;';calc();return;}
+  const w=WORKLOADS[k];
+  sv('ctx',w.ctx);sv('conc',w.conc);
+  document.getElementById('workload-hint').innerHTML=w.hint;
+  calc();
+}
+
+function gv(id){return +document.getElementById(id).value}
+function sv(id,v){document.getElementById(id).value=v}
+function si(id,t){document.getElementById(id).innerHTML=t}
+function fmt(g){return g<.01?'0 GB':g>=100?Math.round(g)+' GB':g>=10?g.toFixed(1)+' GB':g.toFixed(2)+' GB'}
+function fK(v){return v>=1024?Math.round(v/1024)+'K':v+''}
+function fT(t){return t>=1000?(t/1000).toFixed(1)+'K':Math.round(t)+''}
+function gGpu(){const p=document.getElementById('gpu'),v=p.value.split('|');return{gb:+v[0],bw:+v[1],hyper:+v[2],spec:+v[3],spot:+v[4],name:p.options[p.selectedIndex].dataset.n}}
+
+function applyPreset(){
+  const k=document.getElementById('preset').value;if(!k)return;const p=PR[k];
+  importedHfId=null;si('imp-st','');si('imp-pf','');
+  sv('params',p.p);sv('layers',p.l);sv('kvheads',p.kv);sv('hdim',p.hd);sv('active',p.a);sv('shared-exp',p.se||0);
+  calc();
+}
+
+function parseConfig(cfg,source){
+  const st=document.getElementById('imp-st'),pf=document.getElementById('imp-pf');
+  try{
+    const layers=cfg.num_hidden_layers||cfg.n_layer||0;
+    const nH=cfg.num_attention_heads||cfg.n_head||0;
+    const kvH=cfg.num_key_value_heads||cfg.num_kv_heads||nH;
+    const hs=cfg.hidden_size||cfg.d_model||0;
+    const hd=cfg.head_dim||(nH>0?Math.round(hs/nH):128);
+    const inter=cfg.intermediate_size||(hs*4);
+    const vocab=cfg.vocab_size||32000;
+    const nExp=cfg.num_local_experts||cfg.num_experts||0;
+    const topK=cfg.num_experts_per_tok||cfg.num_selected_experts||0;
+    const sharedExp=cfg.n_shared_experts||cfg.num_shared_experts||0;
+    const isMoE=nExp>1;
+    const mType=cfg.model_type||'unknown';
+    const maxCtx=cfg.max_position_embeddings||cfg.max_seq_len||0;
+    const emb=vocab*hs*2;
+    const attn=layers*(hs*(nH+kvH*2+nH)*hd);
+    const ffnB=layers*hs*inter*3;
+    const ffn=isMoE?ffnB*(nExp+sharedExp):ffnB;
+    const tot=Math.round((emb+attn+ffn+layers*hs*2)/1e9);
+    const aR=isMoE&&nExp>0?Math.max(Math.round(((topK+sharedExp)/(nExp+sharedExp))*100),1):100;
+
+    sv('params',Math.min(tot,700));document.getElementById('params').max=Math.max(700,tot+50);
+    sv('layers',layers);sv('kvheads',kvH);sv('hdim',hd);sv('active',aR);sv('shared-exp',sharedExp);
+    if(hs>0){sv('train-hs',Math.min(hs,16384));document.getElementById('train-hs').max=Math.max(16384,hs);}
+    document.getElementById('preset').value='';
+    importedHfId=source;
+    document.getElementById('show-manual').checked=true;
+    document.getElementById('manual').style.display='block';
+
+    let h='<div class="pf">';
+    h+='<div class="pi"><p class="pl">Architecture</p><p class="pv">'+mType+'</p></div>';
+    h+='<div class="pi"><p class="pl">Est. params</p><p class="pv">~'+tot+'B</p></div>';
+    h+='<div class="pi"><p class="pl">Layers</p><p class="pv">'+layers+'</p></div>';
+    h+='<div class="pi"><p class="pl">Attn heads</p><p class="pv">'+nH+'</p></div>';
+    h+='<div class="pi"><p class="pl">KV heads</p><p class="pv">'+kvH+'</p></div>';
+    h+='<div class="pi"><p class="pl">Head dim</p><p class="pv">'+hd+'</p></div>';
+    h+='<div class="pi"><p class="pl">Hidden size</p><p class="pv">'+hs.toLocaleString()+'</p></div>';
+    h+='<div class="pi"><p class="pl">Vocab</p><p class="pv">'+vocab.toLocaleString()+'</p></div>';
+    if(isMoE){h+='<div class="pi"><p class="pl">Routed experts</p><p class="pv">'+nExp+' (top-'+topK+')</p></div>';
+      if(sharedExp)h+='<div class="pi"><p class="pl">Shared experts</p><p class="pv">'+sharedExp+' (always active)</p></div>';
+      h+='<div class="pi"><p class="pl">Active ratio</p><p class="pv">'+aR+'%</p></div>';}
+    if(maxCtx>0)h+='<div class="pi"><p class="pl">Max context</p><p class="pv">'+fK(maxCtx)+'</p></div>';
+    h+='</div>';pf.innerHTML=h;
+    st.className='is ok';
+    st.innerHTML='<i class="ti ti-check" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>Parsed '+source+' — ~'+tot+'B params, '+layers+' layers'+(isMoE?', MoE ('+nExp+' experts'+(sharedExp?', '+sharedExp+' shared':'')+', top-'+topK+')':'')+''+(maxCtx?', '+fK(maxCtx)+' max ctx':'');
+    if(maxCtx>0){document.getElementById('ctx').max=Math.max(131072,maxCtx);}
+    calc();
+  }catch(e){st.className='is err';st.innerHTML='<i class="ti ti-x" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>Parse error: '+e.message;pf.innerHTML='';}
+}
+
+function parseSafetensorsIndex(data,source){
+  const st=document.getElementById('imp-st'),pf=document.getElementById('imp-pf');
+  try{
+    const wm=data.weight_map||{};
+    let totalBytes=0,shapes={};
+    const md=data.metadata||{};
+    if(md.total_size){totalBytes=+md.total_size;}
+    else{
+      const files=new Set(Object.values(wm));
+      st.className='is err';st.innerHTML='<i class="ti ti-x" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>No total_size in metadata. Upload config.json instead for param estimation.';
+      return;
+    }
+    const paramsBF16=Math.round(totalBytes/2/1e9);
+    sv('params',Math.min(paramsBF16,700));
+    document.getElementById('params').max=Math.max(700,paramsBF16+50);
+    document.getElementById('preset').value='';
+    document.getElementById('show-manual').checked=true;
+    document.getElementById('manual').style.display='block';
+
+    let h='<div class="pf">';
+    h+='<div class="pi"><p class="pl">Total tensor size</p><p class="pv">'+(totalBytes/1e9).toFixed(1)+' GB</p></div>';
+    h+='<div class="pi"><p class="pl">Params (BF16 est)</p><p class="pv">~'+paramsBF16+'B</p></div>';
+    h+='<div class="pi"><p class="pl">Shard files</p><p class="pv">'+new Set(Object.values(wm)).size+'</p></div>';
+    h+='<div class="pi"><p class="pl">Tensors</p><p class="pv">'+Object.keys(wm).length+'</p></div>';
+    h+='</div>';pf.innerHTML=h;
+    st.className='is ok';
+    st.innerHTML='<i class="ti ti-check" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>Parsed '+source+' — exact size '+(totalBytes/1e9).toFixed(1)+' GB (~'+paramsBF16+'B params at BF16). Set layers/KV heads manually or also import config.json.';
+    calc();
+  }catch(e){st.className='is err';st.innerHTML='<i class="ti ti-x" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>Parse error: '+e.message;pf.innerHTML='';}
+}
+
+async function fetchHF(){
+  const mid=document.getElementById('hf-model-id').value.trim();if(!mid)return;
+  const st=document.getElementById('imp-st');
+  st.className='is loading';st.innerHTML='<i class="ti ti-loader" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>Fetching from huggingface.co/'+mid+'...';si('imp-pf','');
+  try{
+    const r=await fetch('https://huggingface.co/'+mid+'/resolve/main/config.json');
+    if(!r.ok)throw new Error('HTTP '+r.status+' — check model ID');
+    parseConfig(await r.json(),mid);
+  }catch(e){st.className='is err';st.innerHTML='<i class="ti ti-x" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>'+e.message;}
+}
+
+function handleFile(file,type){
+  if(!file)return;
+  const r=new FileReader();
+  r.onload=function(e){
+    try{
+      const d=JSON.parse(e.target.result);
+      if(type==='st'||file.name.includes('safetensors'))parseSafetensorsIndex(d,file.name);
+      else parseConfig(d,file.name);
+    }catch(err){const st=document.getElementById('imp-st');st.className='is err';st.innerHTML='<i class="ti ti-x" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>Invalid JSON: '+err.message;}
+  };r.readAsText(file);
+}
+function handleDrop(e){e.preventDefault();document.getElementById('import-box').classList.remove('drag-over');const f=e.dataTransfer.files[0];if(f){const isSt=f.name.includes('safetensors');handleFile(f,isSt?'st':'cfg');}}
+
+function getState(){
+  const gpu=gGpu();
+  return{params:gv('params'),active:gv('active'),bpp:+document.getElementById('prec').value,layers:gv('layers'),kvHeads:gv('kvheads'),hDim:gv('hdim'),sharedExp:gv('shared-exp'),ctx:gv('ctx'),conc:gv('conc'),nGpu:gv('ngpu'),gpuGb:gpu.gb,gpuBw:gpu.bw,gpuHyper:gpu.hyper,gpuSpec:gpu.spec,gpuSpot:gpu.spot,gpuName:gpu.name,nvlink:gv('nvlink'),kvBpp:+document.getElementById('kvprec').value,preset:document.getElementById('preset').value,hfId:importedHfId};
+}
+
+function computeFromState(s){
+  const weightsGB=(s.params*1e9*s.bpp)/1e9;
+  const isMoE=s.active<100;
+  const kvBPerTok=2*s.layers*s.kvHeads*s.hDim*s.kvBpp;
+  const totalTok=s.ctx*s.conc;
+  const kvGB=(kvBPerTok*totalTok)/1e9;
+  const activeP=s.params*(s.active/100);
+  const sharedP=isMoE&&s.sharedExp>0?s.params*0.02*s.sharedExp:0;
+  const totalActiveP=activeP+sharedP;
+  const actGB=Math.max((totalActiveP*1e9*2*0.01)/1e9,0.1);
+  const ohPg=1.5;const nccl=(s.nGpu>1?(s.nvlink?0.3:0.2)*(s.nGpu-1):0);
+  const totalOH=ohPg*s.nGpu+nccl;
+  const totalGB=weightsGB+kvGB+actGB+totalOH;
+  const perW=weightsGB/s.nGpu,perKV=kvGB/s.nGpu,perA=actGB/s.nGpu;
+  const perOH=ohPg+(s.nGpu>1?(s.nvlink?0.3:0.2):0);
+  const perTotal=perW+perKV+perA+perOH;
+  const totalVRAM=s.gpuGb*s.nGpu;
+  const fixedPg=perW+perA+perOH;
+  const freeKV=Math.max((s.gpuGb*0.9-fixedPg)*s.nGpu,0);
+  const kvPerTokGB=kvBPerTok/1e9;
+  const maxCtx1=kvPerTokGB>0?Math.min(Math.floor(freeKV/kvPerTokGB),131072):0;
+  const maxConc8k=kvPerTokGB>0?Math.floor(freeKV/(kvPerTokGB*8192)):0;
+  const maxConc4k=kvPerTokGB>0?Math.floor(freeKV/(kvPerTokGB*4096)):0;
+  const memBound=totalActiveP*1e9*s.bpp;
+  const rawTok=memBound>0?(s.gpuBw*1e9*s.nGpu)/memBound:0;
+  const nvP=(s.nGpu>1&&!s.nvlink)?0.55:(s.nGpu>1?0.85:1);
+  const bB=Math.min(1+Math.log2(Math.max(s.conc,1))*0.15,2);
+  const estTok=Math.round(rawTok*nvP*bB);
+  const hourlyH=s.gpuHyper*s.nGpu;
+  const hourlyS=s.gpuSpec*s.nGpu;
+  const hourlySp=s.gpuSpot*s.nGpu;
+  return{weightsGB,kvGB,actGB,totalOH,totalGB,perW,perKV,perA,perOH,perTotal,totalVRAM,freeKV,kvPerTokGB,kvBPerTok,maxCtx1,maxConc8k,maxConc4k,estTok,hourlyH,hourlyS,hourlySp,isMoE,totalTok};
+}
+
+function calc(){
+  const s=getState();const c=computeFromState(s);
+  const pd=PR[s.preset]||null;const isMoE=pd?pd.moe:s.active<100;
+  const hfModel=pd?pd.hf:(importedHfId&&!importedHfId.endsWith('.json')?importedHfId:'/opt/models/YourModel');
+
+  document.getElementById('params-out').textContent=s.params+'B';
+  document.getElementById('active-out').textContent=s.active+'%';
+  document.getElementById('layers-out').textContent=s.layers;
+  document.getElementById('kvheads-out').textContent=s.kvHeads;
+  document.getElementById('hdim-out').textContent=s.hDim;
+  document.getElementById('shared-exp-out').textContent=s.sharedExp;
+  document.getElementById('ctx-out').textContent=fK(s.ctx);
+  document.getElementById('conc-out').textContent=s.conc;
+  document.getElementById('ngpu-out').textContent=s.nGpu;
+
+  let sH='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
+  sH+='<span class="badge" style="background:var(--acc-bg);color:var(--acc-tx)"><i class="ti ti-cpu" style="font-size:13px"></i> '+(s.nGpu>1?'TP='+s.nGpu:'Single GPU')+'</span>';
+  if(s.nGpu>1&&!s.nvlink)sH+='<span class="badge" style="background:var(--warn-bg);color:var(--warn-tx)"><i class="ti ti-alert-triangle" style="font-size:13px"></i> PCIe — 30-50% perf loss</span>';
+  if(isMoE)sH+='<span class="badge" style="background:var(--ok-bg);color:var(--ok-tx)">MoE ('+s.active+'% active'+(s.sharedExp?', '+s.sharedExp+' shared':'')+')</span>';
+  if(s.kvBpp<2)sH+='<span class="badge" style="background:var(--ok-bg);color:var(--ok-tx)">FP8 KV cache</span>';
+  sH+='</div>';si('strat-line',sH);
+
+  let aH='';
+  const mx=Math.max(c.perTotal,s.gpuGb)*1.05;
+  const wP=Math.max(c.perW/mx*100,.5),kvP=Math.max(c.perKV/mx*100,.5),aP=Math.max(c.perA/mx*100,.5),oP=Math.max(c.perOH/mx*100,.5);
+  const free=s.gpuGb-c.perTotal,fP=free>0?free/mx*100:0;
+  const pct=Math.round(c.perTotal/s.gpuGb*100);
+
+  if(s.nGpu<=4){
+    // Individual GPU cards
+    const cols='repeat('+s.nGpu+',1fr)';
+    aH+='<div class="gg" style="grid-template-columns:'+cols+'">';
+    for(let i=0;i<s.nGpu;i++){
+      const lS=Math.floor(s.layers/s.nGpu*i),lE=Math.floor(s.layers/s.nGpu*(i+1))-1;
+      aH+='<div class="gc"><p class="gt"><i class="ti ti-device-desktop"></i>GPU '+i;
+      if(s.nGpu>1&&s.nvlink)aH+='<span class="nvl"><i class="ti ti-arrows-exchange" style="font-size:11px"></i>NVLink</span>';
+      aH+='</p><div class="bar">';
+      aH+='<div style="width:'+wP.toFixed(1)+'%;background:#7F77DD;color:#EEEDFE">'+(wP>14?fmt(c.perW):'')+'</div>';
+      aH+='<div style="width:'+kvP.toFixed(1)+'%;background:#EF9F27;color:#412402">'+(kvP>14?fmt(c.perKV):'')+'</div>';
+      aH+='<div style="width:'+aP.toFixed(1)+'%;background:#1D9E75"></div>';
+      aH+='<div style="width:'+oP.toFixed(1)+'%;background:#888780"></div>';
+      if(fP>0)aH+='<div style="width:'+fP.toFixed(1)+'%;background:var(--bg);color:var(--fg3);border-left:.5px solid var(--bd)">'+(fP>10?fmt(free):'')+'</div>';
+      aH+='</div><p class="gd">'+fmt(c.perTotal)+' / '+s.gpuGb+' GB ('+Math.min(pct,999)+'%)'+(s.nGpu>1?' · L'+lS+'–'+lE:'')+'</p></div>';
+    }
+    aH+='</div>';
+  } else {
+    // Condensed single card for large clusters
+    const lPerGpu=Math.ceil(s.layers/s.nGpu);
+    aH+='<div class="gc" style="margin:10px 0">';
+    aH+='<p class="gt"><i class="ti ti-server" style="font-size:16px"></i> <b>'+s.nGpu+'× '+s.gpuName+'</b>';
+    if(s.nvlink)aH+='<span class="nvl"><i class="ti ti-arrows-exchange" style="font-size:11px"></i>NVLink</span>';
+    aH+='</p>';
+    aH+='<div style="font-size:12px;color:var(--fg2);margin:0 0 8px">Each GPU — '+fmt(c.perTotal)+' / '+s.gpuGb+' GB ('+Math.min(pct,999)+'%)</div>';
+    aH+='<div class="bar">';
+    aH+='<div style="width:'+wP.toFixed(1)+'%;background:#7F77DD;color:#EEEDFE">'+(wP>10?fmt(c.perW):'')+'</div>';
+    aH+='<div style="width:'+kvP.toFixed(1)+'%;background:#EF9F27;color:#412402">'+(kvP>10?fmt(c.perKV):'')+'</div>';
+    aH+='<div style="width:'+aP.toFixed(1)+'%;background:#1D9E75"></div>';
+    aH+='<div style="width:'+oP.toFixed(1)+'%;background:#888780"></div>';
+    if(fP>0)aH+='<div style="width:'+fP.toFixed(1)+'%;background:var(--bg);color:var(--fg3);border-left:.5px solid var(--bd)">'+(fP>8?fmt(free):'')+'</div>';
+    aH+='</div>';
+    // Cluster summary
+    let cTp=s.nGpu,cDp=1;
+    if(s.nGpu>8){for(let t=8;t>=2;t--){if(s.nGpu%t===0){cTp=t;cDp=s.nGpu/t;break;}}if(cDp===1&&s.nGpu>8){cTp=8;cDp=Math.floor(s.nGpu/8);}}
+    aH+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0">';
+    aH+='<div style="font-size:12px"><span style="color:var(--fg3)">Cluster VRAM</span><br><b>'+fmt(s.gpuGb*s.nGpu)+'</b></div>';
+    aH+='<div style="font-size:12px"><span style="color:var(--fg3)">Weights sharded</span><br><b>'+s.nGpu+'-way</b> ('+fmt(c.perW)+'/GPU)</div>';
+    aH+='<div style="font-size:12px"><span style="color:var(--fg3)">Layers per GPU</span><br><b>~'+lPerGpu+'</b> of '+s.layers+'</div>';
+    aH+='<div style="font-size:12px"><span style="color:var(--fg3)">Parallelism</span><br><b>TP='+cTp+(cDp>1?' × DP='+cDp:'')+'</b></div>';
+    if(s.nGpu>8){
+      const nodes=Math.ceil(s.nGpu/8);
+      aH+='<div style="font-size:12px"><span style="color:var(--fg3)">Est. nodes</span><br><b>~'+nodes+'</b> (8 GPU/node)</div>';
+    }
+    aH+='</div>';
+    if(s.nGpu>8){
+      aH+='<div style="font-size:11px;color:var(--warn-tx);background:var(--warn-bg);border-radius:var(--r);padding:6px 10px;margin:6px 0"><i class="ti ti-alert-triangle" style="font-size:13px;vertical-align:-2px;margin-right:4px"></i>'+s.nGpu+' GPUs likely spans '+Math.ceil(s.nGpu/8)+'+ nodes. TP='+cTp+(cDp>1?' × DP='+cDp:'')+' shown as a starting point. Optimal split depends on intra-node NVLink bandwidth vs inter-node InfiniBand/RoCE topology. VRAM math is correct — parallelism strategy needs tuning on real hardware.</div>';
+    }
+    aH+='</div>';
+  }
+  if(s.nGpu>1)aH+='<div style="text-align:center;font-size:11px;color:var(--fg3);margin:-2px 0 4px"><i class="ti ti-arrows-exchange" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>'+(s.nvlink?'NVLink — sharded '+s.nGpu+'-way, each GPU holds 1/'+s.nGpu+' of model':'PCIe — same sharding, 5-12x slower all-reduce')+'</div>';
+  si('gpu-arch',aH);
+
+  si('metrics-grid','<div class="ms"><div class="mc"><p class="ml">Weights</p><p class="mn">'+fmt(c.weightsGB)+'</p></div><div class="mc"><p class="ml">KV cache ('+c.totalTok.toLocaleString()+' tok)</p><p class="mn">'+fmt(c.kvGB)+'</p></div><div class="mc"><p class="ml">Act + overhead</p><p class="mn">'+fmt(c.actGB+c.totalOH)+'</p></div><div class="mc"><p class="ml">Total</p><p class="mn">'+fmt(c.totalGB)+'</p></div><div class="mc"><p class="ml">Total VRAM</p><p class="mn">'+c.totalVRAM+' GB</p></div><div class="mc"><p class="ml">Per-GPU</p><p class="mn">'+fmt(c.perTotal)+'</p></div></div>');
+
+  const vb=document.getElementById('verdict-box');
+  if(c.perTotal<=s.gpuGb*0.9)vb.innerHTML='<div class="vd" style="background:var(--ok-bg);color:var(--ok-tx)"><i class="ti ti-check"></i>Fits. '+fmt(c.perTotal)+' / '+s.gpuGb+' GB ('+Math.round(c.perTotal/s.gpuGb*100)+'%).</div>';
+  else if(c.perTotal<=s.gpuGb)vb.innerHTML='<div class="vd" style="background:var(--warn-bg);color:var(--warn-tx)"><i class="ti ti-alert-triangle"></i>Tight. '+fmt(c.perTotal)+' / '+s.gpuGb+' GB. May OOM under load.</div>';
+  else{const need=Math.ceil(c.totalGB/(s.gpuGb*0.9));vb.innerHTML='<div class="vd" style="background:var(--err-bg);color:var(--err-tx)"><i class="ti ti-x"></i>Over by '+fmt(c.perTotal-s.gpuGb)+' per GPU. Need '+need+'+ GPUs or lower precision.</div>';}
+
+  si('rev-cards','<div class="rg"><div class="rc"><p class="rl">Max context (1 user, 90% util)</p><p class="rv">'+fK(c.maxCtx1)+' tokens</p><p class="rs">'+fmt(c.freeKV)+' free for KV'+(s.kvBpp<2?' (FP8 KV)':'')+'</p></div><div class="rc"><p class="rl">Max concurrent @ 8K</p><p class="rv">'+Math.max(c.maxConc8k,0)+' users</p><p class="rs">Each: '+fmt(c.kvPerTokGB*8192)+' KV</p></div></div><div class="rg" style="margin-top:0"><div class="rc"><p class="rl">Max concurrent @ 4K</p><p class="rv">'+Math.max(c.maxConc4k,0)+' users</p><p class="rs">Each: '+fmt(c.kvPerTokGB*4096)+' KV</p></div><div class="rc"><p class="rl">KV per token</p><p class="rv">'+Math.round(c.kvBPerTok)+' B</p><p class="rs">2 × '+s.layers+' L × '+s.kvHeads+' H × '+s.hDim+' D × '+s.kvBpp+'B</p></div></div>');
+
+  const bC=c.estTok>100?'#1D9E75':c.estTok>30?'#EF9F27':'#E24B4A';
+  const bP=Math.min(c.estTok/500*100,100);
+  const ttft=c.estTok>0?Math.round(1000/c.estTok*s.ctx/1000):0;
+  const bench=lookupBenchmark(s.params,s.gpuName,s.gpuGb);
+  let tpH='<div class="rg"><div class="rc"><p class="rl">Est. decode throughput (theoretical)</p><p class="rv">~'+fT(c.estTok)+' tok/s</p><div class="tb"><div style="width:'+bP.toFixed(1)+'%;background:'+bC+'"></div></div><p class="rs">Memory-bandwidth bound · '+s.gpuName+' @ '+s.gpuBw+' GB/s</p></div>';
+  tpH+='<div class="rc"><p class="rl">TTFT estimate</p><p class="rv">~'+(ttft||'N/A')+' ms</p><p class="rs">Prefill at '+fK(s.ctx)+' context</p></div></div>';
+  if(bench){
+    tpH+='<div class="gc" style="margin:8px 0;border-left:3px solid var(--acc)">';
+    tpH+='<p style="font-size:12px;font-weight:500;margin:0 0 4px"><i class="ti ti-chart-dots" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--acc)"></i>Published benchmark: <b>'+bench.tokS.toLocaleString()+' tok/s</b></p>';
+    tpH+='<p style="font-size:11px;color:var(--fg3);margin:0">'+bench.note+' · Source: '+bench.src+'</p>';
+    const ratio=Math.round(c.estTok/bench.tokS*100);
+    if(ratio>130)tpH+='<p style="font-size:11px;color:var(--warn-tx);margin:4px 0 0">Theoretical estimate is '+ratio+'% of benchmark — likely overestimated. Benchmark is more reliable for this combo.</p>';
+    else if(ratio<70)tpH+='<p style="font-size:11px;color:var(--fg3);margin:4px 0 0">Theoretical is '+ratio+'% of benchmark — different precision or batching conditions. Benchmark used '+bench.prec+'.</p>';
+    else tpH+='<p style="font-size:11px;color:var(--ok-tx);margin:4px 0 0">Theoretical and benchmark are within range ('+ratio+'%). Estimate is reasonable.</p>';
+    tpH+='</div>';
+  } else {
+    tpH+='<div style="font-size:11px;color:var(--fg3);padding:4px 10px;margin:4px 0">No published benchmark for this model size / GPU combo. Theoretical estimate only — real throughput depends on batching, attention impl, and quantization kernels.</div>';
+  }
+  si('tp-sec',tpH);
+
+  const moH=c.hourlyH*730,moS=c.hourlyS*730,moSp=c.hourlySp*730;
+  let costH='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">';
+  costH+='<tr style="border-bottom:.5px solid var(--bd)"><td style="padding:8px 10px;color:var(--fg2);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--fg2)">Per GPU/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--fg2)">Total/hr ('+s.nGpu+'×)</td><td style="padding:8px 10px;font-size:12px;color:var(--fg2)">Monthly (730h)</td></tr>';
+  costH+='<tr style="border-bottom:.5px solid var(--bd)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--fg3)">AWS, GCP, Azure on-demand</span></td><td style="padding:8px 10px;font-weight:500">$'+s.gpuHyper.toFixed(2)+'</td><td style="padding:8px 10px;font-weight:500">$'+c.hourlyH.toFixed(2)+'</td><td style="padding:8px 10px;font-weight:500">$'+Math.round(moH).toLocaleString()+'</td></tr>';
+  costH+='<tr style="border-bottom:.5px solid var(--bd)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--fg3)">Lambda, CoreWeave, RunPod</span></td><td style="padding:8px 10px;font-weight:500">$'+s.gpuSpec.toFixed(2)+'</td><td style="padding:8px 10px;font-weight:500">$'+c.hourlyS.toFixed(2)+'</td><td style="padding:8px 10px;font-weight:500">$'+Math.round(moS).toLocaleString()+'</td></tr>';
+  costH+='<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--fg3)">Vast.ai, spot instances, preemptible</span></td><td style="padding:8px 10px;font-weight:500">$'+s.gpuSpot.toFixed(2)+'</td><td style="padding:8px 10px;font-weight:500">$'+c.hourlySp.toFixed(2)+'</td><td style="padding:8px 10px;font-weight:500;color:var(--ok)">$'+Math.round(moSp).toLocaleString()+'</td></tr>';
+  costH+='</table></div>';
+  costH+='<div style="font-size:11px;color:var(--fg3);padding:4px 10px">Prices per GPU/hr as of mid-2026. Vary by region, commitment, and availability. Reserved instances typically 30-60% off on-demand. Spot can be interrupted.</div>';
+  si('cost-sec',costH);
+
+  let cmd='';
+  let cmdWarn='';
+  if(c.perTotal>s.gpuGb){
+    cmd='# Does not fit — increase GPUs, lower precision, or reduce context';
+  } else {
+    // For >8 GPUs, split into TP × DP. TP is typically 2, 4, or 8.
+    let tp=s.nGpu, dp=1;
+    if(s.nGpu>8){
+      // Find largest TP that divides nGpu and is <=8
+      for(let t=8;t>=2;t--){
+        if(s.nGpu%t===0){tp=t;dp=s.nGpu/t;break;}
+      }
+      // If no clean split, fall back to TP=8
+      if(dp===1&&s.nGpu>8){tp=8;dp=Math.floor(s.nGpu/8);}
+    }
+
+    cmd='vllm serve '+hfModel+' \\\n    --host 0.0.0.0 --port 8000 \\\n';
+    if(s.nGpu>1)cmd+='    --tensor-parallel-size '+tp+' \\\n';
+    if(dp>1)cmd+='    --data-parallel-size '+dp+' \\\n';
+    if(s.bpp<=0.5)cmd+='    --quantization awq --dtype float16 \\\n';
+    else if(s.bpp<=1)cmd+='    --dtype float16 \\\n';
+    else cmd+='    --dtype auto \\\n';
+    if(s.kvBpp<2)cmd+='    --kv-cache-dtype fp8 \\\n';
+    if(isMoE&&s.nGpu>1)cmd+='    --enable-expert-parallel \\\n';
+    cmd+='    --gpu-memory-utilization 0.90 \\\n';
+    cmd+='    --max-model-len '+Math.min(c.maxCtx1,s.ctx);
+
+    if(s.nGpu>8){
+      cmdWarn='<div class="vd" style="background:var(--warn-bg);color:var(--warn-tx);margin:0 0 8px"><i class="ti ti-alert-triangle"></i> '+s.nGpu+' GPUs: this command uses TP='+tp+' × DP='+dp+' as a starting point. Large clusters often need tuning — the optimal TP/DP/PP split depends on model architecture, interconnect topology (intra-node NVLink vs inter-node InfiniBand), and whether you\'re optimizing for latency or throughput. Test with your actual hardware before production.</div>';
+    }
+  }
+  si('cmd-sec',cmdWarn+'<div class="cb"><button class="cpb" onclick="cpCmd(this)"><i class="ti ti-copy" style="font-size:13px"></i> Copy</button><code>'+cmd+'</code></div>');
+
+  // Training sliders output
+  document.getElementById('train-bs-out').textContent=gv('train-bs');
+  document.getElementById('train-seq-out').textContent=fK(gv('train-seq'));
+  document.getElementById('train-rank-out').textContent=gv('train-rank');
+  document.getElementById('train-targets-out').textContent=gv('train-targets');
+  document.getElementById('train-hs-out').textContent=gv('train-hs');
+
+  // Training VRAM estimation
+  const trainOn=document.getElementById('train-on').checked;
+  if(trainOn){
+    const method=document.getElementById('train-method').value;
+    const optim=document.getElementById('train-optim').value;
+    const gc=+document.getElementById('train-gc').value;
+    const bs=gv('train-bs');
+    const seqLen=gv('train-seq');
+    const loraRank=gv('train-rank');
+    const loraTgt=gv('train-targets');
+    const hs=gv('train-hs');
+    const optimBpp=optim==='adam'?8:4; // bytes per trainable param
+
+    const nGpuT=s.nGpu;
+    let trainWeightsGB,trainGradsGB,trainOptGB,trainActGB,trainAdapterGB=0;
+    let trainableParams,trainMethod;
+
+    if(method==='full'){
+      trainMethod='Full fine-tune';
+      const wBpp=Math.max(s.bpp,2); // training typically in BF16 minimum
+      trainWeightsGB=(s.params*1e9*wBpp)/1e9/nGpuT;
+      trainableParams=s.params*1e9;
+      trainGradsGB=(s.params*1e9*wBpp)/1e9/nGpuT;
+      trainOptGB=(s.params*1e9*optimBpp)/1e9/nGpuT;
+      const actFactor=gc?2:10;
+      trainActGB=(bs*seqLen*hs*s.layers*actFactor)/1e9/nGpuT;
+    } else {
+      // LoRA / QLoRA
+      trainMethod=method==='qlora'?'QLoRA':'LoRA';
+      const baseBpp=method==='qlora'?0.5:Math.max(s.bpp,2);
+      trainWeightsGB=(s.params*1e9*baseBpp)/1e9/nGpuT;
+      // Adapter params: target_modules * layers * 2 * rank * hidden_size (A+B matrices)
+      const adapterParams=loraTgt*s.layers*2*loraRank*hs;
+      trainableParams=adapterParams;
+      trainAdapterGB=(adapterParams*2)/1e9/nGpuT; // adapters in BF16
+      trainGradsGB=(adapterParams*2)/1e9/nGpuT;
+      trainOptGB=(adapterParams*optimBpp)/1e9/nGpuT;
+      const actFactor=gc?2:10;
+      trainActGB=(bs*seqLen*hs*s.layers*actFactor)/1e9/nGpuT;
+    }
+
+    const trainOH=1.5+(nGpuT>1?0.3:0);
+    const trainTotal=trainWeightsGB+trainGradsGB+trainOptGB+trainActGB+trainAdapterGB+trainOH;
+    const trainFits=trainTotal<=s.gpuGb;
+    const trainComfy=trainTotal<=s.gpuGb*0.9;
+    const trainPct=Math.round(trainTotal/s.gpuGb*100);
+    const trainableM=trainableParams>=1e9?(trainableParams/1e9).toFixed(1)+'B':(trainableParams/1e6).toFixed(0)+'M';
+
+    let tH='<div style="margin-top:12px">';
+
+    // Verdict
+    if(trainComfy)tH+='<div class="vd" style="background:var(--ok-bg);color:var(--ok-tx)"><i class="ti ti-check"></i>Training fits. '+fmt(trainTotal)+' / '+s.gpuGb+' GB per GPU ('+trainPct+'%).</div>';
+    else if(trainFits)tH+='<div class="vd" style="background:var(--warn-bg);color:var(--warn-tx)"><i class="ti ti-alert-triangle"></i>Training tight. '+fmt(trainTotal)+' / '+s.gpuGb+' GB ('+trainPct+'%). Reduce batch size or seq length.</div>';
+    else{const tn=Math.ceil((trainTotal*nGpuT)/(s.gpuGb*0.9));tH+='<div class="vd" style="background:var(--err-bg);color:var(--err-tx)"><i class="ti ti-x"></i>Training does not fit. '+fmt(trainTotal)+' per GPU exceeds '+s.gpuGb+' GB by '+fmt(trainTotal-s.gpuGb)+'. Need '+tn+'+ GPUs, lower batch, or switch to '+(method==='full'?'LoRA/QLoRA':'QLoRA with smaller rank')+'.</div>';}
+
+    // Bar
+    const tmx=Math.max(trainTotal,s.gpuGb)*1.05;
+    const twP=Math.max(trainWeightsGB/tmx*100,.5);
+    const tgP=Math.max(trainGradsGB/tmx*100,.5);
+    const toP=Math.max(trainOptGB/tmx*100,.5);
+    const taP=Math.max(trainActGB/tmx*100,.5);
+    const tlP=Math.max(trainAdapterGB/tmx*100,.5);
+    const tohP=Math.max(trainOH/tmx*100,.5);
+    const tfree=s.gpuGb-trainTotal;
+    const tfP=tfree>0?tfree/tmx*100:0;
+
+    tH+='<div class="lg" style="margin-top:8px"><span><i style="background:#7F77DD"></i>Weights</span>';
+    if(trainAdapterGB>0)tH+='<span><i style="background:#9F8FEE"></i>Adapters</span>';
+    tH+='<span><i style="background:#EF9F27"></i>Gradients</span><span><i style="background:#E87040"></i>Optimizer</span><span><i style="background:#1D9E75"></i>Activations</span><span><i style="background:#888780"></i>Overhead</span></div>';
+    tH+='<div class="bar" style="margin-top:4px">';
+    tH+='<div style="width:'+twP.toFixed(1)+'%;background:#7F77DD;color:#EEEDFE">'+(twP>10?fmt(trainWeightsGB):'')+'</div>';
+    if(tlP>0)tH+='<div style="width:'+tlP.toFixed(1)+'%;background:#9F8FEE;color:#EEEDFE">'+(tlP>10?fmt(trainAdapterGB):'')+'</div>';
+    tH+='<div style="width:'+tgP.toFixed(1)+'%;background:#EF9F27;color:#412402">'+(tgP>10?fmt(trainGradsGB):'')+'</div>';
+    tH+='<div style="width:'+toP.toFixed(1)+'%;background:#E87040;color:#fff">'+(toP>10?fmt(trainOptGB):'')+'</div>';
+    tH+='<div style="width:'+taP.toFixed(1)+'%;background:#1D9E75;color:#E1F5EE">'+(taP>10?fmt(trainActGB):'')+'</div>';
+    tH+='<div style="width:'+tohP.toFixed(1)+'%;background:#888780"></div>';
+    if(tfP>0)tH+='<div style="width:'+tfP.toFixed(1)+'%;background:var(--bg);color:var(--fg3);border-left:.5px solid var(--bd)">'+(tfP>8?fmt(tfree):'')+'</div>';
+    tH+='</div>';
+
+    // Metrics
+    tH+='<div class="ms" style="margin-top:8px">';
+    tH+='<div class="mc"><p class="ml">Method</p><p class="mn">'+trainMethod+'</p></div>';
+    tH+='<div class="mc"><p class="ml">Trainable params</p><p class="mn">'+trainableM+'</p></div>';
+    tH+='<div class="mc"><p class="ml">Weights'+(method!=='full'?' (frozen)':'')+'</p><p class="mn">'+fmt(trainWeightsGB)+'</p></div>';
+    if(trainAdapterGB>0)tH+='<div class="mc"><p class="ml">LoRA adapters</p><p class="mn">'+fmt(trainAdapterGB)+'</p></div>';
+    tH+='<div class="mc"><p class="ml">Gradients</p><p class="mn">'+fmt(trainGradsGB)+'</p></div>';
+    tH+='<div class="mc"><p class="ml">Optimizer states</p><p class="mn">'+fmt(trainOptGB)+'</p></div>';
+    tH+='<div class="mc"><p class="ml">Activations'+(gc?' (checkpointed)':'')+'</p><p class="mn">'+fmt(trainActGB)+'</p></div>';
+    tH+='<div class="mc"><p class="ml">Total per GPU</p><p class="mn">'+fmt(trainTotal)+'</p></div>';
+    tH+='</div>';
+
+    // Comparison vs inference
+    tH+='<div class="note" style="margin-top:8px"><i class="ti ti-info-circle"></i> ';
+    tH+='Training uses '+fmt(trainTotal)+'/GPU vs inference at '+fmt(c.perTotal)+'/GPU ('+Math.round(trainTotal/Math.max(c.perTotal,0.01))+'x more). ';
+    if(method==='full')tH+='Full fine-tune stores gradients and optimizer states for all '+s.params+'B params. Switch to LoRA to train only '+trainableM+' adapter params. ';
+    if(method==='lora')tH+='LoRA trains '+trainableM+' adapter params (rank '+loraRank+' × '+loraTgt+' modules × '+s.layers+' layers). Base weights are frozen but must stay in VRAM. ';
+    if(method==='qlora')tH+='QLoRA: base weights quantized to INT4 ('+fmt(trainWeightsGB)+'), adapters in BF16. Saves ~'+fmt((s.params*1e9*2/1e9/nGpuT)-trainWeightsGB)+' vs LoRA with BF16 base. ';
+    if(gc)tH+='Gradient checkpointing enabled — trades ~30% slower training for ~60-70% less activation memory. ';
+    tH+='Activation memory scales with batch_size × seq_length. If training doesn\'t fit, reduce batch size first.';
+    tH+='</div>';
+    tH+='</div>';
+    si('train-results',tH);
+  } else {
+    si('train-results','');
+  }
+
+  renderComparisons();
+  updateHash();
+
+  let n='<i class="ti ti-info-circle"></i> ';
+  n+='KV cache uses '+(s.kvBpp<2?'FP8 (1 byte/value) — enabled via --kv-cache-dtype fp8. ':'BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. ');
+  n+='Throughput is a memory-bandwidth-bound decode estimate. ';
+  if(s.sharedExp>0)n+='Shared experts ('+s.sharedExp+') are always active and included in the active parameter ratio for activation memory. ';
+  if(s.nGpu>1)n+=(s.nvlink?'NVLink 600-900 GB/s. ':'PCIe 64-128 GB/s — 30-50% decode loss. ')+'NCCL buffers ~0.3 GB/peer. ';
+  n+='Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact tensor sizes. GPU prices are mid-2026 per-GPU/hr estimates across 3 tiers: hyperscaler on-demand (AWS/GCP/Azure), specialized providers (Lambda/CoreWeave/RunPod), and spot/marketplace (Vast.ai, preemptible). Reserved instances are typically 30-60% off on-demand. Prices vary by region and availability. ';
+  if(trainOn)n+='Training VRAM is an estimate — actual usage depends on framework (HuggingFace Trainer, DeepSpeed, FSDP), mixed precision strategy, gradient accumulation, and model-specific factors. Activation memory uses a simplified formula (batch × seq × hidden × layers × factor) — real activations vary by architecture. For FSDP/DeepSpeed ZeRO, optimizer states and gradients are sharded across GPUs — this calculator assumes tensor parallel (TP) sharding only.';
+  si('notes-sec',n);
+}
+
+function cpCmd(btn){navigator.clipboard.writeText(btn.parentElement.querySelector('code').textContent);btn.innerHTML='<i class="ti ti-check" style="font-size:13px"></i> Copied';}
+
+function saveSnapshot(){
+  const s=getState();const c=computeFromState(s);
+  const pd=PR[s.preset]||null;
+  const name=pd?document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text:(importedHfId||s.params+'B model');
+  snapshots.push({name,state:s,computed:c,ts:Date.now()});
+  renderComparisons();
+}
+
+function removeSnap(i){snapshots.splice(i,1);renderComparisons();}
+
+function renderComparisons(){
+  if(!snapshots.length){si('cmp-sec','<p style="font-size:12px;color:var(--fg3)">No snapshots saved. Click "Save snapshot" to compare configurations.</p>');return;}
+  const cols=snapshots.length<=3?'repeat('+snapshots.length+',1fr)':'repeat(3,1fr)';
+  let h='<div class="cmp-grid" style="grid-template-columns:'+cols+'">';
+  snapshots.forEach((snap,i)=>{
+    const c=snap.computed;const s=snap.state;
+    const fits=c.perTotal<=s.gpuGb;
+    h+='<div class="cmp-card"><button class="cmp-rm" onclick="removeSnap('+i+')" title="Remove"><i class="ti ti-x"></i></button>';
+    h+='<p class="cmp-name">'+snap.name+'</p>';
+    h+='<div class="cmp-row"><span class="cl">GPU</span><span class="cv2">'+s.nGpu+'× '+s.gpuName+'</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Precision</span><span class="cv2">'+s.bpp+' B/param</span></div>';
+    h+='<div class="cmp-row"><span class="cl">KV dtype</span><span class="cv2">'+(s.kvBpp<2?'FP8':'BF16')+'</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Weights</span><span class="cv2">'+fmt(c.weightsGB)+'</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Per-GPU</span><span class="cv2" style="color:'+(fits?'var(--ok-tx)':'var(--err-tx)')+'">'+fmt(c.perTotal)+' / '+s.gpuGb+'</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Max ctx (1u)</span><span class="cv2">'+fK(c.maxCtx1)+'</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Max users @8K</span><span class="cv2">'+Math.max(c.maxConc8k,0)+'</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Throughput</span><span class="cv2">~'+fT(c.estTok)+' tok/s</span></div>';
+    h+='<div class="cmp-row"><span class="cl">Cost/hr</span><span class="cv2">$'+c.hourlySp.toFixed(2)+'–$'+c.hourlyH.toFixed(2)+'</span></div>';
+    h+='</div>';
+  });
+  h+='</div>';si('cmp-sec',h);
+}
+
+function exportSummary(){
+  const s=getState();const c=computeFromState(s);
+  const pd=PR[s.preset]||null;
+  const name=pd?document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text:(importedHfId||s.params+'B model');
+  const fits=c.perTotal<=s.gpuGb;
+  let t='# LLM VRAM plan — '+name+'\n\n';
+  t+='## Model\n';
+  t+='- Parameters: '+s.params+'B'+(s.active<100?' (MoE, '+s.active+'% active)':' (dense)')+'\n';
+  t+='- Precision: '+s.bpp+' bytes/param\n';
+  t+='- KV cache: '+(s.kvBpp<2?'FP8':'BF16')+'\n';
+  t+='- Layers: '+s.layers+', KV heads: '+s.kvHeads+', head dim: '+s.hDim+'\n';
+  if(s.sharedExp)t+='- Shared experts: '+s.sharedExp+' (always active)\n';
+  t+='\n## GPU\n';
+  t+='- '+s.nGpu+'× '+s.gpuName+(s.nGpu>1?(s.nvlink?' (NVLink)':' (PCIe)'):'')+'\n';
+  t+='- Total VRAM: '+c.totalVRAM+' GB\n';
+  t+='\n## VRAM breakdown\n';
+  t+='- Weights: '+fmt(c.weightsGB)+'\n';
+  t+='- KV cache ('+c.totalTok.toLocaleString()+' tokens): '+fmt(c.kvGB)+'\n';
+  t+='- Activations + overhead: '+fmt(c.actGB+c.totalOH)+'\n';
+  t+='- Total: '+fmt(c.totalGB)+'\n';
+  t+='- Per-GPU: '+fmt(c.perTotal)+' / '+s.gpuGb+' GB ('+(fits?'FITS':'DOES NOT FIT')+')\n';
+  t+='\n## Capacity\n';
+  t+='- Max context (1 user): '+fK(c.maxCtx1)+'\n';
+  t+='- Max concurrent @ 8K: '+Math.max(c.maxConc8k,0)+'\n';
+  t+='- Max concurrent @ 4K: '+Math.max(c.maxConc4k,0)+'\n';
+  t+='- Est. throughput: ~'+fT(c.estTok)+' tok/s\n';
+  t+='\n## Cost (per GPU/hr, '+s.nGpu+'x '+s.gpuName+')\n';
+  t+='- Hyperscaler (AWS/GCP/Azure): $'+c.hourlyH.toFixed(2)+'/hr · $'+Math.round(c.hourlyH*730).toLocaleString()+'/mo\n';
+  t+='- Specialized (Lambda/CoreWeave): $'+c.hourlyS.toFixed(2)+'/hr · $'+Math.round(c.hourlyS*730).toLocaleString()+'/mo\n';
+  t+='- Spot/marketplace: $'+c.hourlySp.toFixed(2)+'/hr · $'+Math.round(c.hourlySp*730).toLocaleString()+'/mo\n';
+  t+='\n## vLLM command\n```\n'+document.querySelector('#cmd-sec code').textContent+'\n```\n';
+  navigator.clipboard.writeText(t).then(()=>{
+    const btn=document.querySelector('.act-bar button');
+    const orig=btn.innerHTML;btn.innerHTML='<i class="ti ti-check" style="font-size:14px"></i> Copied!';
+    setTimeout(()=>btn.innerHTML=orig,2000);
+  });
+}
+
+function updateHash(){
+  const s=getState();
+  const h='p='+s.params+'&a='+s.active+'&bpp='+s.bpp+'&l='+s.layers+'&kv='+s.kvHeads+'&hd='+s.hDim+'&se='+s.sharedExp+'&ctx='+s.ctx+'&cc='+s.conc+'&ng='+s.nGpu+'&gpu='+encodeURIComponent(document.getElementById('gpu').value)+'&nv='+s.nvlink+'&kvp='+s.kvBpp+'&pr='+encodeURIComponent(document.getElementById('prec').value)+'&pre='+s.preset;
+  history.replaceState(null,'','#'+h);
+}
+
+function loadHash(){
+  if(!location.hash)return false;
+  try{
+    const p=new URLSearchParams(location.hash.slice(1));
+    if(p.has('p'))sv('params',p.get('p'));
+    if(p.has('a'))sv('active',p.get('a'));
+    if(p.has('l'))sv('layers',p.get('l'));
+    if(p.has('kv'))sv('kvheads',p.get('kv'));
+    if(p.has('hd'))sv('hdim',p.get('hd'));
+    if(p.has('se'))sv('shared-exp',p.get('se'));
+    if(p.has('ctx'))sv('ctx',p.get('ctx'));
+    if(p.has('cc'))sv('conc',p.get('cc'));
+    if(p.has('ng'))sv('ngpu',p.get('ng'));
+    if(p.has('gpu')){const sel=document.getElementById('gpu');for(let o of sel.options)if(o.value===p.get('gpu')){o.selected=true;break;}}
+    if(p.has('nv'))sv('nvlink',p.get('nv'));
+    if(p.has('bpp')){const sel=document.getElementById('prec');const v=p.get('bpp');for(let o of sel.options)if(o.value===v){o.selected=true;break;}}
+    if(p.has('pr')){const sel=document.getElementById('prec');const v=p.get('pr');for(let o of sel.options)if(o.value===v){o.selected=true;break;}}
+    if(p.has('kvp')){const sel=document.getElementById('kvprec');for(let o of sel.options)if(o.value===p.get('kvp')){o.selected=true;break;}}
+    if(p.has('pre')&&p.get('pre')){document.getElementById('preset').value=p.get('pre');}
+    return true;
+  }catch(e){return false;}
+}
+
+function copyURL(){
+  navigator.clipboard.writeText(location.href).then(()=>{
+    const btn=document.querySelectorAll('.act-bar button')[2];
+    const orig=btn.innerHTML;btn.innerHTML='<i class="ti ti-check" style="font-size:14px"></i> Copied!';
+    setTimeout(()=>btn.innerHTML=orig,2000);
+  });
+}
+
+if(!loadHash())applyPreset();
+calc();
+</script>
+</body>
+</html>
