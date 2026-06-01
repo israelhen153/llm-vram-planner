@@ -7,7 +7,7 @@ I was deploying vLLM on an air-gapped server and spent 3 hours fighting CUDA ver
 > **[Use it now →](https://israelhen153.github.io/llm-vram-planner/)**  ·  Single HTML file  ·  Works offline  ·  No signup
 
 <!-- TODO: Replace with actual screenshot (1200×630px, engineer mode, configured with a model) -->
-![LLM VRAM Planner](assets/screenshot.png) 
+[LLM VRAM Planner](assets/screenshot.png) 
 
 ---
 
