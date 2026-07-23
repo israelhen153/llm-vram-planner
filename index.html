@@ -388,7 +388,7 @@ body.exec-mode .exec-summary { display: block; }
      Results sections (populated by JS)
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><i class="ti ti-chart-bar"></i> VRAM breakdown</div>
+  <div class="section-title"><i class="ti ti-chart-bar"></i> VRAM breakdown <span class="info-tip" tabindex="0" role="img" aria-label="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per GPU." data-tip="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per GPU."><i class="ti ti-info-circle" aria-hidden="true"></i></span></div>
   <div id="strategy-badges" class="engineer-only"></div>
   <div class="legend engineer-only">
     <span><i style="background:#7F77DD"></i>Weights</span>
@@ -402,11 +402,11 @@ body.exec-mode .exec-summary { display: block; }
   <div id="verdict-output"></div>
 </div>
 
-<div class="section engineer-only"><div class="section-title"><i class="ti ti-arrows-maximize"></i> Capacity limits</div><div id="capacity-output"></div></div>
-<div class="section engineer-only"><div class="section-title"><i class="ti ti-bolt"></i> Throughput</div><div id="throughput-output"></div></div>
-<div class="section"><div class="section-title"><i class="ti ti-currency-dollar"></i> Cost</div><div id="cost-output"></div></div>
-<div class="section engineer-only"><div class="section-title"><i class="ti ti-terminal-2"></i> vLLM command</div><div id="command-output"></div></div>
-<div class="section"><div class="section-title"><i class="ti ti-columns"></i> Comparison <span style="font-size:11px;font-weight:400;color:var(--text-muted);text-transform:none;letter-spacing:0">(save snapshots to compare)</span></div><div id="comparison-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-arrows-maximize"></i> Capacity limits <span class="info-tip" tabindex="0" role="img" aria-label="The longest context and the most concurrent requests that fit in the VRAM left after weights." data-tip="The longest context and the most concurrent requests that fit in the VRAM left after weights."><i class="ti ti-info-circle" aria-hidden="true"></i></span></div><div id="capacity-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-bolt"></i> Throughput <span class="info-tip" tabindex="0" role="img" aria-label="Rough tokens-per-second estimate for decoding, bounded by the GPU memory bandwidth at this batch size." data-tip="Rough tokens-per-second estimate for decoding, bounded by the GPU memory bandwidth at this batch size."><i class="ti ti-info-circle" aria-hidden="true"></i></span></div><div id="throughput-output"></div></div>
+<div class="section"><div class="section-title"><i class="ti ti-currency-dollar"></i> Cost <span class="info-tip" tabindex="0" role="img" aria-label="Hourly and monthly price across three tiers: hyperscaler on-demand, specialized cloud, and spot." data-tip="Hourly and monthly price across three tiers: hyperscaler on-demand, specialized cloud, and spot."><i class="ti ti-info-circle" aria-hidden="true"></i></span></div><div id="cost-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-terminal-2"></i> vLLM command <span class="info-tip" tabindex="0" role="img" aria-label="A ready-to-run vllm serve command with the flags implied by your model, GPU, and workload settings." data-tip="A ready-to-run vllm serve command with the flags implied by your model, GPU, and workload settings."><i class="ti ti-info-circle" aria-hidden="true"></i></span></div><div id="command-output"></div></div>
+<div class="section"><div class="section-title"><i class="ti ti-columns"></i> Comparison <span style="font-size:11px;font-weight:400;color:var(--text-muted);text-transform:none;letter-spacing:0">(save snapshots to compare)</span> <span class="info-tip" tabindex="0" role="img" aria-label="Save snapshots of different configurations, then compare their VRAM, throughput, and cost side by side." data-tip="Save snapshots of different configurations, then compare their VRAM, throughput, and cost side by side."><i class="ti ti-info-circle" aria-hidden="true"></i></span></div><div id="comparison-output"></div></div>
 
 <div class="note-box engineer-only" id="notes-output"></div>
 
