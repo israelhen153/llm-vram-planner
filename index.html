@@ -60,6 +60,25 @@ h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
 @media (max-width: 640px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
 
 /* =============================================================================
+   Info hover icons + tooltips
+   ============================================================================= */
+.info-tip { position: relative; display: inline-flex; align-items: center; vertical-align: middle; margin-left: 4px; color: var(--text-muted); cursor: help; }
+.info-tip svg { width: 14px; height: 14px; display: block; stroke: currentColor; }
+.info-tip:hover, .info-tip:focus { color: var(--accent); outline: none; }
+.info-tip::after {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: 220px; white-space: normal;
+  background: var(--bg-primary); color: var(--text-primary); border: .5px solid var(--border); border-radius: var(--radius);
+  padding: 6px 9px; font-size: 12px; font-weight: 400; line-height: 1.4; text-transform: none; letter-spacing: 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,.15); opacity: 0; visibility: hidden; transition: opacity .15s; z-index: 50; pointer-events: none;
+}
+.info-tip::before {
+  content: ""; position: absolute; bottom: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: var(--border); opacity: 0; visibility: hidden; transition: opacity .15s; z-index: 50;
+}
+.info-tip:hover::after, .info-tip:focus::after, .info-tip:hover::before, .info-tip:focus::before { opacity: 1; visibility: visible; }
+
+/* =============================================================================
    Form controls
    ============================================================================= */
 .field { display: flex; flex-direction: column; gap: 4px; }
@@ -184,6 +203,9 @@ body.exec-mode .exec-summary { display: block; }
 </head>
 <body>
 
+<!-- Inline SVG icon sprite — offline-safe, no CDN dependency for the info glyph -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><symbol id="ico-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 9h.01"/><path d="M11 12h1v4h1"/></symbol></svg>
+
 <!-- ==========================================================================
      Header + action bar
      ========================================================================== -->
@@ -219,9 +241,9 @@ body.exec-mode .exec-summary { display: block; }
      Model configuration
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><i class="ti ti-box-model"></i> Model</div>
+  <div class="section-title"><i class="ti ti-box-model"></i> Model <span class="info-tip" tabindex="0" role="img" aria-label="Choose a preset model or set parameters manually. Presets auto-fill layers, KV heads, and head dimension." data-tip="Choose a preset model or set parameters manually. Presets auto-fill layers, KV heads, and head dimension."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div class="grid-2">
-    <div class="field"><label>Preset</label>
+    <div class="field"><label>Preset <span class="info-tip" tabindex="0" role="img" aria-label="Pick a known model to auto-fill its parameter count, layers, KV heads, and head dimension." data-tip="Pick a known model to auto-fill its parameter count, layers, KV heads, and head dimension."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="preset" onchange="applyPreset()">
         <option value="">Custom (manual)</option>
         <optgroup label="Llama"><option value="llama31-8b">Llama 3.1 8B</option><option value="llama31-70b">Llama 3.1 70B</option><option value="llama33-70b">Llama 3.3 70B</option><option value="llama4-109b">Llama 4 Scout 109B MoE</option></optgroup>
@@ -231,7 +253,7 @@ body.exec-mode .exec-summary { display: block; }
         <optgroup label="Mistral"><option value="mistral-sm4-24b">Mistral Small 4 24B</option><option value="mistral-lg-123b">Mistral Large 123B</option></optgroup>
       </select>
     </div>
-    <div class="field engineer-only"><label>Weight precision</label>
+    <div class="field engineer-only"><label>Weight precision <span class="info-tip" tabindex="0" role="img" aria-label="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0." data-tip="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="weight-precision" onchange="recalculate()">
         <option value="2">BF16 / FP16 (2.0 B/param)</option>
         <option value="1">FP8 (1.0 B/param)</option>
@@ -246,7 +268,7 @@ body.exec-mode .exec-summary { display: block; }
     </div>
   </div>
   <div class="grid-2 engineer-only" style="margin-top:8px">
-    <div class="field"><label>KV cache precision</label>
+    <div class="field"><label>KV cache precision <span class="info-tip" tabindex="0" role="img" aria-label="Bytes per value in the KV cache. FP8 roughly halves KV memory vs BF16 with minimal quality impact (vLLM flag --kv-cache-dtype fp8)." data-tip="Bytes per value in the KV cache. FP8 roughly halves KV memory vs BF16 with minimal quality impact (vLLM flag --kv-cache-dtype fp8)."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="kv-precision" onchange="recalculate()">
         <option value="2" selected>BF16 (2 bytes/value) — default</option>
         <option value="1">FP8 (1 byte/value) — --kv-cache-dtype fp8</option>
@@ -256,12 +278,12 @@ body.exec-mode .exec-summary { display: block; }
   <label class="toggle-row engineer-only"><input type="checkbox" id="show-manual" onchange="document.getElementById('manual-params').style.display=this.checked?'block':'none'"> Show manual parameters</label>
   <div id="manual-params" class="engineer-only" style="display:none">
     <div class="grid-2" style="margin-top:6px">
-      <div class="field"><label>Parameters (B)</label><div class="slider-row"><input type="range" min="1" max="700" value="26" step="1" id="param-count" oninput="recalculate()"><span class="slider-value" id="param-count-display">26B</span></div></div>
-      <div class="field"><label>MoE active %</label><div class="slider-row"><input type="range" min="1" max="100" value="15" step="1" id="active-percent" oninput="recalculate()"><span class="slider-value" id="active-percent-display">15%</span></div></div>
-      <div class="field"><label>Layers</label><div class="slider-row"><input type="range" min="4" max="128" value="26" step="1" id="layer-count" oninput="recalculate()"><span class="slider-value" id="layer-count-display">26</span></div></div>
-      <div class="field"><label>KV heads</label><div class="slider-row"><input type="range" min="1" max="128" value="16" step="1" id="kv-head-count" oninput="recalculate()"><span class="slider-value" id="kv-head-count-display">16</span></div></div>
-      <div class="field"><label>Head dimension</label><div class="slider-row"><input type="range" min="32" max="512" value="128" step="16" id="head-dim" oninput="recalculate()"><span class="slider-value" id="head-dim-display">128</span></div></div>
-      <div class="field"><label>Shared experts</label><div class="slider-row"><input type="range" min="0" max="16" value="0" step="1" id="shared-experts" oninput="recalculate()"><span class="slider-value" id="shared-experts-display">0</span></div></div>
+      <div class="field"><label>Parameters (B) <span class="info-tip" tabindex="0" role="img" aria-label="Total model size in billions of parameters. For MoE models this is the full count, not the active parameters." data-tip="Total model size in billions of parameters. For MoE models this is the full count, not the active parameters."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="700" value="26" step="1" id="param-count" oninput="recalculate()"><span class="slider-value" id="param-count-display">26B</span></div></div>
+      <div class="field"><label>MoE active % <span class="info-tip" tabindex="0" role="img" aria-label="Share of experts active per token in a Mixture-of-Experts model. Weights still occupy full VRAM; only compute scales with this." data-tip="Share of experts active per token in a Mixture-of-Experts model. Weights still occupy full VRAM; only compute scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="100" value="15" step="1" id="active-percent" oninput="recalculate()"><span class="slider-value" id="active-percent-display">15%</span></div></div>
+      <div class="field"><label>Layers <span class="info-tip" tabindex="0" role="img" aria-label="Number of transformer layers. KV cache size grows linearly with the layer count." data-tip="Number of transformer layers. KV cache size grows linearly with the layer count."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="4" max="128" value="26" step="1" id="layer-count" oninput="recalculate()"><span class="slider-value" id="layer-count-display">26</span></div></div>
+      <div class="field"><label>KV heads <span class="info-tip" tabindex="0" role="img" aria-label="Number of key/value attention heads (GQA groups). Fewer KV heads means a smaller KV cache." data-tip="Number of key/value attention heads (GQA groups). Fewer KV heads means a smaller KV cache."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="16" step="1" id="kv-head-count" oninput="recalculate()"><span class="slider-value" id="kv-head-count-display">16</span></div></div>
+      <div class="field"><label>Head dimension <span class="info-tip" tabindex="0" role="img" aria-label="Size of each attention head. KV per token = 2 x layers x KV heads x head dim x bytes." data-tip="Size of each attention head. KV per token = 2 x layers x KV heads x head dim x bytes."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="32" max="512" value="128" step="16" id="head-dim" oninput="recalculate()"><span class="slider-value" id="head-dim-display">128</span></div></div>
+      <div class="field"><label>Shared experts <span class="info-tip" tabindex="0" role="img" aria-label="Experts that run on every token in addition to the routed ones, as in DeepSeek-V3. Set 0 for none." data-tip="Experts that run on every token in addition to the routed ones, as in DeepSeek-V3. Set 0 for none."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="0" max="16" value="0" step="1" id="shared-experts" oninput="recalculate()"><span class="slider-value" id="shared-experts-display">0</span></div></div>
     </div>
   </div>
 </div>
@@ -270,7 +292,7 @@ body.exec-mode .exec-summary { display: block; }
      Import config.json / safetensors
      ========================================================================== -->
 <div class="section engineer-only">
-  <div class="section-title"><i class="ti ti-file-import"></i> Import config</div>
+  <div class="section-title"><i class="ti ti-file-import"></i> Import config <span class="info-tip" tabindex="0" role="img" aria-label="Auto-fill model parameters from a HuggingFace model ID, a config.json, or a safetensors index file." data-tip="Auto-fill model parameters from a HuggingFace model ID, a config.json, or a safetensors index file."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div class="import-box" id="import-box" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleFileDrop(event)">
     <div class="import-row">
       <input type="text" id="hf-model-id" placeholder="HuggingFace ID (e.g. Qwen/Qwen3-8B)" onkeydown="if(event.key==='Enter')fetchFromHuggingFace()">
@@ -292,9 +314,9 @@ body.exec-mode .exec-summary { display: block; }
      GPU configuration
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><i class="ti ti-server"></i> GPU configuration</div>
+  <div class="section-title"><i class="ti ti-server"></i> GPU configuration <span class="info-tip" tabindex="0" role="img" aria-label="Select the GPU type, how many you have, and the interconnect between them." data-tip="Select the GPU type, how many you have, and the interconnect between them."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div class="grid-3">
-    <div class="field"><label>GPU model</label>
+    <div class="field"><label>GPU model <span class="info-tip" tabindex="0" role="img" aria-label="The GPU type sets available VRAM, memory bandwidth, and the hourly price tiers used for cost." data-tip="The GPU type sets available VRAM, memory bandwidth, and the hourly price tiers used for cost."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="gpu-model" onchange="recalculate()">
         <!-- value = "vram_gb|bandwidth_gbps|hyperscaler_$/hr|specialized_$/hr|spot_$/hr" -->
         <option value="16|320|0.76|0.35|0.15" data-n="T4 16GB">T4 16 GB</option>
@@ -307,8 +329,8 @@ body.exec-mode .exec-summary { display: block; }
         <option value="192|8000|14.24|5.50|2.12" data-n="B200 192GB">B200 192 GB</option>
       </select>
     </div>
-    <div class="field"><label>GPU count</label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
-    <div class="field engineer-only"><label>Interconnect</label>
+    <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism." data-tip="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
+    <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="interconnect" onchange="recalculate()"><option value="1">NVLink / NVSwitch</option><option value="0">PCIe only</option></select>
     </div>
   </div>
@@ -318,9 +340,9 @@ body.exec-mode .exec-summary { display: block; }
      Workload configuration
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><i class="ti ti-adjustments"></i> Workload</div>
+  <div class="section-title"><i class="ti ti-adjustments"></i> Workload <span class="info-tip" tabindex="0" role="img" aria-label="Describe the inference traffic: context length and how many requests run at once." data-tip="Describe the inference traffic: context length and how many requests run at once."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div class="grid-2" style="margin-bottom:8px">
-    <div class="field"><label>Workload profile</label>
+    <div class="field"><label>Workload profile <span class="info-tip" tabindex="0" role="img" aria-label="Presets that set a typical context length and concurrency for a given use case." data-tip="Presets that set a typical context length and concurrency for a given use case."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="workload-profile" onchange="applyWorkloadProfile()">
         <option value="">Custom</option>
         <option value="chat">Chat / assistant — low latency, moderate context</option>
@@ -335,8 +357,8 @@ body.exec-mode .exec-summary { display: block; }
     <div class="field engineer-only"><label id="workload-hint" style="color:var(--text-muted);font-style:italic">&nbsp;</label></div>
   </div>
   <div class="grid-2 engineer-only">
-    <div class="field"><label>Context length</label><div class="slider-row"><input type="range" min="1024" max="131072" value="8192" step="1024" id="context-length" oninput="recalculate()"><span class="slider-value" id="context-length-display">8K</span></div></div>
-    <div class="field"><label>Concurrent requests</label><div class="slider-row"><input type="range" min="1" max="256" value="1" step="1" id="concurrency" oninput="recalculate()"><span class="slider-value" id="concurrency-display">1</span></div></div>
+    <div class="field"><label>Context length <span class="info-tip" tabindex="0" role="img" aria-label="Maximum tokens (prompt plus output) per request. KV cache grows linearly with this." data-tip="Maximum tokens (prompt plus output) per request. KV cache grows linearly with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1024" max="131072" value="8192" step="1024" id="context-length" oninput="recalculate()"><span class="slider-value" id="context-length-display">8K</span></div></div>
+    <div class="field"><label>Concurrent requests <span class="info-tip" tabindex="0" role="img" aria-label="Requests in flight at once. Total KV cache is roughly per-request KV times concurrency." data-tip="Requests in flight at once. Total KV cache is roughly per-request KV times concurrency."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="256" value="1" step="1" id="concurrency" oninput="recalculate()"><span class="slider-value" id="concurrency-display">1</span></div></div>
   </div>
 </div>
 
@@ -344,22 +366,22 @@ body.exec-mode .exec-summary { display: block; }
      Training estimation (togglable)
      ========================================================================== -->
 <div class="section engineer-only">
-  <div class="section-title"><i class="ti ti-school"></i> Training estimation</div>
+  <div class="section-title"><i class="ti ti-school"></i> Training estimation <span class="info-tip" tabindex="0" role="img" aria-label="Estimate VRAM for fine-tuning instead of inference (full, LoRA, or QLoRA)." data-tip="Estimate VRAM for fine-tuning instead of inference (full, LoRA, or QLoRA)."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <label class="toggle-row"><input type="checkbox" id="training-enabled" onchange="document.getElementById('training-config').style.display=this.checked?'block':'none';recalculate()"> Enable training VRAM estimation</label>
   <div id="training-config" style="display:none">
     <div class="grid-3" style="margin-top:6px">
-      <div class="field"><label>Method</label><select id="train-method" onchange="recalculate()"><option value="full">Full fine-tune</option><option value="lora" selected>LoRA</option><option value="qlora">QLoRA (4-bit base + LoRA)</option></select></div>
-      <div class="field"><label>Optimizer</label><select id="train-optimizer" onchange="recalculate()"><option value="adam" selected>AdamW (8 B/param)</option><option value="sgd">SGD (4 B/param)</option><option value="adam8">8-bit Adam (4 B/param)</option></select></div>
-      <div class="field"><label>Gradient checkpointing</label><select id="train-grad-ckpt" onchange="recalculate()"><option value="1" selected>Enabled (saves VRAM)</option><option value="0">Disabled (faster)</option></select></div>
+      <div class="field"><label>Method <span class="info-tip" tabindex="0" role="img" aria-label="Full fine-tune updates all weights (most VRAM). LoRA trains small adapters. QLoRA also quantizes the frozen base to 4-bit." data-tip="Full fine-tune updates all weights (most VRAM). LoRA trains small adapters. QLoRA also quantizes the frozen base to 4-bit."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><select id="train-method" onchange="recalculate()"><option value="full">Full fine-tune</option><option value="lora" selected>LoRA</option><option value="qlora">QLoRA (4-bit base + LoRA)</option></select></div>
+      <div class="field"><label>Optimizer <span class="info-tip" tabindex="0" role="img" aria-label="Optimizer state bytes per trainable parameter. AdamW keeps two states (8 B/param); 8-bit Adam halves it; SGD is leanest." data-tip="Optimizer state bytes per trainable parameter. AdamW keeps two states (8 B/param); 8-bit Adam halves it; SGD is leanest."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><select id="train-optimizer" onchange="recalculate()"><option value="adam" selected>AdamW (8 B/param)</option><option value="sgd">SGD (4 B/param)</option><option value="adam8">8-bit Adam (4 B/param)</option></select></div>
+      <div class="field"><label>Gradient checkpointing <span class="info-tip" tabindex="0" role="img" aria-label="Recomputes activations during the backward pass to save VRAM, at the cost of roughly 20-30% slower training." data-tip="Recomputes activations during the backward pass to save VRAM, at the cost of roughly 20-30% slower training."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><select id="train-grad-ckpt" onchange="recalculate()"><option value="1" selected>Enabled (saves VRAM)</option><option value="0">Disabled (faster)</option></select></div>
     </div>
     <div class="grid-3" style="margin-top:8px">
-      <div class="field"><label>Batch size (per GPU)</label><div class="slider-row"><input type="range" min="1" max="32" value="1" step="1" id="train-batch-size" oninput="recalculate()"><span class="slider-value" id="train-batch-size-display">1</span></div></div>
-      <div class="field"><label>Sequence length</label><div class="slider-row"><input type="range" min="256" max="32768" value="2048" step="256" id="train-seq-len" oninput="recalculate()"><span class="slider-value" id="train-seq-len-display">2K</span></div></div>
-      <div class="field"><label>LoRA rank</label><div class="slider-row"><input type="range" min="4" max="256" value="16" step="4" id="train-lora-rank" oninput="recalculate()"><span class="slider-value" id="train-lora-rank-display">16</span></div></div>
+      <div class="field"><label>Batch size (per GPU) <span class="info-tip" tabindex="0" role="img" aria-label="Sequences processed per step on each GPU. Activation memory scales with this." data-tip="Sequences processed per step on each GPU. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="32" value="1" step="1" id="train-batch-size" oninput="recalculate()"><span class="slider-value" id="train-batch-size-display">1</span></div></div>
+      <div class="field"><label>Sequence length <span class="info-tip" tabindex="0" role="img" aria-label="Training sequence length in tokens. Activation memory scales with this." data-tip="Training sequence length in tokens. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="256" max="32768" value="2048" step="256" id="train-seq-len" oninput="recalculate()"><span class="slider-value" id="train-seq-len-display">2K</span></div></div>
+      <div class="field"><label>LoRA rank <span class="info-tip" tabindex="0" role="img" aria-label="Rank of the LoRA adapter matrices. Higher rank means more trainable parameters and a bit more VRAM." data-tip="Rank of the LoRA adapter matrices. Higher rank means more trainable parameters and a bit more VRAM."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="4" max="256" value="16" step="4" id="train-lora-rank" oninput="recalculate()"><span class="slider-value" id="train-lora-rank-display">16</span></div></div>
     </div>
     <div class="grid-2" style="margin-top:8px">
-      <div class="field"><label>LoRA target modules</label><div class="slider-row"><input type="range" min="1" max="8" value="4" step="1" id="train-lora-targets" oninput="recalculate()"><span class="slider-value" id="train-lora-targets-display">4</span></div></div>
-      <div class="field"><label>Hidden size</label><div class="slider-row"><input type="range" min="1024" max="16384" value="3072" step="256" id="train-hidden-size" oninput="recalculate()"><span class="slider-value" id="train-hidden-size-display">3072</span></div></div>
+      <div class="field"><label>LoRA target modules <span class="info-tip" tabindex="0" role="img" aria-label="How many projection matrices per layer get adapters (for example q, k, v, o is 4)." data-tip="How many projection matrices per layer get adapters (for example q, k, v, o is 4)."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="8" value="4" step="1" id="train-lora-targets" oninput="recalculate()"><span class="slider-value" id="train-lora-targets-display">4</span></div></div>
+      <div class="field"><label>Hidden size <span class="info-tip" tabindex="0" role="img" aria-label="The model hidden dimension, used to size the LoRA adapter parameters." data-tip="The model hidden dimension, used to size the LoRA adapter parameters."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1024" max="16384" value="3072" step="256" id="train-hidden-size" oninput="recalculate()"><span class="slider-value" id="train-hidden-size-display">3072</span></div></div>
     </div>
   </div>
   <div id="training-results"></div>
@@ -369,7 +391,7 @@ body.exec-mode .exec-summary { display: block; }
      Results sections (populated by JS)
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><i class="ti ti-chart-bar"></i> VRAM breakdown</div>
+  <div class="section-title"><i class="ti ti-chart-bar"></i> VRAM breakdown <span class="info-tip" tabindex="0" role="img" aria-label="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per GPU." data-tip="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per GPU."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div id="strategy-badges" class="engineer-only"></div>
   <div class="legend engineer-only">
     <span><i style="background:#7F77DD"></i>Weights</span>
@@ -383,11 +405,11 @@ body.exec-mode .exec-summary { display: block; }
   <div id="verdict-output"></div>
 </div>
 
-<div class="section engineer-only"><div class="section-title"><i class="ti ti-arrows-maximize"></i> Capacity limits</div><div id="capacity-output"></div></div>
-<div class="section engineer-only"><div class="section-title"><i class="ti ti-bolt"></i> Throughput</div><div id="throughput-output"></div></div>
-<div class="section"><div class="section-title"><i class="ti ti-currency-dollar"></i> Cost</div><div id="cost-output"></div></div>
-<div class="section engineer-only"><div class="section-title"><i class="ti ti-terminal-2"></i> vLLM command</div><div id="command-output"></div></div>
-<div class="section"><div class="section-title"><i class="ti ti-columns"></i> Comparison <span style="font-size:11px;font-weight:400;color:var(--text-muted);text-transform:none;letter-spacing:0">(save snapshots to compare)</span></div><div id="comparison-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-arrows-maximize"></i> Capacity limits <span class="info-tip" tabindex="0" role="img" aria-label="The longest context and the most concurrent requests that fit in the VRAM left after weights." data-tip="The longest context and the most concurrent requests that fit in the VRAM left after weights."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div><div id="capacity-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-bolt"></i> Throughput <span class="info-tip" tabindex="0" role="img" aria-label="Rough tokens-per-second estimate for decoding, bounded by the GPU memory bandwidth at this batch size." data-tip="Rough tokens-per-second estimate for decoding, bounded by the GPU memory bandwidth at this batch size."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div><div id="throughput-output"></div></div>
+<div class="section"><div class="section-title"><i class="ti ti-currency-dollar"></i> Cost <span class="info-tip" tabindex="0" role="img" aria-label="Hourly and monthly price across three tiers: hyperscaler on-demand, specialized cloud, and spot." data-tip="Hourly and monthly price across three tiers: hyperscaler on-demand, specialized cloud, and spot."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div><div id="cost-output"></div></div>
+<div class="section engineer-only"><div class="section-title"><i class="ti ti-terminal-2"></i> vLLM command <span class="info-tip" tabindex="0" role="img" aria-label="A ready-to-run vllm serve command with the flags implied by your model, GPU, and workload settings." data-tip="A ready-to-run vllm serve command with the flags implied by your model, GPU, and workload settings."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div><div id="command-output"></div></div>
+<div class="section"><div class="section-title"><i class="ti ti-columns"></i> Comparison <span style="font-size:11px;font-weight:400;color:var(--text-muted);text-transform:none;letter-spacing:0">(save snapshots to compare)</span> <span class="info-tip" tabindex="0" role="img" aria-label="Save snapshots of different configurations, then compare their VRAM, throughput, and cost side by side." data-tip="Save snapshots of different configurations, then compare their VRAM, throughput, and cost side by side."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div><div id="comparison-output"></div></div>
 
 <div class="note-box engineer-only" id="notes-output"></div>
 
