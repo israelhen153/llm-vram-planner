@@ -74,6 +74,19 @@ CASES = [
     {"name": "27B on L4 24GB, does not fit (new GPU entry)",
      "params": 27, "active": 100, "bpp": 0.5, "layers": 48, "kv_heads": 8, "h_dim": 128,
      "ctx": 4096, "conc": 1, "n_gpu": 1, "gpu": "l4-24"},
+    {"name": "Agent stack: 8K shared prefix, 64 users, prefix caching on",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 32768, "conc": 64, "n_gpu": 1, "gpu": "h100-80",
+     "shared_prefix": 8192, "prefix_caching": True},
+    {"name": "Same agent stack with prefix caching disabled",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 32768, "conc": 64, "n_gpu": 1, "gpu": "h100-80",
+     "shared_prefix": 8192, "prefix_caching": False},
+    {"name": "Gemma SWA with shared prefix — only global layers share",
+     "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
+     "ctx": 32768, "conc": 32, "n_gpu": 1, "gpu": "h100-80",
+     "attn": "swa", "swa_win": 1024, "swa_local": 25,
+     "shared_prefix": 4096, "prefix_caching": True},
 ]
 
 js_runner = r"""
@@ -95,7 +108,8 @@ const out=JSON.parse(process.argv[2]).map(c=>{
     gpuSpotCost:g.st,gpuName:c.gpuName,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
-    modelMaxCtx:c.max_ctx||1048576});
+    modelMaxCtx:c.max_ctx||1048576,
+    sharedPrefix:c.shared_prefix||0,prefixCaching:c.prefix_caching!==false});
 });
 console.log(JSON.stringify(out));
 """
@@ -125,6 +139,8 @@ FIELDS = [
     ("per_user_load", "perUserAtLoadTokS", 1), ("eff_batch", "effectiveBatch", 0),
     ("max_batch_kv", "maxBatchByKV", 0), ("ttft_ms", "ttftMs", 1),
     ("sat_batch", "saturatedBatch", 0), ("sat_tok", "saturatedTokS", 1),
+    ("ttft_cold_ms", "ttftColdMs", 1), ("ttft_warm_ms", "ttftWarmMs", 1),
+    ("kv_saved_by_prefix_gb", "kvSavedByPrefixGB", 0.01),
 ]
 dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
 

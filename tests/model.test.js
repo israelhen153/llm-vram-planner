@@ -175,6 +175,65 @@ test('max context is reachable under every regime', () => {
   }
 });
 
+console.log('\nPrefix caching and shared prefix');
+test('a shared prefix is stored once, not once per concurrent request', () => {
+  const base = { contextLength: 32768, concurrency: 64 };
+  const without = computeInference(state({ ...base, sharedPrefix: 0 })).kvCacheGB;
+  const with8k = computeInference(state({ ...base, sharedPrefix: 8192 })).kvCacheGB;
+  // 64 users x 8K of identical preamble collapses to one copy.
+  const perTok = 2 * 32 * 8 * 128 * 2;
+  const expectedSaving = perTok * 8192 * 63 / (1024 ** 3);
+  between(without - with8k, expectedSaving * 0.99, expectedSaving * 1.01, 'KV saved');
+});
+
+test('disabling prefix caching removes the saving entirely', () => {
+  const base = { contextLength: 32768, concurrency: 64, sharedPrefix: 8192 };
+  const on = computeInference(state({ ...base, prefixCaching: true }));
+  const off = computeInference(state({ ...base, prefixCaching: false }));
+  assert.ok(on.kvCacheGB < off.kvCacheGB, 'caching should reduce KV');
+  assert.strictEqual(off.kvSavedByPrefixGB, 0);
+});
+
+test('under SWA only global layers share the prefix', () => {
+  const base = { ...GEMMA, contextLength: 32768, concurrency: 32, sharedPrefix: 4096 };
+  const c = computeInference(state(base));
+  // 5 global layers share; the 25 local ones hold a rolling window, so the
+  // prefix at position 0 has already slid out of them.
+  const perLayerToken = 2 * 8 * 256 * 2;
+  const expected = perLayerToken * 5 * 4096 * 31 / (1024 ** 3);
+  between(c.kvSavedByPrefixGB, expected * 0.99, expected * 1.01, 'SWA prefix saving');
+});
+
+test('a prefix longer than the context is clamped, not counted twice', () => {
+  const c = computeInference(state({ contextLength: 4096, concurrency: 8, sharedPrefix: 32768 }));
+  assert.strictEqual(c.effectivePrefix, 4096);
+  assert.ok(c.kvCacheGB > 0, 'KV must stay positive when prefix equals context');
+});
+
+test('prefix caching cuts TTFT but never decode speed', () => {
+  const base = { contextLength: 32768, concurrency: 8, sharedPrefix: 8192 };
+  const on = computeInference(state({ ...base, prefixCaching: true }));
+  const off = computeInference(state({ ...base, prefixCaching: false }));
+  assert.ok(on.ttftWarmMs < on.ttftColdMs, 'warm TTFT should beat cold');
+  assert.strictEqual(off.ttftWarmMs, off.ttftColdMs, 'no caching means no warm path');
+  // APC touches prefill only — this is the thing people get wrong about it.
+  assert.strictEqual(on.singleStreamTokS, off.singleStreamTokS,
+    'decode speed must be identical with and without prefix caching');
+});
+
+test('warm TTFT scales with the uncached remainder', () => {
+  const c = computeInference(state({ contextLength: 32768, sharedPrefix: 24576 }));
+  // 8K of 32K left to prefill, so warm should be about a quarter of cold.
+  between(c.ttftWarmMs / c.ttftColdMs, 0.24, 0.26, 'warm:cold TTFT ratio');
+});
+
+test('more sequences fit once the prefix is shared', () => {
+  const base = { contextLength: 16384, concurrency: 256, sharedPrefix: 8192 };
+  const on = computeInference(state({ ...base, prefixCaching: true })).maxBatchByKV;
+  const off = computeInference(state({ ...base, prefixCaching: false })).maxBatchByKV;
+  assert.ok(on > off, `sharing should raise batch capacity: ${off} -> ${on}`);
+});
+
 console.log('\nThroughput — single-stream');
 // Llama-3-8B bf16 on one H100 measures roughly 100-160 tok/s for one user.
 test('8B bf16 on H100 lands in the observed 100-160 tok/s band', () => {

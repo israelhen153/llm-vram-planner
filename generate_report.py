@@ -161,10 +161,27 @@ def compute(cfg):
             return per_layer_token * (swa_local * min(c, swa_win) + swa_global * c)
         return 2 * layers * kv_heads * h_dim * kv_bpp * c
 
+    # Bytes eligible for sharing between sequences. Under SWA only the global
+    # layers qualify — local layers keep a rolling window, so a prefix at
+    # position 0 has already slid out of them.
+    def kv_bytes_shareable(c):
+        if attn == "mla":
+            return layers * mla_dim * kv_bpp * c
+        if attn == "swa":
+            return 2 * kv_heads * h_dim * kv_bpp * swa_global * c
+        return 2 * layers * kv_heads * h_dim * kv_bpp * c
+
+    shared_prefix = cfg.get("shared_prefix", 0)
+    prefix_caching = cfg.get("prefix_caching", True)
     kv_seq_bytes = kv_bytes_for_seq(ctx)
+    eff_prefix = min(shared_prefix, ctx)
+    shared_bytes = kv_bytes_shareable(eff_prefix) if prefix_caching else 0
+    per_seq_bytes = max(kv_seq_bytes - shared_bytes, 0)
+    kv_total_bytes = shared_bytes + per_seq_bytes * conc
+    kv_saved_by_prefix_gb = (kv_seq_bytes * conc - kv_total_bytes) / GIB
     kv_bytes_per_tok = kv_seq_bytes / ctx if ctx > 0 else 0
     total_tokens = ctx * conc
-    kv_gb = (kv_seq_bytes * conc) / GIB
+    kv_gb = kv_total_bytes / GIB
     active_p = params * (active_pct / 100)
     shared_p = params * 0.02 * shared_exp if is_moe and shared_exp > 0 else 0
     total_active_p = active_p + shared_p
@@ -224,7 +241,9 @@ def compute(cfg):
         denom = active_weight_bytes + batch * kv_bytes_per_seq
         return (batch * achieved_bw) / denom if denom > 0 else 0
 
-    max_batch_kv = int((free_kv * GIB) / kv_bytes_per_seq) if kv_bytes_per_seq > 0 else conc
+    marginal_seq_bytes = max(kv_bytes_per_seq - shared_bytes, 1)
+    max_batch_kv = (max(int((free_kv * GIB - shared_bytes) / marginal_seq_bytes), 0)
+                    if kv_bytes_per_seq > 0 else conc)
     eff_batch = max(min(conc, max_batch_kv), 1)
     compute_ceiling = (
         (MFU_DECODE * gpu["tflops"] * 1e12 * n_gpu * nv_penalty) / (2 * total_active_p * 1e9)
@@ -241,9 +260,17 @@ def compute(cfg):
 
     # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
     # understated TTFT by roughly 10x.
-    prefill_flops = 2 * total_active_p * 1e9 * ctx
     achieved_flops = MFU_DECODE * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
-    ttft_ms = round((prefill_flops / achieved_flops) * 1000) if achieved_flops > 0 else 0
+
+    def ttft_for(tokens):
+        flops = 2 * total_active_p * 1e9 * max(tokens, 0)
+        return round((flops / achieved_flops) * 1000) if achieved_flops > 0 else 0
+
+    # APC skips the shared prefix during prefill, so TTFT differs cold vs warm.
+    # It never changes decode speed.
+    ttft_cold_ms = ttft_for(ctx)
+    ttft_warm_ms = ttft_for(ctx - eff_prefix) if prefix_caching else ttft_cold_ms
+    ttft_ms = ttft_warm_ms
     hourly_hyper = gpu["hyper"] * n_gpu
     hourly_spec = gpu["spec"] * n_gpu
     hourly_spot = gpu["spot"] * n_gpu
@@ -261,7 +288,8 @@ def compute(cfg):
         "max_ctx_1": max_ctx_1, "max_conc_8k": max_conc_8k, "max_conc_4k": max_conc_4k,
         "single_tok": single_tok, "agg_tok": agg_tok, "per_user_load": per_user_load,
         "eff_batch": eff_batch, "max_batch_kv": max_batch_kv, "batch_limited": batch_limited,
-        "ttft_ms": ttft_ms, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
+        "ttft_ms": ttft_ms, "ttft_cold_ms": ttft_cold_ms, "ttft_warm_ms": ttft_warm_ms,
+        "kv_saved_by_prefix_gb": kv_saved_by_prefix_gb, "eff_prefix": eff_prefix, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
         "is_moe": is_moe, "total_tokens": total_tokens,
         "fits": fits, "comfortable": comfortable,
     }
