@@ -98,6 +98,7 @@ FIELDS = [
     ("single_tok", "singleStreamTokS", 1), ("agg_tok", "aggregateTokS", 1),
     ("per_user_load", "perUserAtLoadTokS", 1), ("eff_batch", "effectiveBatch", 0),
     ("max_batch_kv", "maxBatchByKV", 0), ("ttft_ms", "ttftMs", 1),
+    ("sat_batch", "saturatedBatch", 0), ("sat_tok", "saturatedTokS", 1),
 ]
 dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
 

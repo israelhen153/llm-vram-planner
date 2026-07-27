@@ -683,10 +683,12 @@ function handleFileDrop(e) {
    ============================================================================= */
 function findBenchmark(paramCount, gpuName, gpuGB) {
   // Map param count to size bucket
+  // Buckets follow the table in CONTRIBUTING.md. These were previously inverted
+  // (<=8 mapped to "8b", <=10 to "7b"), so 7B models scored against 8B data.
   let sizeBucket = '';
   if (paramCount <= 4) sizeBucket = '4b';
-  else if (paramCount <= 8) sizeBucket = '8b';
-  else if (paramCount <= 10) sizeBucket = '7b';
+  else if (paramCount <= 7) sizeBucket = '7b';
+  else if (paramCount <= 10) sizeBucket = '8b';
   else if (paramCount <= 14) sizeBucket = '14b';
   else if (paramCount <= 30) sizeBucket = '27b';
   else if (paramCount <= 40) sizeBucket = '32b';
@@ -702,7 +704,11 @@ function findBenchmark(paramCount, gpuName, gpuGB) {
   else if (gpuName.includes('4090')) gpuKey = 'rtx4090-24';
   else return null;
 
-  return BENCHMARK_DATA[`${sizeBucket}-${gpuKey}`] || BENCHMARK_DATA[`${(paramCount <= 8 ? '7b' : '8b')}-${gpuKey}`] || null;
+  /* Exact bucket only. This used to fall back to the 7b/8b entry for any size
+   * with no match, so a 26B model was shown an 8B benchmark as "the published
+   * benchmark" for its configuration — a number from a different model class
+   * entirely. Showing nothing is strictly better than showing the wrong thing. */
+  return BENCHMARK_DATA[`${sizeBucket}-${gpuKey}`] || null;
 }
 
 /* =============================================================================
@@ -820,6 +826,14 @@ function computeInference(state) {
   const batchLimitedByKV = concurrency > maxBatchByKV;
   const computeBound = decodeAt(effectiveBatch) > computeCeiling;
 
+  /* Throughput at a saturated batch — the GPU as busy as KV cache allows.
+   * Published batch benchmarks are run this way, so this is the only figure
+   * that compares like with like against them. The user's chosen concurrency
+   * is usually lower, and scoring their batch-of-1 against a saturated
+   * benchmark reproduces the units error in miniature. */
+  const saturatedBatch = Math.max(maxBatchByKV, 1);
+  const saturatedTokS = Math.round(Math.min(decodeAt(saturatedBatch), computeCeiling));
+
   /* TTFT — prefill is compute-bound, not bandwidth-bound: the whole prompt is
    * processed in one parallel pass at ~2 FLOPs per active parameter per token.
    * (Decode speed is irrelevant here; using it understates TTFT by ~10x.) */
@@ -839,6 +853,7 @@ function computeInference(state) {
     maxContextSingleUser, maxConcurrentAt8K, maxConcurrentAt4K,
     singleStreamTokS, aggregateTokS, perUserAtLoadTokS, effectiveBatch,
     maxBatchByKV, batchLimitedByKV, computeBound, ttftMs, totalTokens,
+    saturatedBatch, saturatedTokS,
     hourlyHyper, hourlySpec, hourlySpot,
     fits: perGPU.total <= gpuGB,
     comfortable: perGPU.total <= gpuGB * 0.9,
@@ -978,11 +993,12 @@ function renderThroughput(state, computed) {
   const benchmark = findBenchmark(state.params, state.gpuName, state.gpuGB);
   if (benchmark) {
     const mode = benchmark.mode || 'batch';
-    const ours = mode === 'single' ? perUser : computed.aggregateTokS;
-    const label = mode === 'single' ? 'single-stream' : 'aggregate batch';
+    const ours = mode === 'single' ? perUser : computed.saturatedTokS;
+    const label = mode === 'single' ? 'single-stream' : `aggregate at full batch (${computed.saturatedBatch} seq)`;
     html += `<div class="gpu-card" style="margin:8px 0;border-left:3px solid var(--accent)"><p style="font-size:12px;font-weight:500;margin:0 0 4px"><svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--accent)" aria-hidden="true" focusable="false"><use href="#ico-chart-dots"></use></svg>Published benchmark (${label}): <b>${benchmark.tokS.toLocaleString()} tok/s</b></p><p style="font-size:11px;color:var(--text-muted);margin:0">${benchmark.note} · Source: ${benchmark.src}${benchmark.estimated ? ' · <b>estimated, not measured</b>' : ''}</p>`;
     const ratio = ours > 0 ? Math.round(ours / benchmark.tokS * 100) : 0;
-    html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Our ${label} estimate: ${formatTokens(ours)} tok/s (${ratio}% of measured). Roofline estimates run optimistic against real batch serving; benchmark ran at ${benchmark.prec} under conditions that rarely match yours exactly.</p>`;
+    html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Our ${label} estimate: ${formatTokens(ours)} tok/s (${ratio}% of measured)${mode === 'batch' && computed.effectiveBatch < computed.saturatedBatch ? ` — compared at full batch, not your ${computed.effectiveBatch} concurrent, since that is how the benchmark was run` : ''}. Roofline estimates run optimistic against real batch serving; benchmark ran at ${benchmark.prec} under conditions that rarely match yours exactly.</p>`;
+    if (computed.isMoE) html += `<p style="font-size:11px;color:var(--warning-text);margin:4px 0 0">You have configured an MoE with ${state.activePercent}% active parameters. Benchmarks are matched on total parameter count and are almost certainly from dense models, so expect your throughput to be considerably higher than this entry.</p>`;
     html += '</div>';
   } else {
     html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px;margin:4px 0">No published benchmark for this model/GPU combo. Theoretical estimate only.</div>';
