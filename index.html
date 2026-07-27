@@ -681,6 +681,11 @@ function handleFileDrop(e) {
 /* =============================================================================
    Benchmark lookup
    ============================================================================= */
+/* Representative parameter count per bucket, used to pick the nearest fallback
+   and to tell the user how far off that fallback is. Keep in sync with the
+   bucket boundaries below and with the table in CONTRIBUTING.md. */
+const BUCKET_PARAMS = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
+
 function findBenchmark(paramCount, gpuName, gpuGB) {
   // Map param count to size bucket
   // Buckets follow the table in CONTRIBUTING.md. These were previously inverted
@@ -693,7 +698,7 @@ function findBenchmark(paramCount, gpuName, gpuGB) {
   else if (paramCount <= 30) sizeBucket = '27b';
   else if (paramCount <= 40) sizeBucket = '32b';
   else if (paramCount <= 80) sizeBucket = '70b';
-  else return null;
+  else sizeBucket = null;
 
   // Map GPU to key
   let gpuKey = '';
@@ -704,11 +709,31 @@ function findBenchmark(paramCount, gpuName, gpuGB) {
   else if (gpuName.includes('4090')) gpuKey = 'rtx4090-24';
   else return null;
 
-  /* Exact bucket only. This used to fall back to the 7b/8b entry for any size
-   * with no match, so a 26B model was shown an 8B benchmark as "the published
-   * benchmark" for its configuration — a number from a different model class
-   * entirely. Showing nothing is strictly better than showing the wrong thing. */
-  return BENCHMARK_DATA[`${sizeBucket}-${gpuKey}`] || null;
+  const exact = sizeBucket && BENCHMARK_DATA[`${sizeBucket}-${gpuKey}`];
+  if (exact) return { data: exact, exact: true, bucket: sizeBucket };
+
+  /* No measurement for this size. Fall back to the nearest bucket on the SAME
+   * GPU — useful because it shows how this card behaves — but return enough
+   * context for the caller to say plainly that it is a different model class.
+   * The old fallback silently returned the 7b/8b entry and the UI presented it
+   * as "the published benchmark" for whatever the user had configured. */
+  let best = null;
+  for (const key of Object.keys(BENCHMARK_DATA)) {
+    if (!key.endsWith(`-${gpuKey}`)) continue;
+    const bucket = key.slice(0, key.length - gpuKey.length - 1);
+    const bucketParams = BUCKET_PARAMS[bucket];
+    if (bucketParams === undefined) continue;
+    const distance = Math.abs(bucketParams - paramCount);
+    if (!best || distance < best.distance) {
+      best = { data: BENCHMARK_DATA[key], bucket, bucketParams, distance };
+    }
+  }
+  if (!best) return null;
+  return {
+    data: best.data, exact: false, bucket: best.bucket,
+    nearestParams: best.bucketParams, requestedParams: paramCount,
+    slower: best.bucketParams < paramCount,
+  };
 }
 
 /* =============================================================================
@@ -989,19 +1014,38 @@ function renderThroughput(state, computed) {
     html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:8px 0"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> You asked for ${state.concurrency} concurrent users but KV cache only fits ${computed.maxBatchByKV} at ${formatContext(state.contextLength)}. vLLM will queue the rest — aggregate throughput above reflects the batch that actually runs.</div>`;
   }
 
-  // Benchmark data lookup — compare like with like, or not at all.
+  /* Benchmark panel. An exact size match is scored against our estimate. Anything
+   * else is shown as a reference point for the GPU and explicitly not scored —
+   * a ratio between our 27B estimate and someone's 8B measurement is a number
+   * with no meaning, and printing one is how the old fallback misled people. */
   const benchmark = findBenchmark(state.params, state.gpuName, state.gpuGB);
   if (benchmark) {
-    const mode = benchmark.mode || 'batch';
-    const ours = mode === 'single' ? perUser : computed.saturatedTokS;
-    const label = mode === 'single' ? 'single-stream' : `aggregate at full batch (${computed.saturatedBatch} seq)`;
-    html += `<div class="gpu-card" style="margin:8px 0;border-left:3px solid var(--accent)"><p style="font-size:12px;font-weight:500;margin:0 0 4px"><svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--accent)" aria-hidden="true" focusable="false"><use href="#ico-chart-dots"></use></svg>Published benchmark (${label}): <b>${benchmark.tokS.toLocaleString()} tok/s</b></p><p style="font-size:11px;color:var(--text-muted);margin:0">${benchmark.note} · Source: ${benchmark.src}${benchmark.estimated ? ' · <b>estimated, not measured</b>' : ''}</p>`;
-    const ratio = ours > 0 ? Math.round(ours / benchmark.tokS * 100) : 0;
-    html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Our ${label} estimate: ${formatTokens(ours)} tok/s (${ratio}% of measured)${mode === 'batch' && computed.effectiveBatch < computed.saturatedBatch ? ` — compared at full batch, not your ${computed.effectiveBatch} concurrent, since that is how the benchmark was run` : ''}. Roofline estimates run optimistic against real batch serving; benchmark ran at ${benchmark.prec} under conditions that rarely match yours exactly.</p>`;
-    if (computed.isMoE) html += `<p style="font-size:11px;color:var(--warning-text);margin:4px 0 0">You have configured an MoE with ${state.activePercent}% active parameters. Benchmarks are matched on total parameter count and are almost certainly from dense models, so expect your throughput to be considerably higher than this entry.</p>`;
+    const b = benchmark.data;
+    const mode = b.mode || 'batch';
+    const provenance = `${b.note} · Source: ${b.src}${b.estimated ? ' · <b>estimated, not measured</b>' : ''}`;
+    const accent = benchmark.exact ? 'var(--accent)' : 'var(--border)';
+    html += `<div class="gpu-card" style="margin:8px 0;border-left:3px solid ${accent}">`;
+
+    if (benchmark.exact) {
+      const ours = mode === 'single' ? perUser : computed.saturatedTokS;
+      const label = mode === 'single' ? 'single-stream' : `aggregate at full batch (${computed.saturatedBatch} seq)`;
+      const ratio = ours > 0 ? Math.round(ours / b.tokS * 100) : 0;
+      html += `<p style="font-size:12px;font-weight:500;margin:0 0 4px"><svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--accent)" aria-hidden="true" focusable="false"><use href="#ico-chart-dots"></use></svg>Published benchmark (${label}): <b>${b.tokS.toLocaleString()} tok/s</b></p>`;
+      html += `<p style="font-size:11px;color:var(--text-muted);margin:0">${provenance}</p>`;
+      html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Our ${label} estimate: ${formatTokens(ours)} tok/s (${ratio}% of measured)${mode === 'batch' && computed.effectiveBatch < computed.saturatedBatch ? ` — compared at full batch, not your ${computed.effectiveBatch} concurrent, since that is how the benchmark was run` : ''}. Roofline estimates run optimistic against real batch serving; benchmark ran at ${b.prec} under conditions that rarely match yours exactly.</p>`;
+      if (computed.isMoE) html += `<p style="font-size:11px;color:var(--warning-text);margin:4px 0 0">You have configured an MoE with ${state.activePercent}% active parameters. Benchmarks are matched on total parameter count and are almost certainly from dense models, so expect your throughput to be considerably higher than this entry.</p>`;
+    } else {
+      const direction = benchmark.slower
+        ? `Your ${benchmark.requestedParams}B model will be <b>slower</b> than this`
+        : `Your ${benchmark.requestedParams}B model will be <b>faster</b> than this`;
+      html += `<p style="font-size:12px;font-weight:500;margin:0 0 4px"><svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--text-muted)" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>No benchmark for ${benchmark.requestedParams}B on ${state.gpuName}. Nearest on this GPU: <b>~${benchmark.nearestParams}B at ${b.tokS.toLocaleString()} tok/s</b> (${mode})</p>`;
+      html += `<p style="font-size:11px;color:var(--text-muted);margin:0">${provenance}</p>`;
+      html += `<p style="font-size:11px;color:var(--warning-text);margin:4px 0 0">Different model size, so this is a reference point for how ${state.gpuName} behaves — not a check on your configuration, and deliberately not scored against our estimate. ${direction}, roughly in proportion to the parameter counts.</p>`;
+      html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Measured ${benchmark.requestedParams}B numbers on this card would replace this — see <a href="https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md" target="_blank" style="color:var(--accent-text)">CONTRIBUTING.md</a>.</p>`;
+    }
     html += '</div>';
   } else {
-    html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px;margin:4px 0">No published benchmark for this model/GPU combo. Theoretical estimate only.</div>';
+    html += `<div style="font-size:11px;color:var(--text-muted);padding:4px 10px;margin:4px 0">No published benchmark for ${state.gpuName} at any model size. Theoretical estimate only — <a href="https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md" target="_blank" style="color:var(--accent-text)">contribute one</a>.</div>`;
   }
   setHTML('throughput-output', html);
 }

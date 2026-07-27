@@ -196,29 +196,64 @@ console.log('\nBenchmark lookup');
 const fbStart = html.indexOf('function findBenchmark(');
 assert.notStrictEqual(fbStart, -1, 'findBenchmark() not found');
 const fbEnd = html.indexOf('\n}\n', fbStart);
+const bucketDecl = html.match(/^const BUCKET_PARAMS = .+;$/m);
+assert.ok(bucketDecl, 'BUCKET_PARAMS not found in index.html');
 const findBenchmark = new Function(
   `const BENCHMARK_DATA = ${JSON.stringify(benchmarks.data)};
+   ${bucketDecl[0]}
    ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
 )();
 
 test('buckets match the table documented in CONTRIBUTING.md', () => {
   // 7b covers 5-7B, 8b covers 8-10B. These were inverted.
-  assert.strictEqual(findBenchmark(7, 'A100 80GB', 80).tokS, benchmarks.data['7b-a100-80'].tokS);
-  assert.strictEqual(findBenchmark(8, 'A100 80GB', 80).tokS, benchmarks.data['8b-a100-80'].tokS);
+  const a = findBenchmark(7, 'A100 80GB', 80), b = findBenchmark(8, 'A100 80GB', 80);
+  assert.ok(a.exact && b.exact, 'both should be exact matches');
+  assert.strictEqual(a.data.tokS, benchmarks.data['7b-a100-80'].tokS);
+  assert.strictEqual(b.data.tokS, benchmarks.data['8b-a100-80'].tokS);
 });
-test('a model with no benchmark for its size returns nothing', () => {
-  // Previously fell back to the 8B entry, presenting a different model class
-  // as this configuration's published benchmark.
-  assert.strictEqual(findBenchmark(26, 'A100 40GB', 40), null);
-  assert.strictEqual(findBenchmark(70, 'A100 40GB', 40), null);
+test('an unmatched size degrades to the nearest entry on the SAME GPU', () => {
+  const hit = findBenchmark(26, 'A100 40GB', 40);
+  assert.ok(hit, 'should fall back rather than return nothing');
+  assert.strictEqual(hit.exact, false, 'must be flagged as inexact');
+  assert.strictEqual(hit.requestedParams, 26);
+  assert.ok(hit.nearestParams < 26, 'nearest available on this card is smaller');
+  assert.strictEqual(hit.slower, true, 'a 26B model is slower than the smaller match');
 });
-test('unknown GPUs return nothing rather than a wrong match', () => {
+test('the fallback picks the closest bucket, not just any', () => {
+  // H100 has 8b/14b/27b/70b. 30B lands in the 27b bucket, which exists.
+  assert.ok(findBenchmark(30, 'H100 80GB', 80).exact, '30B is covered by the 27b bucket');
+  // 35B lands in the 32b bucket, which has no H100 entry — a genuine gap.
+  // Candidates are 27 (dist 8) and 70 (dist 35), so it must choose 27.
+  const gap = findBenchmark(35, 'H100 80GB', 80);
+  assert.strictEqual(gap.exact, false);
+  assert.strictEqual(gap.nearestParams, 27, 'must pick 27B over 70B on distance');
+  assert.strictEqual(gap.slower, true, 'a 35B model is slower than a 27B measurement');
+});
+test('the fallback reports direction correctly in both directions', () => {
+  // 4B on B200: only a 27b entry exists, so the nearest match is larger and
+  // the user's model is the faster one.
+  const smaller = findBenchmark(4, 'B200 192GB', 192);
+  assert.strictEqual(smaller.slower, false, '4B is faster than the 27B match');
+});
+test('fallback never crosses to a different GPU', () => {
+  const hit = findBenchmark(4, 'B200 192GB', 192);
+  assert.ok(hit, 'B200 has a 27b entry to fall back to');
+  assert.strictEqual(hit.exact, false);
+  assert.strictEqual(hit.data.tokS, benchmarks.data['27b-b200-192'].tokS,
+    'must stay on the B200, not borrow an A100 number');
+});
+test('a GPU with no data at all returns nothing', () => {
   assert.strictEqual(findBenchmark(8, 'T4 16GB', 16), null);
   assert.strictEqual(findBenchmark(8, 'L40S 48GB', 48), null);
 });
-test('every benchmark key is reachable by lookup', () => {
-  // A key nothing can select is dead data — it means the bucket table and the
-  // data file disagree.
+test('sizes beyond every bucket still fall back rather than throwing', () => {
+  const hit = findBenchmark(400, 'H100 80GB', 80);
+  assert.ok(hit && hit.exact === false, '400B has no bucket but should degrade');
+  assert.strictEqual(hit.nearestParams, 70);
+});
+test('every benchmark key is reachable as an exact match', () => {
+  // A key nothing can select exactly is dead data — the bucket table and the
+  // data file have drifted apart.
   const GPU = { 'a100-80': ['A100 80GB', 80], 'a100-40': ['A100 40GB', 40],
                 'h100-80': ['H100 80GB', 80], 'b200-192': ['B200 192GB', 192],
                 'rtx4090-24': ['RTX 4090 24GB', 24] };
@@ -227,8 +262,8 @@ test('every benchmark key is reachable by lookup', () => {
     const m = key.match(/^(\d+b)-(.+)$/);
     const [name, gb] = GPU[m[2]];
     const hit = findBenchmark(PROBE[m[1]], name, gb);
-    assert.ok(hit && hit.tokS === benchmarks.data[key].tokS,
-      `${key} is unreachable: probing ${PROBE[m[1]]}B on ${name} did not return it`);
+    assert.ok(hit && hit.exact && hit.data.tokS === benchmarks.data[key].tokS,
+      `${key} is unreachable: probing ${PROBE[m[1]]}B on ${name} did not return it exactly`);
   }
 });
 
