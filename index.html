@@ -442,28 +442,80 @@ body.exec-mode .exec-summary { display: block; }
 let importedModelId = null;
 let savedSnapshots = [];
 
+/* Attention regime for the current model. Not slider-driven — it comes from the
+   preset or from an imported config.json, because it is a property of the
+   architecture rather than something a user should be guessing at. */
+let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
+/* max_position_embeddings for the current model. A context the weights cannot
+   address is not reachable no matter how much KV cache is free. */
+let currentModelMaxCtx = 131072;
+
+/* Read the attention regime out of a HuggingFace config.json.
+   Handles the three shapes seen in the wild:
+     layer_types: [...]            Gemma 3/4, Qwen3-Next — explicit per-layer list
+     no_rope_layers + chunk size   Llama 4 — RoPE layers are the chunked/local ones
+     kv_lora_rank                  DeepSeek V2/V3/R1 — MLA
+   Falls back to standard, which is what most models still are. */
+function attnFromConfig(cfg, layers) {
+  const t = cfg.text_config || cfg;
+  if (t.kv_lora_rank) {
+    return { mode: 'mla', window: 0, localLayers: 0,
+             mlaDim: t.kv_lora_rank + (t.qk_rope_head_dim || 0) };
+  }
+  if (Array.isArray(t.layer_types)) {
+    const local = t.layer_types.filter(x => x === 'sliding_attention').length;
+    if (local > 0 && t.sliding_window) {
+      return { mode: 'swa', window: t.sliding_window, localLayers: local, mlaDim: 0 };
+    }
+  }
+  if (Array.isArray(t.no_rope_layers) && t.attention_chunk_size) {
+    // Llama 4: a 1 marks a RoPE layer, and those are the chunked/local ones.
+    const local = t.no_rope_layers.filter(Boolean).length;
+    if (local > 0) {
+      return { mode: 'swa', window: t.attention_chunk_size, localLayers: local, mlaDim: 0 };
+    }
+  }
+  if (t.sliding_window && t.use_sliding_window !== false && !Array.isArray(t.layer_types)) {
+    // Uniform sliding window across every layer (Mistral 7B v0.1 style).
+    return { mode: 'swa', window: t.sliding_window, localLayers: layers, mlaDim: 0 };
+  }
+  return { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
+}
+
 /* =============================================================================
    Model presets
    Each preset: p=params(B), l=layers, kv=kv_heads, hd=head_dim,
    a=active_percent, moe=is_moe, se=shared_experts, hf=huggingface_id
    ============================================================================= */
+/* Architecture values read from each model's config.json on HuggingFace
+   (2026-07-27). Gated repos were read from unsloth/* mirrors, which republish
+   the original configs unmodified.
+
+   attn: 'standard' | 'swa' | 'mla'
+     swa — interleaved local/global attention. swaWin is the local window,
+           swaLocal the number of local layers; the rest are global.
+           Gemma 3/4 run 5 local : 1 global. Llama 4 calls it chunked
+           attention, but the KV consequence is identical.
+     mla — DeepSeek compresses K and V into one latent per layer.
+           mlaDim = kv_lora_rank + qk_rope_head_dim (512 + 64 = 576);
+           kv/hd are unused in this mode. */
 const MODEL_PRESETS = {
-  'llama31-8b':       { p:8,   l:32, kv:8,  hd:128, a:100, moe:false, se:0, hf:'meta-llama/Llama-3.1-8B-Instruct' },
-  'llama31-70b':      { p:70,  l:80, kv:8,  hd:128, a:100, moe:false, se:0, hf:'meta-llama/Llama-3.1-70B-Instruct' },
-  'llama33-70b':      { p:70,  l:80, kv:8,  hd:128, a:100, moe:false, se:0, hf:'meta-llama/Llama-3.3-70B-Instruct' },
-  'llama4-109b':      { p:109, l:48, kv:8,  hd:128, a:16,  moe:true,  se:0, hf:'meta-llama/Llama-4-Scout-109B-A17B' },
-  'qwen3-8b':         { p:8,   l:36, kv:8,  hd:128, a:100, moe:false, se:0, hf:'Qwen/Qwen3-8B' },
-  'qwen3-30b':        { p:30,  l:48, kv:8,  hd:128, a:10,  moe:true,  se:0, hf:'Qwen/Qwen3-30B-A3B' },
-  'qwen25-coder-32b': { p:32,  l:64, kv:8,  hd:128, a:100, moe:false, se:0, hf:'Qwen/Qwen2.5-Coder-32B-Instruct' },
-  'qwen35-397b':      { p:397, l:94, kv:8,  hd:128, a:4,   moe:true,  se:0, hf:'Qwen/Qwen3.5-397B-A17B' },
-  'qwen3-coder-480b': { p:480, l:94, kv:8,  hd:128, a:7,   moe:true,  se:0, hf:'Qwen/Qwen3-Coder-480B-A35B-Instruct' },
-  'gemma4-e4b':       { p:4,   l:26, kv:4,  hd:256, a:100, moe:false, se:0, hf:'google/gemma-4-E4B-it' },
-  'gemma4-26b':       { p:26,  l:26, kv:16, hd:128, a:15,  moe:true,  se:0, hf:'google/gemma-4-26B-A4B-it' },
-  'gemma4-31b':       { p:31,  l:34, kv:16, hd:128, a:100, moe:false, se:0, hf:'google/gemma-4-31B-it' },
-  'dsv3-671b':        { p:671, l:61, kv:1,  hd:128, a:5,   moe:true,  se:1, hf:'deepseek-ai/DeepSeek-V3' },
-  'dsr1-671b':        { p:671, l:61, kv:1,  hd:128, a:5,   moe:true,  se:1, hf:'deepseek-ai/DeepSeek-R1' },
-  'mistral-sm4-24b':  { p:24,  l:40, kv:8,  hd:128, a:100, moe:false, se:0, hf:'mistralai/Mistral-Small-4-24B-Instruct-2503' },
-  'mistral-lg-123b':  { p:123, l:88, kv:8,  hd:128, a:100, moe:false, se:0, hf:'mistralai/Mistral-Large-Instruct-2411' },
+  'llama31-8b':        { p:8, l:32, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:131072, hf:'meta-llama/Llama-3.1-8B-Instruct' },
+  'llama31-70b':       { p:70, l:80, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:131072, hf:'meta-llama/Llama-3.1-70B-Instruct' },
+  'llama33-70b':       { p:70, l:80, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:131072, hf:'meta-llama/Llama-3.3-70B-Instruct' },
+  'llama4-109b':       { p:109, l:48, kv:8, hd:128, a:16, moe:true, se:0, attn:'swa', swaWin:8192, swaLocal:36, maxCtx:10485760, hf:'meta-llama/Llama-4-Scout-17B-16E-Instruct' },
+  'qwen3-8b':          { p:8, l:36, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:40960, hf:'Qwen/Qwen3-8B' },
+  'qwen3-30b':         { p:30, l:48, kv:4, hd:128, a:10, moe:true, se:0, attn:'standard', maxCtx:40960, hf:'Qwen/Qwen3-30B-A3B' },
+  'qwen25-coder-32b':  { p:32, l:64, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:32768, hf:'Qwen/Qwen2.5-Coder-32B-Instruct' },
+  'qwen35-397b':       { p:397, l:60, kv:2, hd:256, a:4, moe:true, se:0, attn:'standard', maxCtx:262144, hf:'Qwen/Qwen3.5-397B-A17B' },
+  'qwen3-coder-480b':  { p:480, l:62, kv:8, hd:128, a:7, moe:true, se:0, attn:'standard', maxCtx:262144, hf:'Qwen/Qwen3-Coder-480B-A35B-Instruct' },
+  'gemma4-e4b':        { p:4, l:42, kv:2, hd:256, a:100, moe:false, se:0, attn:'swa', swaWin:512, swaLocal:35, maxCtx:131072, hf:'google/gemma-4-E4B-it' },
+  'gemma4-26b':        { p:26, l:30, kv:8, hd:256, a:15, moe:true, se:0, attn:'swa', swaWin:1024, swaLocal:25, maxCtx:262144, hf:'google/gemma-4-26B-A4B-it' },
+  'gemma4-31b':        { p:31, l:60, kv:16, hd:256, a:100, moe:false, se:0, attn:'swa', swaWin:1024, swaLocal:50, maxCtx:262144, hf:'google/gemma-4-31B-it' },
+  'dsv3-671b':         { p:671, l:61, kv:128, hd:56, a:5, moe:true, se:1, attn:'mla', mlaDim:576, maxCtx:163840, hf:'deepseek-ai/DeepSeek-V3' },
+  'dsr1-671b':         { p:671, l:61, kv:128, hd:56, a:5, moe:true, se:1, attn:'mla', mlaDim:576, maxCtx:163840, hf:'deepseek-ai/DeepSeek-R1' },
+  'mistral-sm4-24b':   { p:24, l:40, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:131072, hf:'mistralai/Mistral-Small-4-24B-Instruct-2503' },
+  'mistral-lg-123b':   { p:123, l:88, kv:8, hd:128, a:100, moe:false, se:0, attn:'standard', maxCtx:131072, hf:'mistralai/Mistral-Large-Instruct-2411' },
 };
 
 /* =============================================================================
@@ -536,6 +588,13 @@ function applyPreset() {
   setVal('head-dim', preset.hd);
   setVal('active-percent', preset.a);
   setVal('shared-experts', preset.se || 0);
+  currentAttn = {
+    mode: preset.attn || 'standard',
+    window: preset.swaWin || 0,
+    localLayers: preset.swaLocal || 0,
+    mlaDim: preset.mlaDim || 0,
+  };
+  currentModelMaxCtx = preset.maxCtx || 131072;
   recalculate();
 }
 
@@ -586,6 +645,8 @@ function parseModelConfig(config, source) {
     setVal('head-dim', headDim);
     setVal('active-percent', activeRatio);
     setVal('shared-experts', sharedExperts);
+    currentAttn = attnFromConfig(config, layers);
+    currentModelMaxCtx = maxContext || 131072;
     if (hiddenSize > 0) { setVal('train-hidden-size', Math.min(hiddenSize, 16384)); document.getElementById('train-hidden-size').max = Math.max(16384, hiddenSize); }
     document.getElementById('preset').value = '';
     importedModelId = source;
@@ -764,19 +825,58 @@ function readInputState() {
     kvBytesPerValue: +document.getElementById('kv-precision').value,
     presetKey: document.getElementById('preset').value,
     hfModelId: importedModelId,
+    attnMode: currentAttn.mode,
+    swaWindow: currentAttn.window,
+    // Manual edits to layer count must not leave more local layers than layers.
+    swaLocalLayers: Math.min(currentAttn.localLayers, getVal('layer-count')),
+    mlaLatentDim: currentAttn.mlaDim,
+    modelMaxCtx: currentModelMaxCtx,
   };
 }
 
 function computeInference(state) {
   const { params, activePercent, bytesPerParam, layers, kvHeads, headDim,
           sharedExperts, contextLength, concurrency, gpuCount, gpuGB,
-          gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue } = state;
+          gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue,
+          attnMode = 'standard', swaWindow = 0, swaLocalLayers = 0, mlaLatentDim = 0,
+          modelMaxCtx = 131072 } = state;
 
   const isMoE = activePercent < 100;
   const weightsGB = (params * 1e9 * bytesPerParam) / GIB;
-  const kvBytesPerToken = 2 * layers * kvHeads * headDim * kvBytesPerValue;
+
+  /* KV cache. Three regimes, because the textbook formula only covers one of them.
+   *
+   * standard (MHA/GQA) — every layer caches a K and a V for every token:
+   *     2 * layers * kv_heads * head_dim * bytes * ctx
+   *
+   * swa — interleaved local/global attention (Gemma 3/4, Llama 4 chunked). Local
+   *     layers only ever hold `window` tokens no matter how long the context gets,
+   *     so cost stops growing on those layers once ctx passes the window. Treating
+   *     these as full attention overestimates KV by ~5x at long context, which is
+   *     most of why a 262K-context Gemma looks impossible on hardware that runs it:
+   *     2 * kv_heads * head_dim * bytes * (L_local * min(ctx, window) + L_global * ctx)
+   *
+   * mla — DeepSeek V2/V3/R1 compress K and V into one latent vector per layer, so
+   *     there is no K/V pair and no per-head multiplier at all. Feeding MLA models
+   *     through the GQA formula is meaningless in either direction:
+   *     layers * (kv_lora_rank + qk_rope_head_dim) * bytes * ctx
+   */
+  const swaGlobalLayers = Math.max(layers - swaLocalLayers, 0);
+  const kvBytesForSeq = (ctx) => {
+    if (attnMode === 'mla') return layers * mlaLatentDim * kvBytesPerValue * ctx;
+    if (attnMode === 'swa') {
+      const perLayerToken = 2 * kvHeads * headDim * kvBytesPerValue;
+      const cachedLocal = Math.min(ctx, swaWindow);
+      return perLayerToken * (swaLocalLayers * cachedLocal + swaGlobalLayers * ctx);
+    }
+    return 2 * layers * kvHeads * headDim * kvBytesPerValue * ctx;
+  };
+  const kvSeqBytes = kvBytesForSeq(contextLength);
+  // Effective average across layers — for SWA this is below the nominal per-token
+  // figure, since local layers stop growing once past the window.
+  const kvBytesPerToken = contextLength > 0 ? kvSeqBytes / contextLength : 0;
   const totalTokens = contextLength * concurrency;
-  const kvCacheGB = (kvBytesPerToken * totalTokens) / GIB;
+  const kvCacheGB = (kvSeqBytes * concurrency) / GIB;
 
   // Activation memory (active params only)
   const activeParams = params * (activePercent / 100);
@@ -803,9 +903,30 @@ function computeInference(state) {
   const fixedPerGPU = perGPU.weights + perGPU.activations + perGPU.overhead;
   const freeForKVCache = Math.max((gpuGB * 0.9 - fixedPerGPU) * gpuCount, 0);
   const kvPerTokenGB = kvBytesPerToken / GIB;
-  const maxContextSingleUser = kvPerTokenGB > 0 ? Math.min(Math.floor(freeForKVCache / kvPerTokenGB), 131072) : 0;
-  const maxConcurrentAt8K = kvPerTokenGB > 0 ? Math.floor(freeForKVCache / (kvPerTokenGB * 8192)) : 0;
-  const maxConcurrentAt4K = kvPerTokenGB > 0 ? Math.floor(freeForKVCache / (kvPerTokenGB * 4096)) : 0;
+  const freeKVBytes = freeForKVCache * GIB;
+
+  /* Max context for one user. Under standard or MLA attention KV grows linearly
+   * with context, so this divides out. Under SWA it does not: past the window,
+   * only the global layers keep growing, so the curve bends and a closed-form
+   * divide would understate the reachable context. Binary search handles every
+   * regime including any future one that is monotonic in ctx. */
+  // Never report a context the model cannot address, however much KV is free.
+  const CONTEXT_CEILING = Math.min(modelMaxCtx || 131072, 1048576);
+  let maxContextSingleUser = 0;
+  if (kvBytesForSeq(1) > 0 && freeKVBytes > 0) {
+    let lo = 0, hi = CONTEXT_CEILING;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi + 1) / 2);
+      if (kvBytesForSeq(mid) <= freeKVBytes) lo = mid; else hi = mid - 1;
+    }
+    maxContextSingleUser = lo;
+  }
+  const concurrentAt = (ctx) => {
+    const per = kvBytesForSeq(ctx);
+    return per > 0 ? Math.floor(freeKVBytes / per) : 0;
+  };
+  const maxConcurrentAt8K = concurrentAt(8192);
+  const maxConcurrentAt4K = concurrentAt(4096);
 
   /* Throughput — two different quantities that must never be compared to each other.
    *
@@ -831,7 +952,9 @@ function computeInference(state) {
   const interconnectPenalty = (gpuCount > 1 && !hasNVLink) ? 0.55 : (gpuCount > 1 ? 0.85 : 1.0);
   const achievedBandwidth = gpuBandwidth * 1e9 * gpuCount * MBU * interconnectPenalty;
   const activeWeightBytes = totalActiveParams * 1e9 * bytesPerParam;
-  const kvBytesPerSeq = kvBytesPerToken * contextLength;
+  // Exact bytes for one sequence at this context, not per-token x ctx — those
+  // differ under SWA, where local layers stop growing past the window.
+  const kvBytesPerSeq = kvSeqBytes;
 
   const decodeAt = (batch) => {
     const denom = activeWeightBytes + batch * kvBytesPerSeq;
@@ -996,8 +1119,21 @@ function renderVerdict(state, computed) {
   setHTML('verdict-output', html);
 }
 
+/* Spell out which KV formula produced the number, so a reader can check it
+   rather than trust it — the three regimes differ by more than 5x. */
+function kvFormulaLabel(state) {
+  if (state.attnMode === 'mla') {
+    return `MLA · ${state.layers} L × ${state.mlaLatentDim} latent × ${state.kvBytesPerValue}B (no K/V pair)`;
+  }
+  if (state.attnMode === 'swa') {
+    const global = state.layers - state.swaLocalLayers;
+    return `SWA · ${state.swaLocalLayers} local capped at ${formatContext(state.swaWindow)} + ${global} global × ${formatContext(state.contextLength)}`;
+  }
+  return `2 × ${state.layers} L × ${state.kvHeads} H × ${state.headDim} D × ${state.kvBytesPerValue}B`;
+}
+
 function renderCapacity(state, computed) {
-  setHTML('capacity-output', `<div class="reverse-grid"><div class="reverse-card"><p class="label">Max context (1 user, 90% util)</p><p class="value">${formatContext(computed.maxContextSingleUser)} tokens</p><p class="sub">${formatGB(computed.freeForKVCache)} free for KV${state.kvBytesPerValue < 2 ? ' (FP8 KV)' : ''}</p></div><div class="reverse-card"><p class="label">Max concurrent @ 8K</p><p class="value">${Math.max(computed.maxConcurrentAt8K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 8192)} KV</p></div></div><div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">Max concurrent @ 4K</p><p class="value">${Math.max(computed.maxConcurrentAt4K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 4096)} KV</p></div><div class="reverse-card"><p class="label">KV per token</p><p class="value">${Math.round(computed.kvBytesPerToken)} B</p><p class="sub">2 × ${state.layers} L × ${state.kvHeads} H × ${state.headDim} D × ${state.kvBytesPerValue}B</p></div></div>`);
+  setHTML('capacity-output', `<div class="reverse-grid"><div class="reverse-card"><p class="label">Max context (1 user, 90% util)</p><p class="value">${formatContext(computed.maxContextSingleUser)} tokens</p><p class="sub">${formatGB(computed.freeForKVCache)} free for KV${state.kvBytesPerValue < 2 ? ' (FP8 KV)' : ''}</p></div><div class="reverse-card"><p class="label">Max concurrent @ 8K</p><p class="value">${Math.max(computed.maxConcurrentAt8K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 8192)} KV</p></div></div><div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">Max concurrent @ 4K</p><p class="value">${Math.max(computed.maxConcurrentAt4K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 4096)} KV</p></div><div class="reverse-card"><p class="label">KV per token${state.attnMode === 'swa' ? ' (effective)' : ''}</p><p class="value">${Math.round(computed.kvBytesPerToken)} B</p><p class="sub">${kvFormulaLabel(state)}</p></div></div>`);
 }
 
 function renderThroughput(state, computed) {

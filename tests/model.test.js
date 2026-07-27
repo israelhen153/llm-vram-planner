@@ -45,6 +45,7 @@ const state = (o = {}) => {
     params: 8, activePercent: 100, bytesPerParam: 2, layers: 32, kvHeads: 8,
     headDim: 128, sharedExperts: 0, contextLength: 8192, concurrency: 1,
     gpuCount: 1, hasNVLink: true, kvBytesPerValue: 2, presetKey: '', hfModelId: null,
+    modelMaxCtx: 1048576,
     gpuGB: gpu.gb, gpuBandwidth: gpu.bw, gpuTFLOPS: gpu.tflops,
     gpuHyperCost: gpu.hyper, gpuSpecCost: gpu.spec, gpuSpotCost: gpu.spot,
     gpuName: o.gpu || 'H100 80GB',
@@ -93,6 +94,85 @@ test('tensor parallel shards weights across GPUs', () => {
   const one = computeInference(state()).perGPU.weights;
   const four = computeInference(state({ gpuCount: 4 })).perGPU.weights;
   between(one / four, 3.99, 4.01, 'weight shard ratio');
+});
+
+console.log('\nKV cache — attention regimes');
+// Gemma 4 26B A4B, from config.json: 30 layers, 8 kv heads, head_dim 256,
+// sliding_window 1024, 25 sliding_attention + 5 full_attention.
+const GEMMA = { params: 26, layers: 30, kvHeads: 8, headDim: 256, activePercent: 15,
+                attnMode: 'swa', swaWindow: 1024, swaLocalLayers: 25 };
+// DeepSeek V3: 61 layers, MLA with kv_lora_rank 512 + qk_rope_head_dim 64.
+// Served at FP8 across 16 GPUs, which is roughly how it is actually deployed —
+// 671B at BF16 is 1.25 TiB of weights and does not fit on 8x80GB at all.
+const DEEPSEEK = { params: 671, layers: 61, activePercent: 5, sharedExperts: 1,
+                   bytesPerParam: 1, gpuCount: 16, attnMode: 'mla', mlaLatentDim: 576 };
+
+test('standard attention matches 2 * L * H * D * bytes * ctx', () => {
+  const ctx = 8192;
+  const c = computeInference(state({ contextLength: ctx }));
+  const expected = 2 * 32 * 8 * 128 * 2 * ctx / (1024 ** 3);
+  between(c.kvCacheGB, expected * 0.999, expected * 1.001, 'kvCacheGB');
+});
+
+test('SWA caps local layers at the window, global layers keep growing', () => {
+  const ctx = 32768;
+  const c = computeInference(state({ ...GEMMA, contextLength: ctx }));
+  const perLayerToken = 2 * 8 * 256 * 2;
+  const expected = perLayerToken * (25 * 1024 + 5 * ctx) / (1024 ** 3);
+  between(c.kvCacheGB, expected * 0.999, expected * 1.001, 'SWA kvCacheGB');
+});
+
+test('SWA below the window behaves exactly like full attention', () => {
+  // At ctx <= window nothing is capped yet, so the two must agree.
+  const ctx = 512;
+  const swa = computeInference(state({ ...GEMMA, contextLength: ctx })).kvCacheGB;
+  const full = computeInference(state({ ...GEMMA, attnMode: 'standard', contextLength: ctx })).kvCacheGB;
+  between(swa / full, 0.999, 1.001, 'SWA vs full at short context');
+});
+
+test('SWA saves multiples at long context — the whole point', () => {
+  const ctx = 131072;
+  const swa = computeInference(state({ ...GEMMA, contextLength: ctx })).kvCacheGB;
+  const full = computeInference(state({ ...GEMMA, attnMode: 'standard', contextLength: ctx })).kvCacheGB;
+  // 30 layers all growing vs 5 growing + 25 pinned at 1024.
+  assert.ok(full / swa > 4.5, `expected >4.5x saving at 128K, got ${(full / swa).toFixed(2)}x`);
+});
+
+test('MLA caches one latent per layer, with no K/V pair or head multiplier', () => {
+  const ctx = 8192;
+  const c = computeInference(state({ ...DEEPSEEK, contextLength: ctx }));
+  const expected = 61 * 576 * 2 * ctx / (1024 ** 3);
+  between(c.kvCacheGB, expected * 0.999, expected * 1.001, 'MLA kvCacheGB');
+});
+
+test('MLA is far cheaper than treating DeepSeek as 128-head GQA', () => {
+  const ctx = 8192;
+  const mla = computeInference(state({ ...DEEPSEEK, contextLength: ctx })).kvCacheGB;
+  const asGqa = computeInference(state({ ...DEEPSEEK, attnMode: 'standard',
+                                         kvHeads: 128, headDim: 56, contextLength: ctx })).kvCacheGB;
+  assert.ok(asGqa > mla * 20, `GQA formula should be >20x MLA, got ${(asGqa / mla).toFixed(1)}x`);
+});
+
+test('max context accounts for the SWA bend rather than dividing through', () => {
+  // A linear divide on the effective per-token rate would understate reachable
+  // context, because past the window only the global layers keep consuming.
+  const c = computeInference(state({ ...GEMMA, contextLength: 32768 }));
+  const perLayerToken = 2 * 8 * 256 * 2;
+  const atMax = perLayerToken * (25 * 1024 + 5 * c.maxContextSingleUser);
+  assert.ok(atMax <= c.freeForKVCache * (1024 ** 3) * 1.001,
+    'max context must actually fit in the free KV budget');
+  // And one more token must not fit.
+  const atMaxPlus = perLayerToken * (25 * 1024 + 5 * (c.maxContextSingleUser + 1024));
+  assert.ok(atMaxPlus > c.freeForKVCache * (1024 ** 3),
+    'max context should be tight, not conservative');
+});
+
+test('max context is reachable under every regime', () => {
+  for (const [name, over] of [['standard', {}], ['swa', GEMMA], ['mla', DEEPSEEK]]) {
+    const c = computeInference(state({ ...over, contextLength: 8192 }));
+    assert.ok(c.maxContextSingleUser > 0, `${name}: max context should be positive`);
+    assert.ok(Number.isFinite(c.maxContextSingleUser), `${name}: max context must be finite`);
+  }
 });
 
 console.log('\nThroughput — single-stream');
