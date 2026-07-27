@@ -65,6 +65,15 @@ CASES = [
      "params": 671, "active": 5, "shared_exp": 1, "bpp": 1, "layers": 61,
      "kv_heads": 128, "h_dim": 56, "ctx": 16384, "conc": 8, "n_gpu": 16,
      "gpu": "h100-80", "attn": "mla", "mla_dim": 576},
+    {"name": "70B bf16 on H200 141GB (new GPU entry)",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 32768, "conc": 16, "n_gpu": 2, "gpu": "h200-141"},
+    {"name": "8B bf16 on RTX 5090 (new GPU entry)",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 4, "n_gpu": 1, "gpu": "rtx5090-32"},
+    {"name": "27B on L4 24GB, does not fit (new GPU entry)",
+     "params": 27, "active": 100, "bpp": 0.5, "layers": 48, "kv_heads": 8, "h_dim": 128,
+     "ctx": 4096, "conc": 1, "n_gpu": 1, "gpu": "l4-24"},
 ]
 
 js_runner = r"""
@@ -91,9 +100,11 @@ const out=JSON.parse(process.argv[2]).map(c=>{
 console.log(JSON.stringify(out));
 """
 
-NAMES = {"t4-16": "T4 16GB", "rtx4090-24": "RTX 4090 24GB", "a100-40": "A100 40GB",
-         "l40s-48": "L40S 48GB", "a100-80": "A100 80GB", "h100-80": "H100 80GB",
-         "rtxpro-96": "RTX PRO 6000", "b200-192": "B200 192GB"}
+NAMES = {"t4-16": "T4 16GB", "l4-24": "L4 24GB", "rtx4090-24": "RTX 4090 24GB",
+         "rtx5090-32": "RTX 5090 32GB", "a100-40": "A100 40GB",
+         "rtx6000ada-48": "RTX 6000 Ada 48GB", "l40s-48": "L40S 48GB",
+         "a100-80": "A100 80GB", "h100-80": "H100 80GB", "rtxpro-96": "RTX PRO 6000 96GB",
+         "h200-141": "H200 141GB", "b200-192": "B200 192GB"}
 
 js_in = [dict(c, gpuName=NAMES[c["gpu"]], max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
 proc = subprocess.run(
@@ -148,6 +159,41 @@ for case, js in zip(CASES, js_results):
               f"(py fits={py['fits']} js fits={js['fits']})")
         failed += 1
     else:
+        passed += 1
+
+# The GPU tables are maintained twice. Drift there is silent and produces
+# confidently wrong numbers, so compare them field by field.
+js_gpus = json.loads(subprocess.run(
+    ["node", "-e", """
+const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');const o={};
+for(const[,v,n]of h.matchAll(/<option value="([\\d.|]+)"[^>]*data-n="([^"]+)"/g)){
+  const[gb,bw,hyper,spec,spot,tflops]=v.split('|').map(Number);
+  o[n]={gb,bw,hyper,spec,spot,tflops};
+}
+console.log(JSON.stringify(o));""", os.path.join(ROOT, "index.html")],
+    capture_output=True, text=True).stdout)
+
+py_by_name = {v["name"].replace(" GB", "GB"): v for v in GPUS.values()}
+js_by_name = {k.replace(" GB", "GB"): v for k, v in js_gpus.items()}
+if set(py_by_name) != set(js_by_name):
+    only_py = sorted(set(py_by_name) - set(js_by_name))
+    only_js = sorted(set(js_by_name) - set(py_by_name))
+    print(f"  FAIL GPU tables list different cards: only-python={only_py} only-js={only_js}")
+    failed += 1
+else:
+    drift = []
+    for name in sorted(py_by_name):
+        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops"):
+            a, b = py_by_name[name][f], js_by_name[name][f]
+            if abs(a - b) > 1e-9:
+                drift.append(f"{name}.{f}: py={a} js={b}")
+    if drift:
+        print("  FAIL GPU tables have drifted")
+        for d in drift:
+            print(f"       {d}")
+        failed += 1
+    else:
+        print(f"  ok   GPU tables identical across both engines ({len(py_by_name)} cards)")
         passed += 1
 
 print(f"\n{passed} passed, {failed} failed\n")
