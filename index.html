@@ -376,6 +376,10 @@ body.exec-mode .exec-summary { display: block; }
     <div class="field"><label>Context length <span class="info-tip" tabindex="0" role="img" aria-label="Maximum tokens (prompt plus output) per request. KV cache grows linearly with this." data-tip="Maximum tokens (prompt plus output) per request. KV cache grows linearly with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1024" max="131072" value="8192" step="1024" id="context-length" oninput="recalculate()"><span class="slider-value" id="context-length-display">8K</span></div></div>
     <div class="field"><label>Concurrent requests <span class="info-tip" tabindex="0" role="img" aria-label="Requests in flight at once. Total KV cache is roughly per-request KV times concurrency." data-tip="Requests in flight at once. Total KV cache is roughly per-request KV times concurrency."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="256" value="1" step="1" id="concurrency" oninput="recalculate()"><span class="slider-value" id="concurrency-display">1</span></div></div>
   </div>
+  <div class="grid-2 engineer-only">
+    <div class="field"><label>Shared prefix — system prompt + tool schemas <span class="info-tip" tabindex="0" role="img" aria-label="Tokens identical across every request: system prompt, tool and function schemas, few-shot examples. Agent stacks often run 2-8K here. With prefix caching these are stored once rather than per request, and skipped during prefill after the first hit." data-tip="Tokens identical across every request: system prompt, tool and function schemas, few-shot examples. Agent stacks often run 2-8K here. With prefix caching these are stored once rather than per request, and skipped during prefill after the first hit."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="0" max="32768" value="0" step="256" id="shared-prefix" oninput="recalculate()"><span class="slider-value" id="shared-prefix-display">0</span></div></div>
+    <div class="field"><label>Prefix caching <span class="info-tip" tabindex="0" role="img" aria-label="vLLM V1 enables automatic prefix caching by default; --no-enable-prefix-caching turns it off. It deduplicates the shared prefix in KV cache and skips it during prefill, so it cuts TTFT but never decode speed." data-tip="vLLM V1 enables automatic prefix caching by default; --no-enable-prefix-caching turns it off. It deduplicates the shared prefix in KV cache and skips it during prefill, so it cuts TTFT but never decode speed."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><select id="prefix-caching" onchange="recalculate()"><option value="1" selected>Enabled (vLLM V1 default)</option><option value="0">Disabled (--no-enable-prefix-caching)</option></select></div>
+  </div>
 </div>
 
 <!-- ==========================================================================
@@ -821,6 +825,8 @@ function readInputState() {
     sharedExperts: getVal('shared-experts'),
     contextLength: getVal('context-length'),
     concurrency: getVal('concurrency'),
+    sharedPrefix: getVal('shared-prefix'),
+    prefixCaching: !!+document.getElementById('prefix-caching').value,
     gpuCount: getVal('gpu-count'),
     gpuGB: gpu.gb,
     gpuBandwidth: gpu.bw,
@@ -847,7 +853,7 @@ function computeInference(state) {
           sharedExperts, contextLength, concurrency, gpuCount, gpuGB,
           gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue,
           attnMode = 'standard', swaWindow = 0, swaLocalLayers = 0, mlaLatentDim = 0,
-          modelMaxCtx = 131072 } = state;
+          modelMaxCtx = 131072, sharedPrefix = 0, prefixCaching = true } = state;
 
   const isMoE = activePercent < 100;
   const weightsGB = (params * 1e9 * bytesPerParam) / GIB;
@@ -879,12 +885,30 @@ function computeInference(state) {
     }
     return 2 * layers * kvHeads * headDim * kvBytesPerValue * ctx;
   };
+  /* Bytes that can be shared between sequences holding the same prefix.
+     Under SWA only the global layers qualify: local layers keep a rolling
+     window over the most recent tokens, so a system prompt at position 0
+     has already slid out of them and is not there to share. */
+  const kvBytesShareable = (ctx) => {
+    if (attnMode === 'mla') return layers * mlaLatentDim * kvBytesPerValue * ctx;
+    if (attnMode === 'swa') return 2 * kvHeads * headDim * kvBytesPerValue * swaGlobalLayers * ctx;
+    return 2 * layers * kvHeads * headDim * kvBytesPerValue * ctx;
+  };
+
   const kvSeqBytes = kvBytesForSeq(contextLength);
+  /* With automatic prefix caching (vLLM V1 default) the shared prefix is stored
+     once and reused, instead of once per concurrent request. At 64 users sharing
+     an 8K agent preamble that is the difference between 64 copies and one. */
+  const effectivePrefix = Math.min(sharedPrefix, contextLength);
+  const sharedBytes = prefixCaching ? kvBytesShareable(effectivePrefix) : 0;
+  const perSeqBytes = Math.max(kvSeqBytes - sharedBytes, 0);
+  const kvTotalBytes = sharedBytes + perSeqBytes * concurrency;
+  const kvSavedByPrefixGB = (kvSeqBytes * concurrency - kvTotalBytes) / GIB;
   // Effective average across layers — for SWA this is below the nominal per-token
   // figure, since local layers stop growing once past the window.
   const kvBytesPerToken = contextLength > 0 ? kvSeqBytes / contextLength : 0;
   const totalTokens = contextLength * concurrency;
-  const kvCacheGB = (kvSeqBytes * concurrency) / GIB;
+  const kvCacheGB = kvTotalBytes / GIB;
 
   // Activation memory (active params only)
   const activeParams = params * (activePercent / 100);
@@ -970,7 +994,11 @@ function computeInference(state) {
   };
 
   // You cannot batch more sequences than fit in KV cache at this context length.
-  const maxBatchByKV = kvBytesPerSeq > 0 ? Math.floor((freeForKVCache * GIB) / kvBytesPerSeq) : concurrency;
+  // Marginal cost of one more sequence: the shared prefix is already resident.
+  const marginalSeqBytes = Math.max(kvBytesPerSeq - sharedBytes, 1);
+  const maxBatchByKV = kvBytesPerSeq > 0
+    ? Math.max(Math.floor((freeForKVCache * GIB - sharedBytes) / marginalSeqBytes), 0)
+    : concurrency;
   const effectiveBatch = Math.max(Math.min(concurrency, maxBatchByKV), 1);
   const computeCeiling = totalActiveParams > 0
     ? (MFU_DECODE * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty) / (2 * totalActiveParams * 1e9)
@@ -993,9 +1021,16 @@ function computeInference(state) {
   /* TTFT — prefill is compute-bound, not bandwidth-bound: the whole prompt is
    * processed in one parallel pass at ~2 FLOPs per active parameter per token.
    * (Decode speed is irrelevant here; using it understates TTFT by ~10x.) */
-  const prefillFlops = 2 * totalActiveParams * 1e9 * contextLength;
   const achievedFlops = MFU_DECODE * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty;
-  const ttftMs = achievedFlops > 0 ? Math.round((prefillFlops / achievedFlops) * 1000) : 0;
+  const prefillFlopsFor = (tokens) => 2 * totalActiveParams * 1e9 * Math.max(tokens, 0);
+  const ttftFor = (tokens) => achievedFlops > 0
+    ? Math.round((prefillFlopsFor(tokens) / achievedFlops) * 1000) : 0;
+  // Cold: nothing cached, the whole prompt is prefilled. Warm: the shared prefix
+  // is already in cache, so only the request-specific remainder is computed.
+  // APC changes prefill only — decode speed is identical either way.
+  const ttftColdMs = ttftFor(contextLength);
+  const ttftWarmMs = prefixCaching ? ttftFor(contextLength - effectivePrefix) : ttftColdMs;
+  const ttftMs = ttftWarmMs;
 
   // Cost
   const hourlyHyper = gpuHyperCost * gpuCount;
@@ -1008,7 +1043,8 @@ function computeInference(state) {
     freeForKVCache, kvPerTokenGB, kvBytesPerToken,
     maxContextSingleUser, maxConcurrentAt8K, maxConcurrentAt4K,
     singleStreamTokS, aggregateTokS, perUserAtLoadTokS, effectiveBatch,
-    maxBatchByKV, batchLimitedByKV, computeBound, ttftMs, totalTokens,
+    maxBatchByKV, batchLimitedByKV, computeBound, ttftMs, ttftColdMs, ttftWarmMs,
+    kvSavedByPrefixGB, effectivePrefix, totalTokens,
     saturatedBatch, saturatedTokS,
     hourlyHyper, hourlySpec, hourlySpot,
     fits: perGPU.total <= gpuGB,
@@ -1028,6 +1064,7 @@ function renderSliderLabels(state) {
   document.getElementById('shared-experts-display').textContent = state.sharedExperts;
   document.getElementById('context-length-display').textContent = formatContext(state.contextLength);
   document.getElementById('concurrency-display').textContent = state.concurrency;
+  document.getElementById('shared-prefix-display').textContent = state.sharedPrefix ? formatContext(state.sharedPrefix) : '0';
   document.getElementById('gpu-count-display').textContent = state.gpuCount;
   document.getElementById('train-batch-size-display').textContent = getVal('train-batch-size');
   document.getElementById('train-seq-len-display').textContent = formatContext(getVal('train-seq-len'));
@@ -1141,7 +1178,10 @@ function kvFormulaLabel(state) {
 }
 
 function renderCapacity(state, computed) {
-  setHTML('capacity-output', `<div class="reverse-grid"><div class="reverse-card"><p class="label">Max context (1 user, 90% util)</p><p class="value">${formatContext(computed.maxContextSingleUser)} tokens</p><p class="sub">${formatGB(computed.freeForKVCache)} free for KV${state.kvBytesPerValue < 2 ? ' (FP8 KV)' : ''}</p></div><div class="reverse-card"><p class="label">Max concurrent @ 8K</p><p class="value">${Math.max(computed.maxConcurrentAt8K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 8192)} KV</p></div></div><div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">Max concurrent @ 4K</p><p class="value">${Math.max(computed.maxConcurrentAt4K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 4096)} KV</p></div><div class="reverse-card"><p class="label">KV per token${state.attnMode === 'swa' ? ' (effective)' : ''}</p><p class="value">${Math.round(computed.kvBytesPerToken)} B</p><p class="sub">${kvFormulaLabel(state)}</p></div></div>`);
+  const prefixNote = computed.kvSavedByPrefixGB > 0.05
+    ? `<div style="font-size:11px;color:var(--success-text);padding:4px 10px;margin:4px 0">Prefix caching saves ${formatGB(computed.kvSavedByPrefixGB)} of KV — the ${formatContext(computed.effectivePrefix)} shared prefix is stored once instead of ${state.concurrency}x.${state.attnMode === 'swa' ? ' Only the global layers share; local layers hold a rolling window, so the prefix has slid out of them.' : ''}</div>`
+    : '';
+  setHTML('capacity-output', prefixNote + `<div class="reverse-grid"><div class="reverse-card"><p class="label">Max context (1 user, 90% util)</p><p class="value">${formatContext(computed.maxContextSingleUser)} tokens</p><p class="sub">${formatGB(computed.freeForKVCache)} free for KV${state.kvBytesPerValue < 2 ? ' (FP8 KV)' : ''}</p></div><div class="reverse-card"><p class="label">Max concurrent @ 8K</p><p class="value">${Math.max(computed.maxConcurrentAt8K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 8192)} KV</p></div></div><div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">Max concurrent @ 4K</p><p class="value">${Math.max(computed.maxConcurrentAt4K, 0)} users</p><p class="sub">Each: ${formatGB(computed.kvPerTokenGB * 4096)} KV</p></div><div class="reverse-card"><p class="label">KV per token${state.attnMode === 'swa' ? ' (effective)' : ''}</p><p class="value">${Math.round(computed.kvBytesPerToken)} B</p><p class="sub">${kvFormulaLabel(state)}</p></div></div>`);
 }
 
 function renderThroughput(state, computed) {
@@ -1152,7 +1192,7 @@ function renderThroughput(state, computed) {
   // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
   // aggregate is what the server delivers across the whole batch. Never compare them.
   let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${state.gpuBandwidth} GB/s × 70% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Upper bound · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
-  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">Compute-bound prefill at ${formatContext(state.contextLength)} context</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
+  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
   if (computed.batchLimitedByKV) {
     html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:8px 0"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> You asked for ${state.concurrency} concurrent users but KV cache only fits ${computed.maxBatchByKV} at ${formatContext(state.contextLength)}. vLLM will queue the rest — aggregate throughput above reflects the batch that actually runs.</div>`;
@@ -1232,6 +1272,8 @@ function renderCommand(state, computed) {
     cmd += '    --dtype auto \\\n';
     if (state.quantMethod) cmd += `    --quantization ${state.quantMethod} \\\n`;
     if (state.kvBytesPerValue < 2) cmd += '    --kv-cache-dtype fp8 \\\n';
+    // APC is on by default in vLLM V1, so only the opt-out is worth emitting.
+    if (!state.prefixCaching) cmd += '    --no-enable-prefix-caching \\\n';
     if (isMoE && state.gpuCount > 1) cmd += '    --enable-expert-parallel \\\n';
     cmd += '    --gpu-memory-utilization 0.90 \\\n';
     cmd += `    --max-model-len ${Math.min(computed.maxContextSingleUser, state.contextLength)}`;

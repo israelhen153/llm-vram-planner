@@ -53,11 +53,17 @@ Run `./tests/run.sh` to check the math yourself.
 
 Things it does not model yet, listed because finding out the hard way is worse:
 
-- **Sliding-window attention.** KV cache assumes every layer attends to the full context. Models that interleave local and global layers — Gemma 3/4, Mistral, Ministral — use far less KV than shown at long context. The estimate is conservative, but for those models it is conservative by a lot.
-- **Prefix caching.** vLLM's automatic prefix caching cuts prefill dramatically for RAG and agentic workloads with shared system prompts. TTFT here assumes a cold prefill every time.
 - **Pipeline parallel and multi-node.** TP and DP only. Single-node assumptions throughout.
 - **CPU/NVMe offload.** If it doesn't fit in VRAM, the answer here is "it doesn't fit".
 - **Non-NVIDIA hardware and non-vLLM engines.** AMD and Apple Silicon are on the roadmap; llama.cpp and MLX are not.
+- **Speculative decoding and MTP.** Both change the throughput picture substantially and neither is modelled.
+- **Chunked prefill scheduling.** Prefill and decode interleaving affects tail latency under mixed load.
+
+### What it does model, that most calculators don't
+
+- **Three KV cache regimes.** Full attention, sliding-window (Gemma 3/4, Llama 4 chunked), and MLA (DeepSeek). These differ by more than 5×, and applying the wrong one is the single biggest source of error in VRAM planning.
+- **Prefix caching as a memory effect, not just a latency one.** vLLM V1 enables APC by default. With a shared system prompt it stores that prefix once rather than once per request — 64 users sharing an 8K agent preamble is 63 GiB of KV back on an H100. It cuts TTFT and never touches decode speed.
+- **Agentic overhead.** System prompt and tool schemas as an explicit input, because that's where the shared prefix comes from and nobody budgets for it.
 
 ---
 
