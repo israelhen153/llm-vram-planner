@@ -180,16 +180,57 @@ for (const [key, b] of Object.entries(benchmarks.data)) {
     bytesPerParam: PREC_BYTES[b.prec] ?? 2,
     layers: params >= 60 ? 80 : params >= 20 ? 48 : 32,
     contextLength: b.mode === 'single' ? 16384 : 1024,
-    concurrency: b.mode === 'single' ? 1 : 100000,
+    concurrency: b.mode === 'single' ? 1 : 1,
   });
   const c = computeInference(s);
-  const ours = b.mode === 'single' ? c.singleStreamTokS : c.aggregateTokS;
+  // Batch benchmarks are run saturated, so score against the saturated estimate.
+  const ours = b.mode === 'single' ? c.singleStreamTokS : c.saturatedTokS;
   test(`${key} (${b.mode}) within 4x of ${b.tokS} tok/s`, () => {
     const ratio = ours / b.tokS;
     assert.ok(ratio >= 0.25 && ratio <= 4,
       `estimate ${ours} vs measured ${b.tokS} = ${ratio.toFixed(2)}x (want 0.25-4x)`);
   });
 }
+
+console.log('\nBenchmark lookup');
+const fbStart = html.indexOf('function findBenchmark(');
+assert.notStrictEqual(fbStart, -1, 'findBenchmark() not found');
+const fbEnd = html.indexOf('\n}\n', fbStart);
+const findBenchmark = new Function(
+  `const BENCHMARK_DATA = ${JSON.stringify(benchmarks.data)};
+   ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
+)();
+
+test('buckets match the table documented in CONTRIBUTING.md', () => {
+  // 7b covers 5-7B, 8b covers 8-10B. These were inverted.
+  assert.strictEqual(findBenchmark(7, 'A100 80GB', 80).tokS, benchmarks.data['7b-a100-80'].tokS);
+  assert.strictEqual(findBenchmark(8, 'A100 80GB', 80).tokS, benchmarks.data['8b-a100-80'].tokS);
+});
+test('a model with no benchmark for its size returns nothing', () => {
+  // Previously fell back to the 8B entry, presenting a different model class
+  // as this configuration's published benchmark.
+  assert.strictEqual(findBenchmark(26, 'A100 40GB', 40), null);
+  assert.strictEqual(findBenchmark(70, 'A100 40GB', 40), null);
+});
+test('unknown GPUs return nothing rather than a wrong match', () => {
+  assert.strictEqual(findBenchmark(8, 'T4 16GB', 16), null);
+  assert.strictEqual(findBenchmark(8, 'L40S 48GB', 48), null);
+});
+test('every benchmark key is reachable by lookup', () => {
+  // A key nothing can select is dead data — it means the bucket table and the
+  // data file disagree.
+  const GPU = { 'a100-80': ['A100 80GB', 80], 'a100-40': ['A100 40GB', 40],
+                'h100-80': ['H100 80GB', 80], 'b200-192': ['B200 192GB', 192],
+                'rtx4090-24': ['RTX 4090 24GB', 24] };
+  const PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
+  for (const key of Object.keys(benchmarks.data)) {
+    const m = key.match(/^(\d+b)-(.+)$/);
+    const [name, gb] = GPU[m[2]];
+    const hit = findBenchmark(PROBE[m[1]], name, gb);
+    assert.ok(hit && hit.tokS === benchmarks.data[key].tokS,
+      `${key} is unreachable: probing ${PROBE[m[1]]}B on ${name} did not return it`);
+  }
+});
 
 console.log('\nBenchmark data integrity');
 test('every entry declares a mode', () => {

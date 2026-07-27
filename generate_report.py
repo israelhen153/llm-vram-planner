@@ -187,6 +187,10 @@ def compute(cfg):
     )
     single_tok = round(decode_at(1))
     agg_tok = round(min(decode_at(eff_batch), compute_ceiling))
+    # Saturated batch: the only basis on which a published batch benchmark can be
+    # compared like with like, since those are run with the GPU fully loaded.
+    sat_batch = max(max_batch_kv, 1)
+    sat_tok = round(min(decode_at(sat_batch), compute_ceiling))
     per_user_load = round(agg_tok / eff_batch) if eff_batch else 0
     batch_limited = conc > max_batch_kv
 
@@ -212,7 +216,7 @@ def compute(cfg):
         "max_ctx_1": max_ctx_1, "max_conc_8k": max_conc_8k, "max_conc_4k": max_conc_4k,
         "single_tok": single_tok, "agg_tok": agg_tok, "per_user_load": per_user_load,
         "eff_batch": eff_batch, "max_batch_kv": max_batch_kv, "batch_limited": batch_limited,
-        "ttft_ms": ttft_ms, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
+        "ttft_ms": ttft_ms, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
         "is_moe": is_moe, "total_tokens": total_tokens,
         "fits": fits, "comfortable": comfortable,
     }
