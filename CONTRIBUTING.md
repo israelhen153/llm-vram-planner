@@ -40,6 +40,7 @@ Add your benchmark to `benchmarks/data.json` under the `data` key:
 ```json
 "8b-a100-80": {
     "tokS": 3200,
+    "mode": "batch",
     "src": "Your name or org",
     "note": "Llama 3.1 8B, BF16, batch throughput, 500 ShareGPT prompts",
     "prec": "bf16",
@@ -47,6 +48,17 @@ Add your benchmark to `benchmarks/data.json` under the `data` key:
     "url": "https://link-to-your-benchmark-post-or-repo"
 }
 ```
+
+### `mode` is the field to get right
+
+`mode` says what your number *is*, and it matters more than any other field:
+
+- **`"batch"`** — total tokens/sec across all concurrent requests. What `vllm bench` and most published benchmarks report.
+- **`"single"`** — tokens/sec for one request with nothing else running. What a single user experiences.
+
+These differ by 50–100× on the same hardware, because continuous batching amortises one weight read across the whole batch. The tool compares your entry only against the matching estimate, so a mislabelled `mode` produces a number that looks wildly wrong to everyone who selects that model and GPU.
+
+If you ran `vllm bench throughput` or sent concurrent requests, it's `batch`. If you sent one request and timed it, it's `single`.
 
 ### Key format
 
@@ -84,11 +96,13 @@ If your GPU isn't listed, add it and document the specs in your PR description.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `tokS` | Yes | Output tokens per second (integer) |
+| `mode` | Yes | `batch` (aggregate across concurrent requests) or `single` (one request alone). See above — this one matters most |
 | `src` | Yes | Who ran the benchmark — your name, org, or publication |
 | `note` | Yes | Model name, precision, batch/single-user, context length, vLLM version, num prompts |
 | `prec` | Yes | Weight precision: `bf16`, `fp8`, `int4`, `q4`, `q8` |
 | `date` | Yes | When the benchmark was run: `YYYY-MM` |
-| `url` | Recommended | Link to your blog post, repo, or benchmark report |
+| `url` | Yes, unless `estimated` | Link to your blog post, repo, or benchmark report |
+| `estimated` | Only if true | Set `true` if the number was extrapolated rather than measured on this exact hardware. Entries without a `url` must set this — `tests/run.sh` enforces it |
 
 ### What makes a good entry
 
