@@ -505,7 +505,12 @@ const BENCHMARK_DATA = {
 function getVal(id) { return +document.getElementById(id).value; }
 function setVal(id, v) { document.getElementById(id).value = v; }
 function setHTML(id, html) { document.getElementById(id).innerHTML = html; }
-function formatGB(gb) { return gb < 0.01 ? '0 GB' : gb >= 100 ? Math.round(gb)+' GB' : gb >= 10 ? gb.toFixed(1)+' GB' : gb.toFixed(2)+' GB'; }
+/* Memory is reported in GiB (2^30 bytes), not decimal GB. This matters: nvidia-smi
+   reports an "80 GB" H100 as 81559 MiB = 79.6 GiB, so a GPU's marketing number is
+   effectively GiB. Dividing model bytes by 1e9 while treating GPU capacity as its
+   label mixed the two and made every fit calculation ~7% pessimistic. */
+const GIB = 1024 ** 3;
+function formatGB(gb) { return gb < 0.01 ? '0 GiB' : gb >= 100 ? Math.round(gb)+' GiB' : gb >= 10 ? gb.toFixed(1)+' GiB' : gb.toFixed(2)+' GiB'; }
 function formatContext(v) { return v >= 1024 ? Math.round(v / 1024) + 'K' : v + ''; }
 function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math.round(t) + ''; }
 
@@ -737,16 +742,16 @@ function computeInference(state) {
           gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue } = state;
 
   const isMoE = activePercent < 100;
-  const weightsGB = (params * 1e9 * bytesPerParam) / 1e9;
+  const weightsGB = (params * 1e9 * bytesPerParam) / GIB;
   const kvBytesPerToken = 2 * layers * kvHeads * headDim * kvBytesPerValue;
   const totalTokens = contextLength * concurrency;
-  const kvCacheGB = (kvBytesPerToken * totalTokens) / 1e9;
+  const kvCacheGB = (kvBytesPerToken * totalTokens) / GIB;
 
   // Activation memory (active params only)
   const activeParams = params * (activePercent / 100);
   const sharedParams = isMoE && sharedExperts > 0 ? params * 0.02 * sharedExperts : 0;
   const totalActiveParams = activeParams + sharedParams;
-  const activationsGB = Math.max((totalActiveParams * 1e9 * 2 * 0.01) / 1e9, 0.1);
+  const activationsGB = Math.max((totalActiveParams * 1e9 * 2 * 0.01) / GIB, 0.1);
 
   // Overhead: CUDA context + NCCL buffers
   const overheadPerGPU = 1.5;
@@ -766,7 +771,7 @@ function computeInference(state) {
   // Reverse calculations — capacity limits
   const fixedPerGPU = perGPU.weights + perGPU.activations + perGPU.overhead;
   const freeForKVCache = Math.max((gpuGB * 0.9 - fixedPerGPU) * gpuCount, 0);
-  const kvPerTokenGB = kvBytesPerToken / 1e9;
+  const kvPerTokenGB = kvBytesPerToken / GIB;
   const maxContextSingleUser = kvPerTokenGB > 0 ? Math.min(Math.floor(freeForKVCache / kvPerTokenGB), 131072) : 0;
   const maxConcurrentAt8K = kvPerTokenGB > 0 ? Math.floor(freeForKVCache / (kvPerTokenGB * 8192)) : 0;
   const maxConcurrentAt4K = kvPerTokenGB > 0 ? Math.floor(freeForKVCache / (kvPerTokenGB * 4096)) : 0;
@@ -803,7 +808,7 @@ function computeInference(state) {
   };
 
   // You cannot batch more sequences than fit in KV cache at this context length.
-  const maxBatchByKV = kvBytesPerSeq > 0 ? Math.floor((freeForKVCache * 1e9) / kvBytesPerSeq) : concurrency;
+  const maxBatchByKV = kvBytesPerSeq > 0 ? Math.floor((freeForKVCache * GIB) / kvBytesPerSeq) : concurrency;
   const effectiveBatch = Math.max(Math.min(concurrency, maxBatchByKV), 1);
   const computeCeiling = totalActiveParams > 0
     ? (MFU_DECODE * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty) / (2 * totalActiveParams * 1e9)
@@ -907,7 +912,7 @@ function renderGPUCards(state, computed) {
       if (state.gpuCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
       html += '</p>';
       html += buildBar(14);
-      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${state.gpuGB} GB (${Math.min(usagePct, 999)}%)${state.gpuCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
+      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${state.gpuGB} GiB (${Math.min(usagePct, 999)}%)${state.gpuCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
     }
     html += '</div>';
   } else {
@@ -920,7 +925,7 @@ function renderGPUCards(state, computed) {
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
     if (state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
     html += '</p>';
-    html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each GPU — ${formatGB(perGPU.total)} / ${state.gpuGB} GB (${Math.min(usagePct, 999)}%)</div>`;
+    html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each GPU — ${formatGB(perGPU.total)} / ${state.gpuGB} GiB (${Math.min(usagePct, 999)}%)</div>`;
     html += buildBar(10);
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0">';
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(state.gpuGB * state.gpuCount)}</b></div>`;
@@ -940,13 +945,13 @@ function renderGPUCards(state, computed) {
 }
 
 function renderMetrics(computed) {
-  setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">Weights</p><p class="metric-value">${formatGB(computed.weightsGB)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(computed.activationsGB + computed.totalOverhead)}</p></div><div class="metric-card"><p class="metric-label">Total</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GB</p></div><div class="metric-card"><p class="metric-label">Per-GPU</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
+  setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">Weights</p><p class="metric-value">${formatGB(computed.weightsGB)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(computed.activationsGB + computed.totalOverhead)}</p></div><div class="metric-card"><p class="metric-label">Total</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GiB</p></div><div class="metric-card"><p class="metric-label">Per-GPU</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
 }
 
 function renderVerdict(state, computed) {
   let html;
-  if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%).</div>`;
-  else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB. May OOM under load.</div>`;
+  if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%).</div>`;
+  else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB. May OOM under load.</div>`;
   else { const needed = Math.ceil(computed.totalGB / (state.gpuGB * 0.9)); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - state.gpuGB)} per GPU. Need ${needed}+ GPUs or lower precision.</div>`; }
   setHTML('verdict-output', html);
 }
@@ -1058,21 +1063,21 @@ function renderTraining(state, computed) {
   if (method === 'full') {
     methodLabel = 'Full fine-tune';
     const weightBytes = Math.max(state.bytesPerParam, 2); // training needs BF16 minimum
-    weightsGB = (state.params * 1e9 * weightBytes) / 1e9 / gpuCount;
+    weightsGB = (state.params * 1e9 * weightBytes) / GIB / gpuCount;
     trainableParams = state.params * 1e9;
-    gradientsGB = (state.params * 1e9 * weightBytes) / 1e9 / gpuCount;
-    optimizerGB = (state.params * 1e9 * optimizerBytesPerParam) / 1e9 / gpuCount;
-    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / 1e9 / gpuCount;
+    gradientsGB = (state.params * 1e9 * weightBytes) / GIB / gpuCount;
+    optimizerGB = (state.params * 1e9 * optimizerBytesPerParam) / GIB / gpuCount;
+    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / GIB / gpuCount;
   } else {
     methodLabel = method === 'qlora' ? 'QLoRA' : 'LoRA';
     const baseBytes = method === 'qlora' ? 0.5 : Math.max(state.bytesPerParam, 2);
-    weightsGB = (state.params * 1e9 * baseBytes) / 1e9 / gpuCount;
+    weightsGB = (state.params * 1e9 * baseBytes) / GIB / gpuCount;
     const adapterParams = loraTargets * state.layers * 2 * loraRank * hiddenSize;
     trainableParams = adapterParams;
-    adapterGB = (adapterParams * 2) / 1e9 / gpuCount;
-    gradientsGB = (adapterParams * 2) / 1e9 / gpuCount;
-    optimizerGB = (adapterParams * optimizerBytesPerParam) / 1e9 / gpuCount;
-    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / 1e9 / gpuCount;
+    adapterGB = (adapterParams * 2) / GIB / gpuCount;
+    gradientsGB = (adapterParams * 2) / GIB / gpuCount;
+    optimizerGB = (adapterParams * optimizerBytesPerParam) / GIB / gpuCount;
+    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / GIB / gpuCount;
   }
 
   const overheadGB = 1.5 + (gpuCount > 1 ? 0.3 : 0);
@@ -1085,8 +1090,8 @@ function renderTraining(state, computed) {
   let html = '<div style="margin-top:12px">';
 
   // Verdict
-  if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${state.gpuGB} GB per GPU (${usagePct}%).</div>`;
-  else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${state.gpuGB} GB (${usagePct}%). Reduce batch size or seq length.</div>`;
+  if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${state.gpuGB} GiB per GPU (${usagePct}%).</div>`;
+  else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${state.gpuGB} GiB (${usagePct}%). Reduce batch size or seq length.</div>`;
   else { const needed = Math.ceil((totalPerGPU * gpuCount) / (state.gpuGB * 0.9)); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - state.gpuGB)} per GPU. Need ${needed}+ GPUs or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
 
   // Bar
@@ -1122,7 +1127,7 @@ function renderTraining(state, computed) {
   html += `<div class="note-box" style="margin-top:8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-info-circle"></use></svg> Training uses ${formatGB(totalPerGPU)}/GPU vs inference at ${formatGB(computed.perGPU.total)}/GPU (${Math.round(totalPerGPU / Math.max(computed.perGPU.total, 0.01))}x more). `;
   if (method === 'full') html += `Full fine-tune stores gradients + optimizer for all ${state.params}B params. Switch to LoRA to train only ${trainableLabel}. `;
   if (method === 'lora') html += `LoRA trains ${trainableLabel} adapter params (rank ${loraRank} × ${loraTargets} modules × ${state.layers} layers). Base weights frozen but in VRAM. `;
-  if (method === 'qlora') html += `QLoRA: base at INT4 (${formatGB(weightsGB)}), adapters in BF16. Saves ~${formatGB((state.params * 1e9 * 2 / 1e9 / gpuCount) - weightsGB)} vs LoRA with BF16 base. `;
+  if (method === 'qlora') html += `QLoRA: base at INT4 (${formatGB(weightsGB)}), adapters in BF16. Saves ~${formatGB((state.params * 1e9 * 2 / GIB / gpuCount) - weightsGB)} vs LoRA with BF16 base. `;
   if (gradCheckpoint) html += 'Gradient checkpointing: ~30% slower, ~60-70% less activation memory. ';
   html += 'Reduce batch size first if it doesn\'t fit.</div></div>';
   setHTML('training-results', html);
@@ -1219,7 +1224,7 @@ function renderExecutiveSummary(state, computed) {
 
   // Key metrics in clean rows
   html += `<div class="exec-row"><span class="exec-label">Hardware</span><span class="exec-value">${state.gpuCount}× ${state.gpuName}</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB per GPU (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%)</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB per GPU (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%)</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Max concurrent users (8K context)</span><span class="exec-value">${Math.max(computed.maxConcurrentAt8K, 0)}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec</span></div>`;
@@ -1264,8 +1269,8 @@ function exportSummary() {
   report += `- Precision: ${state.bytesPerParam} bytes/param\n- KV cache: ${state.kvBytesPerValue < 2 ? 'FP8' : 'BF16'}\n`;
   report += `- Layers: ${state.layers}, KV heads: ${state.kvHeads}, head dim: ${state.headDim}\n`;
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
-  report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${state.gpuCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GB\n`;
-  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-GPU: ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
+  report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${state.gpuCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
+  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-GPU: ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
   report += `\n## Capacity\n- Max context (1 user): ${formatContext(computed.maxContextSingleUser)}\n- Max concurrent @ 8K: ${Math.max(computed.maxConcurrentAt8K, 0)}\n- Single-stream decode: ~${formatTokens(computed.singleStreamTokS)} tok/s\n- Aggregate @ ${computed.effectiveBatch} concurrent: ~${formatTokens(computed.aggregateTokS)} tok/s\n- TTFT: ~${computed.ttftMs} ms\n`;
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo\n`;
   report += `\n## vLLM command\n\`\`\`\n${document.querySelector('#command-output code').textContent}\n\`\`\`\n`;

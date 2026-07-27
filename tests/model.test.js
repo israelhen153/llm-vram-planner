@@ -20,7 +20,16 @@ const start = html.indexOf('function computeInference(state) {');
 assert.notStrictEqual(start, -1, 'computeInference() not found in index.html');
 const end = html.indexOf('\n}\n', start);
 assert.notStrictEqual(end, -1, 'could not find end of computeInference()');
-const computeInference = new Function(`${html.slice(start, end + 2)}; return computeInference;`)();
+
+// Module-level constants the function closes over. Read from source rather than
+// redefined here, so a change to the real value cannot silently pass these tests.
+const gibDecl = html.match(/^const GIB = .+;$/m);
+assert.ok(gibDecl, 'GIB constant not found in index.html');
+
+const computeInference = new Function(
+  `${gibDecl[0]}\n${html.slice(start, end + 2)}; return computeInference;`
+)();
+assert.strictEqual(new Function(`${gibDecl[0]}; return GIB;`)(), 1024 ** 3, 'GIB must be 2^30');
 
 /* ---- GPU specs, parsed from the same <option> values the UI uses ---- */
 const GPUS = {};
@@ -52,8 +61,15 @@ const between = (v, lo, hi, what) =>
   assert.ok(v >= lo && v <= hi, `${what}: expected ${lo}..${hi}, got ${Math.round(v)}`);
 
 console.log('\nVRAM');
-test('8B bf16 weights are 16 GB', () => {
-  between(computeInference(state()).weightsGB, 15.9, 16.1, 'weightsGB');
+test('8B bf16 weights are 14.9 GiB (16e9 bytes), not 16', () => {
+  // Reported in GiB to match nvidia-smi, so 8B * 2 bytes = 16e9 B = 14.90 GiB.
+  between(computeInference(state()).weightsGB, 14.8, 15.0, 'weightsGB');
+});
+test('memory is reported in GiB, so GPU capacity is not understated', () => {
+  // The old decimal-GB math made an 8B model look like 16/80 of an H100
+  // when it is really 14.9/80 — a ~7% pessimistic bias on every fit check.
+  const c = computeInference(state());
+  assert.ok(c.weightsGB < 16, `expected GiB (<16), got ${c.weightsGB.toFixed(2)}`);
 });
 test('int4 quantisation quarters the weights vs bf16', () => {
   const bf16 = computeInference(state()).weightsGB;
