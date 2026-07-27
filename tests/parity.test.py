@@ -53,6 +53,18 @@ CASES = [
     {"name": "7B bf16, 2x RTX 4090, no NVLink",
      "params": 7, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
      "ctx": 4096, "conc": 8, "n_gpu": 2, "gpu": "rtx4090-24", "nvlink": False},
+    {"name": "Gemma 4 26B SWA, long context, H100",
+     "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
+     "ctx": 131072, "conc": 4, "n_gpu": 1, "gpu": "h100-80",
+     "attn": "swa", "swa_win": 1024, "swa_local": 25},
+    {"name": "Gemma 4 26B SWA, below the window",
+     "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
+     "ctx": 512, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
+     "attn": "swa", "swa_win": 1024, "swa_local": 25},
+    {"name": "DeepSeek V3 MLA, fp8, 16x H100",
+     "params": 671, "active": 5, "shared_exp": 1, "bpp": 1, "layers": 61,
+     "kv_heads": 128, "h_dim": 56, "ctx": 16384, "conc": 8, "n_gpu": 16,
+     "gpu": "h100-80", "attn": "mla", "mla_dim": 576},
 ]
 
 js_runner = r"""
@@ -71,7 +83,10 @@ const out=JSON.parse(process.argv[2]).map(c=>{
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
-    gpuSpotCost:g.st,gpuName:c.gpuName});
+    gpuSpotCost:g.st,gpuName:c.gpuName,
+    attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
+    swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
+    modelMaxCtx:c.max_ctx||1048576});
 });
 console.log(JSON.stringify(out));
 """
@@ -80,7 +95,7 @@ NAMES = {"t4-16": "T4 16GB", "rtx4090-24": "RTX 4090 24GB", "a100-40": "A100 40G
          "l40s-48": "L40S 48GB", "a100-80": "A100 80GB", "h100-80": "H100 80GB",
          "rtxpro-96": "RTX PRO 6000", "b200-192": "B200 192GB"}
 
-js_in = [dict(c, gpuName=NAMES[c["gpu"]]) for c in CASES]
+js_in = [dict(c, gpuName=NAMES[c["gpu"]], max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
 proc = subprocess.run(
     ["node", "-e", js_runner, os.path.join(ROOT, "index.html"), json.dumps(js_in)],
     capture_output=True, text=True)
@@ -106,6 +121,7 @@ passed = failed = 0
 for case, js in zip(CASES, js_results):
     cfg = {k: v for k, v in case.items() if k != "name"}
     cfg["gpu"] = GPUS[case["gpu"]]
+    cfg.setdefault("max_ctx", 1048576)
     py = compute(cfg)
     bad = []
     for pk, jk, tol in FIELDS:
@@ -125,6 +141,7 @@ for case, js in zip(CASES, js_results):
 for case, js in zip(CASES, js_results):
     cfg = {k: v for k, v in case.items() if k != "name"}
     cfg["gpu"] = GPUS[case["gpu"]]
+    cfg.setdefault("max_ctx", 1048576)
     py = compute(cfg)
     if py["fits"] != js["fits"] or py["comfortable"] != js["comfortable"]:
         print(f"  FAIL {case['name']}: verdict differs "

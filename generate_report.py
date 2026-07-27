@@ -58,22 +58,22 @@ C_ERR_BG = HexColor("#FCEBEB")
 # Presets
 # =============================================================================
 PRESETS = {
-    "llama31-8b":       {"p":8,   "l":32, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"meta-llama/Llama-3.1-8B-Instruct",            "name":"Llama 3.1 8B"},
-    "llama31-70b":      {"p":70,  "l":80, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"meta-llama/Llama-3.1-70B-Instruct",           "name":"Llama 3.1 70B"},
-    "llama33-70b":      {"p":70,  "l":80, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"meta-llama/Llama-3.3-70B-Instruct",           "name":"Llama 3.3 70B"},
-    "llama4-109b":      {"p":109, "l":48, "kv":8,  "hd":128, "a":16,  "moe":True,  "se":0, "hf":"meta-llama/Llama-4-Scout-109B-A17B",          "name":"Llama 4 Scout 109B MoE"},
-    "qwen3-8b":         {"p":8,   "l":36, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"Qwen/Qwen3-8B",                               "name":"Qwen 3 8B"},
-    "qwen3-30b":        {"p":30,  "l":48, "kv":8,  "hd":128, "a":10,  "moe":True,  "se":0, "hf":"Qwen/Qwen3-30B-A3B",                          "name":"Qwen 3 30B-A3B MoE"},
-    "qwen25-coder-32b": {"p":32,  "l":64, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"Qwen/Qwen2.5-Coder-32B-Instruct",             "name":"Qwen 2.5 Coder 32B"},
-    "qwen35-397b":      {"p":397, "l":94, "kv":8,  "hd":128, "a":4,   "moe":True,  "se":0, "hf":"Qwen/Qwen3.5-397B-A17B",                      "name":"Qwen 3.5 397B MoE"},
-    "qwen3-coder-480b": {"p":480, "l":94, "kv":8,  "hd":128, "a":7,   "moe":True,  "se":0, "hf":"Qwen/Qwen3-Coder-480B-A35B-Instruct",         "name":"Qwen 3 Coder 480B MoE"},
-    "gemma4-e4b":       {"p":4,   "l":26, "kv":4,  "hd":256, "a":100, "moe":False, "se":0, "hf":"google/gemma-4-E4B-it",                        "name":"Gemma 4 E4B"},
-    "gemma4-26b":       {"p":26,  "l":26, "kv":16, "hd":128, "a":15,  "moe":True,  "se":0, "hf":"google/gemma-4-26B-A4B-it",                    "name":"Gemma 4 26B MoE"},
-    "gemma4-31b":       {"p":31,  "l":34, "kv":16, "hd":128, "a":100, "moe":False, "se":0, "hf":"google/gemma-4-31B-it",                        "name":"Gemma 4 31B Dense"},
-    "dsv3-671b":        {"p":671, "l":61, "kv":1,  "hd":128, "a":5,   "moe":True,  "se":1, "hf":"deepseek-ai/DeepSeek-V3",                      "name":"DeepSeek-V3 671B MoE"},
-    "dsr1-671b":        {"p":671, "l":61, "kv":1,  "hd":128, "a":5,   "moe":True,  "se":1, "hf":"deepseek-ai/DeepSeek-R1",                      "name":"DeepSeek-R1 671B MoE"},
-    "mistral-sm4-24b":  {"p":24,  "l":40, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"mistralai/Mistral-Small-4-24B-Instruct-2503",  "name":"Mistral Small 4 24B"},
-    "mistral-lg-123b":  {"p":123, "l":88, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"mistralai/Mistral-Large-Instruct-2411",        "name":"Mistral Large 123B"},
+    "llama31-8b":        {"p":8, "l":32, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":131072, "hf":"meta-llama/Llama-3.1-8B-Instruct", "name":"Llama 3.1 8B"},
+    "llama31-70b":       {"p":70, "l":80, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":131072, "hf":"meta-llama/Llama-3.1-70B-Instruct", "name":"Llama 3.1 70B"},
+    "llama33-70b":       {"p":70, "l":80, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":131072, "hf":"meta-llama/Llama-3.3-70B-Instruct", "name":"Llama 3.3 70B"},
+    "llama4-109b":       {"p":109, "l":48, "kv":8, "hd":128, "a":16, "moe":True, "se":0, "attn":"swa", "swa_win":8192, "swa_local":36, "max_ctx":10485760, "hf":"meta-llama/Llama-4-Scout-17B-16E-Instruct", "name":"Llama 4 Scout 109B MoE"},
+    "qwen3-8b":          {"p":8, "l":36, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":40960, "hf":"Qwen/Qwen3-8B", "name":"Qwen 3 8B"},
+    "qwen3-30b":         {"p":30, "l":48, "kv":4, "hd":128, "a":10, "moe":True, "se":0, "attn":"standard", "max_ctx":40960, "hf":"Qwen/Qwen3-30B-A3B", "name":"Qwen 3 30B-A3B MoE"},
+    "qwen25-coder-32b":  {"p":32, "l":64, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":32768, "hf":"Qwen/Qwen2.5-Coder-32B-Instruct", "name":"Qwen 2.5 Coder 32B"},
+    "qwen35-397b":       {"p":397, "l":60, "kv":2, "hd":256, "a":4, "moe":True, "se":0, "attn":"standard", "max_ctx":262144, "hf":"Qwen/Qwen3.5-397B-A17B", "name":"Qwen 3.5 397B MoE"},
+    "qwen3-coder-480b":  {"p":480, "l":62, "kv":8, "hd":128, "a":7, "moe":True, "se":0, "attn":"standard", "max_ctx":262144, "hf":"Qwen/Qwen3-Coder-480B-A35B-Instruct", "name":"Qwen 3 Coder 480B MoE"},
+    "gemma4-e4b":        {"p":4, "l":42, "kv":2, "hd":256, "a":100, "moe":False, "se":0, "attn":"swa", "swa_win":512, "swa_local":35, "max_ctx":131072, "hf":"google/gemma-4-E4B-it", "name":"Gemma 4 E4B"},
+    "gemma4-26b":        {"p":26, "l":30, "kv":8, "hd":256, "a":15, "moe":True, "se":0, "attn":"swa", "swa_win":1024, "swa_local":25, "max_ctx":262144, "hf":"google/gemma-4-26B-A4B-it", "name":"Gemma 4 26B MoE"},
+    "gemma4-31b":        {"p":31, "l":60, "kv":16, "hd":256, "a":100, "moe":False, "se":0, "attn":"swa", "swa_win":1024, "swa_local":50, "max_ctx":262144, "hf":"google/gemma-4-31B-it", "name":"Gemma 4 31B Dense"},
+    "dsv3-671b":         {"p":671, "l":61, "kv":128, "hd":56, "a":5, "moe":True, "se":1, "attn":"mla", "mla_dim":576, "max_ctx":163840, "hf":"deepseek-ai/DeepSeek-V3", "name":"DeepSeek-V3 671B MoE"},
+    "dsr1-671b":         {"p":671, "l":61, "kv":128, "hd":56, "a":5, "moe":True, "se":1, "attn":"mla", "mla_dim":576, "max_ctx":163840, "hf":"deepseek-ai/DeepSeek-R1", "name":"DeepSeek-R1 671B MoE"},
+    "mistral-sm4-24b":   {"p":24, "l":40, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":131072, "hf":"mistralai/Mistral-Small-4-24B-Instruct-2503", "name":"Mistral Small 4 24B"},
+    "mistral-lg-123b":   {"p":123, "l":88, "kv":8, "hd":128, "a":100, "moe":False, "se":0, "attn":"standard", "max_ctx":131072, "hf":"mistralai/Mistral-Large-Instruct-2411", "name":"Mistral Large 123B"},
 }
 
 # Memory is reported in GiB (2^30 B): nvidia-smi shows an "80 GB" H100 as 79.6 GiB,
@@ -137,9 +137,29 @@ def compute(cfg):
     is_moe = active_pct < 100
 
     weights_gb = (params * 1e9 * bpp) / GIB
-    kv_bytes_per_tok = 2 * layers * kv_heads * h_dim * kv_bpp
+
+    # KV cache. Three regimes — see the matching comment in index.html.
+    #   standard  2 * L * kv_heads * head_dim * bytes * ctx
+    #   swa       local layers cap at the window; only global layers keep growing
+    #   mla       one compressed latent per layer, no K/V pair, no head multiplier
+    attn = cfg.get("attn", "standard")
+    swa_win = cfg.get("swa_win", 0)
+    swa_local = min(cfg.get("swa_local", 0), layers)
+    swa_global = max(layers - swa_local, 0)
+    mla_dim = cfg.get("mla_dim", 0)
+
+    def kv_bytes_for_seq(c):
+        if attn == "mla":
+            return layers * mla_dim * kv_bpp * c
+        if attn == "swa":
+            per_layer_token = 2 * kv_heads * h_dim * kv_bpp
+            return per_layer_token * (swa_local * min(c, swa_win) + swa_global * c)
+        return 2 * layers * kv_heads * h_dim * kv_bpp * c
+
+    kv_seq_bytes = kv_bytes_for_seq(ctx)
+    kv_bytes_per_tok = kv_seq_bytes / ctx if ctx > 0 else 0
     total_tokens = ctx * conc
-    kv_gb = (kv_bytes_per_tok * total_tokens) / GIB
+    kv_gb = (kv_seq_bytes * conc) / GIB
     active_p = params * (active_pct / 100)
     shared_p = params * 0.02 * shared_exp if is_moe and shared_exp > 0 else 0
     total_active_p = active_p + shared_p
@@ -159,9 +179,29 @@ def compute(cfg):
     fixed_pg = per_w + per_a + per_oh
     free_kv = max((gpu["gb"] * 0.9 - fixed_pg) * n_gpu, 0)
     kv_per_tok_gb = kv_bytes_per_tok / GIB
-    max_ctx_1 = min(int(free_kv / kv_per_tok_gb), 131072) if kv_per_tok_gb > 0 else 0
-    max_conc_8k = int(free_kv / (kv_per_tok_gb * 8192)) if kv_per_tok_gb > 0 else 0
-    max_conc_4k = int(free_kv / (kv_per_tok_gb * 4096)) if kv_per_tok_gb > 0 else 0
+    free_kv_bytes = free_kv * GIB
+
+    # Binary search rather than a divide: under SWA the KV curve bends at the
+    # window, so dividing by an effective per-token rate understates reach.
+    # Never report a context the model cannot address.
+    CONTEXT_CEILING = min(cfg.get("max_ctx", 131072), 1048576)
+    max_ctx_1 = 0
+    if kv_bytes_for_seq(1) > 0 and free_kv_bytes > 0:
+        lo, hi = 0, CONTEXT_CEILING
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if kv_bytes_for_seq(mid) <= free_kv_bytes:
+                lo = mid
+            else:
+                hi = mid - 1
+        max_ctx_1 = lo
+
+    def concurrent_at(c):
+        per = kv_bytes_for_seq(c)
+        return int(free_kv_bytes / per) if per > 0 else 0
+
+    max_conc_8k = concurrent_at(8192)
+    max_conc_4k = concurrent_at(4096)
 
     # Throughput — see the matching comment in index.html. Decode is bandwidth-bound:
     #   tok/s = (B * achieved_bw) / (active_weight_bytes + B * kv_bytes_per_seq)
@@ -173,7 +213,7 @@ def compute(cfg):
     nv_penalty = 0.55 if (n_gpu > 1 and not nvlink) else (0.85 if n_gpu > 1 else 1.0)
     achieved_bw = gpu["bw"] * 1e9 * n_gpu * MBU * nv_penalty
     active_weight_bytes = total_active_p * 1e9 * bpp
-    kv_bytes_per_seq = kv_bytes_per_tok * ctx
+    kv_bytes_per_seq = kv_seq_bytes
 
     def decode_at(batch):
         denom = active_weight_bytes + batch * kv_bytes_per_seq
