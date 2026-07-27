@@ -47,6 +47,8 @@ Against the measured benchmarks in `benchmarks/data.json`, single-stream lands w
 
 **Costs** are list prices from mid-2026 and drift constantly. Reserved and committed-use pricing typically runs 30–60% below on-demand.
 
+Every formula, constant and known failure mode is written up in **[docs/MODEL.md](docs/MODEL.md)** — including why the two throughput numbers are different quantities, and where the estimates break down.
+
 Run `./tests/run.sh` to check the math yourself.
 
 ### Known gaps
@@ -121,6 +123,7 @@ Bug reports and feature requests welcome via [Issues](https://github.com/israelh
 index.html              The tool (single file, no build step)
 generate_report.py      PDF report generator
 benchmarks/data.json    Community benchmark data
+docs/MODEL.md           Every formula, constant and limitation, explained
 tests/run.sh            Full suite — node + python3, no other deps
 tests/model.test.js     VRAM, throughput and TTFT math
 tests/parity.test.py    Checks index.html and generate_report.py agree
