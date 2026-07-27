@@ -14,13 +14,15 @@ I was deploying vLLM on an air-gapped server and spent 3 hours fighting CUDA ver
 
 **Pick a model → pick a GPU → get the answer.** VRAM breakdown, deployment command, cost estimate.
 
-There are several good VRAM calculators around — [APXML's](https://apxml.com/tools/vram-calculator) is the one most people use, and it covers ground this doesn't. What I couldn't find anywhere was a tool that goes from "does it fit" to "here is the command," so that's where this one leans:
+There are several good VRAM calculators around. [APXML's](https://apxml.com/tools/vram-calculator) is the one most people use and covers ground this doesn't — pipeline parallel, multi-node, CPU/NVMe offload, Apple Silicon. [WireUnwired's](https://wireunwired.com/local-llm-vram-calculator/) also generates a run command, and spans llama.cpp and MLX as well as vLLM.
+
+No single feature here is unique. The combination is what I wanted and couldn't find: **open source, one HTML file that runs offline, and opinionated about vLLM specifically** rather than covering every engine shallowly.
 
 - **Generates the actual `vllm serve` command** — tensor parallel, quantization, KV cache dtype, expert parallel, max context length. Copy-paste and run.
 - **3-tier cost comparison** — hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave), and spot (Vast.ai) pricing side by side.
 - **Training estimation** — full fine-tune, LoRA, QLoRA. See exactly what's eating your VRAM: weights, gradients, optimizer states, activations.
 - **Executive mode** — one-click toggle. Shows verdict, cost range, and max users. Hand the URL to your manager.
-- **Per-user and aggregate throughput, kept separate** — a single user's decode speed and total server throughput differ by 50–100× under continuous batching. Most calculators report one number; conflating them is how you end up promising a latency you can't hit.
+- **Per-user and aggregate throughput, kept separate** — a single user's decode speed and total server throughput differ by 50–100× under continuous batching, so they're reported as two numbers with two rooflines, and benchmarks are only ever compared against the matching one.
 - **Import any model** — paste a HuggingFace ID or drop a `config.json`. Works for models that aren't in any preset list.
 - **PDF report card** — export a procurement-ready document.
 - **Works offline** — single HTML file, no backend, no internet required after first load.
@@ -46,6 +48,16 @@ Against the measured benchmarks in `benchmarks/data.json`, single-stream lands w
 **Costs** are list prices from mid-2026 and drift constantly. Reserved and committed-use pricing typically runs 30–60% below on-demand.
 
 Run `./tests/run.sh` to check the math yourself.
+
+### Known gaps
+
+Things it does not model yet, listed because finding out the hard way is worse:
+
+- **Sliding-window attention.** KV cache assumes every layer attends to the full context. Models that interleave local and global layers — Gemma 3/4, Mistral, Ministral — use far less KV than shown at long context. The estimate is conservative, but for those models it is conservative by a lot.
+- **Prefix caching.** vLLM's automatic prefix caching cuts prefill dramatically for RAG and agentic workloads with shared system prompts. TTFT here assumes a cold prefill every time.
+- **Pipeline parallel and multi-node.** TP and DP only. Single-node assumptions throughout.
+- **CPU/NVMe offload.** If it doesn't fit in VRAM, the answer here is "it doesn't fit".
+- **Non-NVIDIA hardware and non-vLLM engines.** AMD and Apple Silicon are on the roadmap; llama.cpp and MLX are not.
 
 ---
 
