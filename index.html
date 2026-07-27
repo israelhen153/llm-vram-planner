@@ -259,16 +259,20 @@ body.exec-mode .exec-summary { display: block; }
       </select>
     </div>
     <div class="field engineer-only"><label>Weight precision <span class="info-tip" tabindex="0" role="img" aria-label="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0." data-tip="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
+      <!-- data-q = the value vLLM's --quantization expects. AWQ and GPTQ are the same
+           bytes/param but different kernels and different flags, so they are separate
+           entries rather than one ambiguous "INT4" row. -->
       <select id="weight-precision" onchange="recalculate()">
-        <option value="2">BF16 / FP16 (2.0 B/param)</option>
-        <option value="1">FP8 (1.0 B/param)</option>
-        <option value="0.63">GGUF Q4_K_M (0.63 B/param)</option>
-        <option value="0.5" selected>INT4 / AWQ / GPTQ (0.50 B/param)</option>
-        <option value="0.71">GGUF Q5_K_M (0.71 B/param)</option>
-        <option value="0.82">GGUF Q6_K (0.82 B/param)</option>
-        <option value="1.1">GGUF Q8_0 (1.1 B/param)</option>
-        <option value="0.35">GGUF Q2_K (0.35 B/param)</option>
-        <option value="0.5">GGUF Q3_K_M (0.50 B/param)</option>
+        <option value="2" data-q="">BF16 / FP16 (2.0 B/param)</option>
+        <option value="1" data-q="fp8">FP8 (1.0 B/param)</option>
+        <option value="0.5" selected data-q="awq">AWQ 4-bit (0.50 B/param)</option>
+        <option value="0.5" data-q="gptq">GPTQ 4-bit (0.50 B/param)</option>
+        <option value="0.35" data-q="gguf">GGUF Q2_K (0.35 B/param)</option>
+        <option value="0.5" data-q="gguf">GGUF Q3_K_M (0.50 B/param)</option>
+        <option value="0.63" data-q="gguf">GGUF Q4_K_M (0.63 B/param)</option>
+        <option value="0.71" data-q="gguf">GGUF Q5_K_M (0.71 B/param)</option>
+        <option value="0.82" data-q="gguf">GGUF Q6_K (0.82 B/param)</option>
+        <option value="1.1" data-q="gguf">GGUF Q8_0 (1.1 B/param)</option>
       </select>
     </div>
   </div>
@@ -705,6 +709,7 @@ function readInputState() {
     params: getVal('param-count'),
     activePercent: getVal('active-percent'),
     bytesPerParam: +document.getElementById('weight-precision').value,
+    quantMethod: document.getElementById('weight-precision').selectedOptions[0].dataset.q || '',
     layers: getVal('layer-count'),
     kvHeads: getVal('kv-head-count'),
     headDim: getVal('head-dim'),
@@ -1010,16 +1015,23 @@ function renderCommand(state, computed) {
     cmd = `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
     if (state.gpuCount > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
     if (dp > 1) cmd += `    --data-parallel-size ${dp} \\\n`;
-    if (state.bytesPerParam <= 0.5) cmd += '    --quantization awq --dtype float16 \\\n';
-    else if (state.bytesPerParam <= 1) cmd += '    --dtype float16 \\\n';
-    else cmd += '    --dtype auto \\\n';
+    /* --dtype auto reads torch_dtype from the model's config.json. Hardcoding
+       float16 was wrong for the bf16-trained families that dominate now (Llama 3,
+       Gemma, Qwen): fp16 has a much smaller exponent range and can overflow on
+       weights that were fine in bf16. For quantized models this governs the
+       activation dtype, where auto is also correct. */
+    cmd += '    --dtype auto \\\n';
+    if (state.quantMethod) cmd += `    --quantization ${state.quantMethod} \\\n`;
     if (state.kvBytesPerValue < 2) cmd += '    --kv-cache-dtype fp8 \\\n';
     if (isMoE && state.gpuCount > 1) cmd += '    --enable-expert-parallel \\\n';
     cmd += '    --gpu-memory-utilization 0.90 \\\n';
     cmd += `    --max-model-len ${Math.min(computed.maxContextSingleUser, state.contextLength)}`;
 
     if (state.gpuCount > 8) {
-      warning = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${state.gpuCount} GPUs: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
+      warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${state.gpuCount} GPUs: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
+    }
+    if (state.quantMethod === 'gguf') {
+      warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> GGUF support in vLLM is experimental and slower than its native formats — point <code>vllm serve</code> at a single <code>.gguf</code> file, not a repo. For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM.</div>`;
     }
   }
   setHTML('command-output', `${warning}<div class="code-box"><button class="copy-btn" onclick="copyCommand(this)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-copy"></use></svg> Copy</button><code>${cmd}</code></div>`);
