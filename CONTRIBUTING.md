@@ -82,11 +82,16 @@ The key follows the pattern: `{paramBucket}-{gpuKey}`
 | Key | GPU |
 |-----|-----|
 | `t4-16` | T4 16GB |
+| `l4-24` | L4 24GB |
 | `rtx4090-24` | RTX 4090 24GB |
+| `rtx5090-32` | RTX 5090 32GB |
 | `a100-40` | A100 40GB |
+| `rtx6000ada-48` | RTX 6000 Ada 48GB |
 | `l40s-48` | L40S 48GB |
 | `a100-80` | A100 80GB |
 | `h100-80` | H100 80GB |
+| `rtxpro-96` | RTX PRO 6000 96GB |
+| `h200-141` | H200 141GB |
 | `b200-192` | B200 192GB |
 
 If your GPU isn't listed, add it and document the specs in your PR description.

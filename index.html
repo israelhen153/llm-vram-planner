@@ -332,12 +332,16 @@ body.exec-mode .exec-summary { display: block; }
              2:4-structured-sparsity number (H100 SXM "1,979 teraFLOPS* / *With sparsity");
              LLM inference does not use structured sparsity, so the dense value is half that. -->
         <option value="16|320|0.76|0.35|0.15|65" data-n="T4 16GB">T4 16 GB</option>
-        <option value="24|936|0.75|0.45|0.29|165" data-n="RTX 4090 24GB">RTX 4090 24 GB</option>
+        <option value="24|300|0.80|0.43|0.22|121" data-n="L4 24GB">L4 24 GB</option>
+        <option value="24|1008|0.75|0.45|0.29|165" data-n="RTX 4090 24GB">RTX 4090 24 GB</option>
+        <option value="32|1792|0.89|0.65|0.45|419" data-n="RTX 5090 32GB">RTX 5090 32 GB</option>
         <option value="40|1555|3.67|1.29|0.63|312" data-n="A100 40GB" selected>A100 40 GB</option>
+        <option value="48|960|1.50|0.90|0.60|364" data-n="RTX 6000 Ada 48GB">RTX 6000 Ada 48 GB</option>
         <option value="48|864|2.80|1.30|0.90|362" data-n="L40S 48GB">L40S 48 GB</option>
         <option value="80|2039|4.50|1.79|0.99|312" data-n="A100 80GB">A100 80 GB</option>
         <option value="80|3352|12.30|3.99|2.25|990" data-n="H100 80GB">H100 80 GB</option>
-        <option value="96|1800|5.00|3.50|2.00|504" data-n="RTX PRO 6000">RTX PRO 6000 96 GB</option>
+        <option value="96|1792|5.00|3.50|2.00|504" data-n="RTX PRO 6000 96GB">RTX PRO 6000 96 GB</option>
+        <option value="141|4800|10.60|3.99|2.50|990" data-n="H200 141GB">H200 141 GB</option>
         <option value="192|8000|14.24|5.50|2.12|2250" data-n="B200 192GB">B200 192 GB</option>
       </select>
     </div>
@@ -766,8 +770,12 @@ function findBenchmark(paramCount, gpuName, gpuGB) {
   if (gpuName.includes('A100') && gpuGB >= 80) gpuKey = 'a100-80';
   else if (gpuName.includes('A100') && gpuGB < 80) gpuKey = 'a100-40';
   else if (gpuName.includes('H100')) gpuKey = 'h100-80';
+  else if (gpuName.includes('H200')) gpuKey = 'h200-141';
   else if (gpuName.includes('B200')) gpuKey = 'b200-192';
+  else if (gpuName.includes('5090')) gpuKey = 'rtx5090-32';
   else if (gpuName.includes('4090')) gpuKey = 'rtx4090-24';
+  else if (gpuName.includes('L40S')) gpuKey = 'l40s-48';
+  else if (gpuName.includes('L4 ')) gpuKey = 'l4-24';
   else return null;
 
   const exact = sizeBucket && BENCHMARK_DATA[`${sizeBucket}-${gpuKey}`];
