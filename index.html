@@ -318,15 +318,18 @@ body.exec-mode .exec-summary { display: block; }
   <div class="grid-3">
     <div class="field"><label>GPU model <span class="info-tip" tabindex="0" role="img" aria-label="The GPU type sets available VRAM, memory bandwidth, and the hourly price tiers used for cost." data-tip="The GPU type sets available VRAM, memory bandwidth, and the hourly price tiers used for cost."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="gpu-model" onchange="recalculate()">
-        <!-- value = "vram_gb|bandwidth_gbps|hyperscaler_$/hr|specialized_$/hr|spot_$/hr" -->
-        <option value="16|320|0.76|0.35|0.15" data-n="T4 16GB">T4 16 GB</option>
-        <option value="24|936|0.75|0.45|0.29" data-n="RTX 4090 24GB">RTX 4090 24 GB</option>
-        <option value="40|1555|3.67|1.29|0.63" data-n="A100 40GB" selected>A100 40 GB</option>
-        <option value="48|864|2.80|1.30|0.90" data-n="L40S 48GB">L40S 48 GB</option>
-        <option value="80|2039|4.50|1.79|0.99" data-n="A100 80GB">A100 80 GB</option>
-        <option value="80|3352|12.30|3.99|2.25" data-n="H100 80GB">H100 80 GB</option>
-        <option value="96|1800|5.00|3.50|2.00" data-n="RTX PRO 6000">RTX PRO 6000 96 GB</option>
-        <option value="192|8000|14.24|5.50|2.12" data-n="B200 192GB">B200 192 GB</option>
+        <!-- value = "vram_gb|bandwidth_gbps|hyperscaler_$/hr|specialized_$/hr|spot_$/hr|bf16_dense_tflops"
+             TFLOPS are DENSE BF16 tensor-core figures. NVIDIA datasheets headline the
+             2:4-structured-sparsity number (H100 SXM "1,979 teraFLOPS* / *With sparsity");
+             LLM inference does not use structured sparsity, so the dense value is half that. -->
+        <option value="16|320|0.76|0.35|0.15|65" data-n="T4 16GB">T4 16 GB</option>
+        <option value="24|936|0.75|0.45|0.29|165" data-n="RTX 4090 24GB">RTX 4090 24 GB</option>
+        <option value="40|1555|3.67|1.29|0.63|312" data-n="A100 40GB" selected>A100 40 GB</option>
+        <option value="48|864|2.80|1.30|0.90|362" data-n="L40S 48GB">L40S 48 GB</option>
+        <option value="80|2039|4.50|1.79|0.99|312" data-n="A100 80GB">A100 80 GB</option>
+        <option value="80|3352|12.30|3.99|2.25|990" data-n="H100 80GB">H100 80 GB</option>
+        <option value="96|1800|5.00|3.50|2.00|504" data-n="RTX PRO 6000">RTX PRO 6000 96 GB</option>
+        <option value="192|8000|14.24|5.50|2.12|2250" data-n="B200 192GB">B200 192 GB</option>
       </select>
     </div>
     <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism." data-tip="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
@@ -500,7 +503,7 @@ function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math
 function getGpuSpec() {
   const el = document.getElementById('gpu-model');
   const parts = el.value.split('|');
-  return { gb: +parts[0], bw: +parts[1], hyper: +parts[2], spec: +parts[3], spot: +parts[4], name: el.options[el.selectedIndex].dataset.n };
+  return { gb: +parts[0], bw: +parts[1], hyper: +parts[2], spec: +parts[3], spot: +parts[4], tflops: +parts[5], name: el.options[el.selectedIndex].dataset.n };
 }
 
 /* =============================================================================
@@ -706,6 +709,7 @@ function readInputState() {
     gpuCount: getVal('gpu-count'),
     gpuGB: gpu.gb,
     gpuBandwidth: gpu.bw,
+    gpuTFLOPS: gpu.tflops,
     gpuHyperCost: gpu.hyper,
     gpuSpecCost: gpu.spec,
     gpuSpotCost: gpu.spot,
@@ -720,7 +724,7 @@ function readInputState() {
 function computeInference(state) {
   const { params, activePercent, bytesPerParam, layers, kvHeads, headDim,
           sharedExperts, contextLength, concurrency, gpuCount, gpuGB,
-          gpuBandwidth, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue } = state;
+          gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue } = state;
 
   const isMoE = activePercent < 100;
   const weightsGB = (params * 1e9 * bytesPerParam) / 1e9;
@@ -757,12 +761,56 @@ function computeInference(state) {
   const maxConcurrentAt8K = kvPerTokenGB > 0 ? Math.floor(freeForKVCache / (kvPerTokenGB * 8192)) : 0;
   const maxConcurrentAt4K = kvPerTokenGB > 0 ? Math.floor(freeForKVCache / (kvPerTokenGB * 4096)) : 0;
 
-  // Throughput estimate (memory-bandwidth bound)
-  const memoryBound = totalActiveParams * 1e9 * bytesPerParam;
-  const rawTokensPerSec = memoryBound > 0 ? (gpuBandwidth * 1e9 * gpuCount) / memoryBound : 0;
-  const nvlinkPenalty = (gpuCount > 1 && !hasNVLink) ? 0.55 : (gpuCount > 1 ? 0.85 : 1.0);
-  const batchBoost = Math.min(1 + Math.log2(Math.max(concurrency, 1)) * 0.15, 2.0);
-  const estimatedTokensPerSec = Math.round(rawTokensPerSec * nvlinkPenalty * batchBoost);
+  /* Throughput — two different quantities that must never be compared to each other.
+   *
+   * Decode is memory-bound: each step reads every active weight once, plus the KV
+   * cache of every sequence in the batch. With batch B:
+   *
+   *     tok/s = (B * achieved_bandwidth) / (active_weight_bytes + B * kv_bytes_per_seq)
+   *
+   * At B=1 that collapses to bandwidth/weights — the classic roofline, and what a
+   * single user actually feels. As B grows, one weight read is amortised across the
+   * whole batch, so aggregate throughput climbs until KV traffic dominates the
+   * denominator. This is why batch benchmarks land 50-100x above single-stream
+   * numbers: they measure different things.
+   *
+   * MBU (memory bandwidth utilisation) = achieved / peak HBM bandwidth. Real decode
+   * kernels sustain roughly 60-80% of peak; 0.7 is the mid-range.
+   *
+   * Compute ceiling: decode costs ~2 FLOPs per active parameter per token. At large
+   * batch the GEMMs get dense enough for this to bind, so cap by MFU * dense FLOPS.
+   */
+  const MBU = 0.70;
+  const MFU_DECODE = 0.35;
+  const interconnectPenalty = (gpuCount > 1 && !hasNVLink) ? 0.55 : (gpuCount > 1 ? 0.85 : 1.0);
+  const achievedBandwidth = gpuBandwidth * 1e9 * gpuCount * MBU * interconnectPenalty;
+  const activeWeightBytes = totalActiveParams * 1e9 * bytesPerParam;
+  const kvBytesPerSeq = kvBytesPerToken * contextLength;
+
+  const decodeAt = (batch) => {
+    const denom = activeWeightBytes + batch * kvBytesPerSeq;
+    return denom > 0 ? (batch * achievedBandwidth) / denom : 0;
+  };
+
+  // You cannot batch more sequences than fit in KV cache at this context length.
+  const maxBatchByKV = kvBytesPerSeq > 0 ? Math.floor((freeForKVCache * 1e9) / kvBytesPerSeq) : concurrency;
+  const effectiveBatch = Math.max(Math.min(concurrency, maxBatchByKV), 1);
+  const computeCeiling = totalActiveParams > 0
+    ? (MFU_DECODE * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty) / (2 * totalActiveParams * 1e9)
+    : 0;
+
+  const singleStreamTokS = Math.round(decodeAt(1));
+  const aggregateTokS = Math.round(Math.min(decodeAt(effectiveBatch), computeCeiling));
+  const perUserAtLoadTokS = Math.round(aggregateTokS / effectiveBatch);
+  const batchLimitedByKV = concurrency > maxBatchByKV;
+  const computeBound = decodeAt(effectiveBatch) > computeCeiling;
+
+  /* TTFT — prefill is compute-bound, not bandwidth-bound: the whole prompt is
+   * processed in one parallel pass at ~2 FLOPs per active parameter per token.
+   * (Decode speed is irrelevant here; using it understates TTFT by ~10x.) */
+  const prefillFlops = 2 * totalActiveParams * 1e9 * contextLength;
+  const achievedFlops = MFU_DECODE * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty;
+  const ttftMs = achievedFlops > 0 ? Math.round((prefillFlops / achievedFlops) * 1000) : 0;
 
   // Cost
   const hourlyHyper = gpuHyperCost * gpuCount;
@@ -774,7 +822,8 @@ function computeInference(state) {
     perGPU, totalVRAM: gpuGB * gpuCount,
     freeForKVCache, kvPerTokenGB, kvBytesPerToken,
     maxContextSingleUser, maxConcurrentAt8K, maxConcurrentAt4K,
-    estimatedTokensPerSec, totalTokens,
+    singleStreamTokS, aggregateTokS, perUserAtLoadTokS, effectiveBatch,
+    maxBatchByKV, batchLimitedByKV, computeBound, ttftMs, totalTokens,
     hourlyHyper, hourlySpec, hourlySpot,
     fits: perGPU.total <= gpuGB,
     comfortable: perGPU.total <= gpuGB * 0.9,
@@ -897,20 +946,28 @@ function renderCapacity(state, computed) {
 }
 
 function renderThroughput(state, computed) {
-  const barColor = computed.estimatedTokensPerSec > 100 ? '#1D9E75' : computed.estimatedTokensPerSec > 30 ? '#EF9F27' : '#E24B4A';
-  const barPct = Math.min(computed.estimatedTokensPerSec / 500 * 100, 100);
-  const ttft = computed.estimatedTokensPerSec > 0 ? Math.round(1000 / computed.estimatedTokensPerSec * state.contextLength / 1000) : 0;
+  const perUser = computed.singleStreamTokS;
+  const barColor = perUser > 40 ? '#1D9E75' : perUser > 15 ? '#EF9F27' : '#E24B4A';
+  const barPct = Math.min(perUser / 150 * 100, 100);
 
-  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Est. decode throughput (theoretical)</p><p class="value">~${formatTokens(computed.estimatedTokensPerSec)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Memory-bandwidth bound · ${state.gpuName} @ ${state.gpuBandwidth} GB/s</p></div><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${ttft || 'N/A'} ms</p><p class="sub">Prefill at ${formatContext(state.contextLength)} context</p></div></div>`;
+  // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
+  // aggregate is what the server delivers across the whole batch. Never compare them.
+  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${state.gpuBandwidth} GB/s × 70% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Upper bound · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
+  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">Compute-bound prefill at ${formatContext(state.contextLength)} context</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
-  // Benchmark data lookup
+  if (computed.batchLimitedByKV) {
+    html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:8px 0"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> You asked for ${state.concurrency} concurrent users but KV cache only fits ${computed.maxBatchByKV} at ${formatContext(state.contextLength)}. vLLM will queue the rest — aggregate throughput above reflects the batch that actually runs.</div>`;
+  }
+
+  // Benchmark data lookup — compare like with like, or not at all.
   const benchmark = findBenchmark(state.params, state.gpuName, state.gpuGB);
   if (benchmark) {
-    html += `<div class="gpu-card" style="margin:8px 0;border-left:3px solid var(--accent)"><p style="font-size:12px;font-weight:500;margin:0 0 4px"><svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--accent)" aria-hidden="true" focusable="false"><use href="#ico-chart-dots"></use></svg>Published benchmark: <b>${benchmark.tokS.toLocaleString()} tok/s</b></p><p style="font-size:11px;color:var(--text-muted);margin:0">${benchmark.note} · Source: ${benchmark.src}</p>`;
-    const ratio = Math.round(computed.estimatedTokensPerSec / benchmark.tokS * 100);
-    if (ratio > 130) html += `<p style="font-size:11px;color:var(--warning-text);margin:4px 0 0">Theoretical is ${ratio}% of benchmark — likely overestimated. Benchmark is more reliable.</p>`;
-    else if (ratio < 70) html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Theoretical is ${ratio}% of benchmark — different precision/batching. Benchmark used ${benchmark.prec}.</p>`;
-    else html += `<p style="font-size:11px;color:var(--success-text);margin:4px 0 0">Theoretical and benchmark within range (${ratio}%). Estimate is reasonable.</p>`;
+    const mode = benchmark.mode || 'batch';
+    const ours = mode === 'single' ? perUser : computed.aggregateTokS;
+    const label = mode === 'single' ? 'single-stream' : 'aggregate batch';
+    html += `<div class="gpu-card" style="margin:8px 0;border-left:3px solid var(--accent)"><p style="font-size:12px;font-weight:500;margin:0 0 4px"><svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px;color:var(--accent)" aria-hidden="true" focusable="false"><use href="#ico-chart-dots"></use></svg>Published benchmark (${label}): <b>${benchmark.tokS.toLocaleString()} tok/s</b></p><p style="font-size:11px;color:var(--text-muted);margin:0">${benchmark.note} · Source: ${benchmark.src}${benchmark.estimated ? ' · <b>estimated, not measured</b>' : ''}</p>`;
+    const ratio = ours > 0 ? Math.round(ours / benchmark.tokS * 100) : 0;
+    html += `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Our ${label} estimate: ${formatTokens(ours)} tok/s (${ratio}% of measured). Roofline estimates run optimistic against real batch serving; benchmark ran at ${benchmark.prec} under conditions that rarely match yours exactly.</p>`;
     html += '</div>';
   } else {
     html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px;margin:4px 0">No published benchmark for this model/GPU combo. Theoretical estimate only.</div>';
@@ -1069,7 +1126,7 @@ function renderComparisons() {
     html += `<div class="row"><span class="label">Per-GPU</span><span class="val" style="color:${c.fits ? 'var(--success-text)' : 'var(--danger-text)'}">${formatGB(c.perGPU.total)} / ${s.gpuGB}</span></div>`;
     html += `<div class="row"><span class="label">Max ctx (1u)</span><span class="val">${formatContext(c.maxContextSingleUser)}</span></div>`;
     html += `<div class="row"><span class="label">Max users @8K</span><span class="val">${Math.max(c.maxConcurrentAt8K, 0)}</span></div>`;
-    html += `<div class="row"><span class="label">Throughput</span><span class="val">~${formatTokens(c.estimatedTokensPerSec)} tok/s</span></div>`;
+    html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s</span></div>`;
     html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}</span></div></div>`;
   });
   html += '</div>';
@@ -1147,7 +1204,8 @@ function renderExecutiveSummary(state, computed) {
   html += `<div class="exec-row"><span class="exec-label">Hardware</span><span class="exec-value">${state.gpuCount}× ${state.gpuName}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB per GPU (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%)</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Max concurrent users (8K context)</span><span class="exec-value">${Math.max(computed.maxConcurrentAt8K, 0)}</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">Est. throughput</span><span class="exec-value">~${formatTokens(computed.estimatedTokensPerSec)} tokens/sec</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
   html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
 
@@ -1191,7 +1249,7 @@ function exportSummary() {
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
   report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${state.gpuCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GB\n`;
   report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-GPU: ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GB (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
-  report += `\n## Capacity\n- Max context (1 user): ${formatContext(computed.maxContextSingleUser)}\n- Max concurrent @ 8K: ${Math.max(computed.maxConcurrentAt8K, 0)}\n- Throughput: ~${formatTokens(computed.estimatedTokensPerSec)} tok/s\n`;
+  report += `\n## Capacity\n- Max context (1 user): ${formatContext(computed.maxContextSingleUser)}\n- Max concurrent @ 8K: ${Math.max(computed.maxConcurrentAt8K, 0)}\n- Single-stream decode: ~${formatTokens(computed.singleStreamTokS)} tok/s\n- Aggregate @ ${computed.effectiveBatch} concurrent: ~${formatTokens(computed.aggregateTokS)} tok/s\n- TTFT: ~${computed.ttftMs} ms\n`;
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo\n`;
   report += `\n## vLLM command\n\`\`\`\n${document.querySelector('#command-output code').textContent}\n\`\`\`\n`;
 
