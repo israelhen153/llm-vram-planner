@@ -76,15 +76,20 @@ PRESETS = {
     "mistral-lg-123b":  {"p":123, "l":88, "kv":8,  "hd":128, "a":100, "moe":False, "se":0, "hf":"mistralai/Mistral-Large-Instruct-2411",        "name":"Mistral Large 123B"},
 }
 
+# Memory is reported in GiB (2^30 B): nvidia-smi shows an "80 GB" H100 as 79.6 GiB,
+# so a card's marketing number behaves as GiB. Mixing it with decimal GB on the model
+# side made every fit check ~7% pessimistic.
+GIB = 1024 ** 3
+
 GPUS = {
-    "t4-16":       {"gb":16,  "bw":320,  "hyper":0.76, "spec":0.35, "spot":0.15, "name":"T4 16 GB"},
-    "rtx4090-24":  {"gb":24,  "bw":936,  "hyper":0.75, "spec":0.45, "spot":0.29, "name":"RTX 4090 24 GB"},
-    "a100-40":     {"gb":40,  "bw":1555, "hyper":3.67, "spec":1.29, "spot":0.63, "name":"A100 40 GB"},
-    "l40s-48":     {"gb":48,  "bw":864,  "hyper":2.80, "spec":1.30, "spot":0.90, "name":"L40S 48 GB"},
-    "a100-80":     {"gb":80,  "bw":2039, "hyper":4.50, "spec":1.79, "spot":0.99, "name":"A100 80 GB"},
-    "h100-80":     {"gb":80,  "bw":3352, "hyper":12.30,"spec":3.99, "spot":2.25, "name":"H100 80 GB"},
-    "rtxpro-96":   {"gb":96,  "bw":1800, "hyper":5.00, "spec":3.50, "spot":2.00, "name":"RTX PRO 6000 96 GB"},
-    "b200-192":    {"gb":192, "bw":8000, "hyper":14.24,"spec":5.50, "spot":2.12, "name":"B200 192 GB"},
+    "t4-16":       {"gb":16,  "bw":320,  "hyper":0.76, "spec":0.35, "spot":0.15, "tflops":65, "name":"T4 16 GB"},
+    "rtx4090-24":  {"gb":24,  "bw":936,  "hyper":0.75, "spec":0.45, "spot":0.29, "tflops":165, "name":"RTX 4090 24 GB"},
+    "a100-40":     {"gb":40,  "bw":1555, "hyper":3.67, "spec":1.29, "spot":0.63, "tflops":312, "name":"A100 40 GB"},
+    "l40s-48":     {"gb":48,  "bw":864,  "hyper":2.80, "spec":1.30, "spot":0.90, "tflops":362, "name":"L40S 48 GB"},
+    "a100-80":     {"gb":80,  "bw":2039, "hyper":4.50, "spec":1.79, "spot":0.99, "tflops":312, "name":"A100 80 GB"},
+    "h100-80":     {"gb":80,  "bw":3352, "hyper":12.30,"spec":3.99, "spot":2.25, "tflops":990, "name":"H100 80 GB"},
+    "rtxpro-96":   {"gb":96,  "bw":1800, "hyper":5.00, "spec":3.50, "spot":2.00, "tflops":504, "name":"RTX PRO 6000 96 GB"},
+    "b200-192":    {"gb":192, "bw":8000, "hyper":14.24,"spec":5.50, "spot":2.12, "tflops":2250, "name":"B200 192 GB"},
 }
 
 PREC_LABELS = {
@@ -100,10 +105,10 @@ PREC_LABELS = {
 
 
 def fmt_gb(gb):
-    if gb < 0.01: return "0 GB"
-    if gb >= 100: return f"{round(gb)} GB"
-    if gb >= 10: return f"{gb:.1f} GB"
-    return f"{gb:.2f} GB"
+    if gb < 0.01: return "0 GiB"
+    if gb >= 100: return f"{round(gb)} GiB"
+    if gb >= 10: return f"{gb:.1f} GiB"
+    return f"{gb:.2f} GiB"
 
 def fmt_k(v):
     return f"{round(v/1024)}K" if v >= 1024 else str(v)
@@ -131,14 +136,14 @@ def compute(cfg):
     kv_bpp = cfg.get("kv_bpp", 2)
     is_moe = active_pct < 100
 
-    weights_gb = (params * 1e9 * bpp) / 1e9
+    weights_gb = (params * 1e9 * bpp) / GIB
     kv_bytes_per_tok = 2 * layers * kv_heads * h_dim * kv_bpp
     total_tokens = ctx * conc
-    kv_gb = (kv_bytes_per_tok * total_tokens) / 1e9
+    kv_gb = (kv_bytes_per_tok * total_tokens) / GIB
     active_p = params * (active_pct / 100)
     shared_p = params * 0.02 * shared_exp if is_moe and shared_exp > 0 else 0
     total_active_p = active_p + shared_p
-    act_gb = max((total_active_p * 1e9 * 2 * 0.01) / 1e9, 0.1)
+    act_gb = max((total_active_p * 1e9 * 2 * 0.01) / GIB, 0.1)
     oh_per_gpu = 1.5
     nccl_oh = (0.3 if nvlink else 0.2) * (n_gpu - 1) if n_gpu > 1 else 0
     total_oh = oh_per_gpu * n_gpu + nccl_oh
@@ -153,16 +158,43 @@ def compute(cfg):
 
     fixed_pg = per_w + per_a + per_oh
     free_kv = max((gpu["gb"] * 0.9 - fixed_pg) * n_gpu, 0)
-    kv_per_tok_gb = kv_bytes_per_tok / 1e9
+    kv_per_tok_gb = kv_bytes_per_tok / GIB
     max_ctx_1 = min(int(free_kv / kv_per_tok_gb), 131072) if kv_per_tok_gb > 0 else 0
     max_conc_8k = int(free_kv / (kv_per_tok_gb * 8192)) if kv_per_tok_gb > 0 else 0
     max_conc_4k = int(free_kv / (kv_per_tok_gb * 4096)) if kv_per_tok_gb > 0 else 0
 
-    mem_bound = total_active_p * 1e9 * bpp
-    raw_tok = (gpu["bw"] * 1e9 * n_gpu) / mem_bound if mem_bound > 0 else 0
+    # Throughput — see the matching comment in index.html. Decode is bandwidth-bound:
+    #   tok/s = (B * achieved_bw) / (active_weight_bytes + B * kv_bytes_per_seq)
+    # At B=1 that is per-user speed; at B=batch it is aggregate server throughput,
+    # capped by the compute roofline and by how many sequences fit in KV cache.
+    # These are different quantities and must never be compared to each other.
+    MBU = 0.70          # achieved / peak HBM bandwidth during decode
+    MFU_DECODE = 0.35   # achieved / peak dense FLOPS at large batch
     nv_penalty = 0.55 if (n_gpu > 1 and not nvlink) else (0.85 if n_gpu > 1 else 1.0)
-    batch_boost = min(1 + math.log2(max(conc, 1)) * 0.15, 2.0)
-    est_tok = round(raw_tok * nv_penalty * batch_boost)
+    achieved_bw = gpu["bw"] * 1e9 * n_gpu * MBU * nv_penalty
+    active_weight_bytes = total_active_p * 1e9 * bpp
+    kv_bytes_per_seq = kv_bytes_per_tok * ctx
+
+    def decode_at(batch):
+        denom = active_weight_bytes + batch * kv_bytes_per_seq
+        return (batch * achieved_bw) / denom if denom > 0 else 0
+
+    max_batch_kv = int((free_kv * GIB) / kv_bytes_per_seq) if kv_bytes_per_seq > 0 else conc
+    eff_batch = max(min(conc, max_batch_kv), 1)
+    compute_ceiling = (
+        (MFU_DECODE * gpu["tflops"] * 1e12 * n_gpu * nv_penalty) / (2 * total_active_p * 1e9)
+        if total_active_p > 0 else 0
+    )
+    single_tok = round(decode_at(1))
+    agg_tok = round(min(decode_at(eff_batch), compute_ceiling))
+    per_user_load = round(agg_tok / eff_batch) if eff_batch else 0
+    batch_limited = conc > max_batch_kv
+
+    # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
+    # understated TTFT by roughly 10x.
+    prefill_flops = 2 * total_active_p * 1e9 * ctx
+    achieved_flops = MFU_DECODE * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
+    ttft_ms = round((prefill_flops / achieved_flops) * 1000) if achieved_flops > 0 else 0
     hourly_hyper = gpu["hyper"] * n_gpu
     hourly_spec = gpu["spec"] * n_gpu
     hourly_spot = gpu["spot"] * n_gpu
@@ -178,7 +210,9 @@ def compute(cfg):
         "free_kv": free_kv, "kv_per_tok_gb": kv_per_tok_gb,
         "kv_bytes_per_tok": kv_bytes_per_tok,
         "max_ctx_1": max_ctx_1, "max_conc_8k": max_conc_8k, "max_conc_4k": max_conc_4k,
-        "est_tok": est_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
+        "single_tok": single_tok, "agg_tok": agg_tok, "per_user_load": per_user_load,
+        "eff_batch": eff_batch, "max_batch_kv": max_batch_kv, "batch_limited": batch_limited,
+        "ttft_ms": ttft_ms, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
         "is_moe": is_moe, "total_tokens": total_tokens,
         "fits": fits, "comfortable": comfortable,
     }
@@ -192,12 +226,11 @@ def build_vllm_cmd(cfg, comp):
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     if cfg["n_gpu"] > 1:
         parts.append(f"    --tensor-parallel-size {cfg['n_gpu']} \\")
-    if cfg["bpp"] <= 0.5:
-        parts.append("    --quantization awq --dtype float16 \\")
-    elif cfg["bpp"] <= 1:
-        parts.append("    --dtype float16 \\")
-    else:
-        parts.append("    --dtype auto \\")
+    # --dtype auto reads torch_dtype from config.json. Forcing float16 breaks the
+    # bf16-trained families (Llama 3, Gemma, Qwen), whose weights can overflow fp16.
+    parts.append("    --dtype auto \\")
+    if cfg.get("quant"):
+        parts.append(f"    --quantization {cfg['quant']} \\")
     if cfg.get("kv_bpp", 2) < 2:
         parts.append("    --kv-cache-dtype fp8 \\")
     if comp["is_moe"] and cfg["n_gpu"] > 1:
@@ -390,11 +423,11 @@ class ReportCard:
         if c["comfortable"]:
             style_name = "VerdictOK"
             icon = "FITS"
-            msg = f"{fmt_gb(c['per_total'])} per GPU of {gpu['gb']} GB ({round(c['per_total']/gpu['gb']*100)}%). Headroom available."
+            msg = f"{fmt_gb(c['per_total'])} per GPU of {gpu['gb']} GiB ({round(c['per_total']/gpu['gb']*100)}%). Headroom available."
         elif c["fits"]:
             style_name = "VerdictWarn"
             icon = "TIGHT"
-            msg = f"{fmt_gb(c['per_total'])} per GPU of {gpu['gb']} GB ({round(c['per_total']/gpu['gb']*100)}%). Risk of OOM under load."
+            msg = f"{fmt_gb(c['per_total'])} per GPU of {gpu['gb']} GiB ({round(c['per_total']/gpu['gb']*100)}%). Risk of OOM under load."
         else:
             style_name = "VerdictErr"
             icon = "DOES NOT FIT"
@@ -461,10 +494,12 @@ class ReportCard:
 
         # ---- Throughput ----
         story.append(Paragraph("Throughput estimate", self.styles["SectionHead"]))
-        ttft = round(1000 / c["est_tok"] * cfg["ctx"] / 1000) if c["est_tok"] > 0 else "N/A"
         tp_data = [
-            ["Est. decode throughput", f"~{fmt_tok(c['est_tok'])} tokens/sec"],
-            ["Est. time to first token", f"~{ttft} ms (at {fmt_k(cfg['ctx'])} context)"],
+            ["Single-stream decode (1 user)", f"~{fmt_tok(c['single_tok'])} tokens/sec"],
+            [f"Aggregate ceiling @ {c['eff_batch']} concurrent", f"~{fmt_tok(c['agg_tok'])} tokens/sec (upper bound)"],
+            ["Per user under that load", f"~{fmt_tok(c['per_user_load'])} tokens/sec"],
+            ["Max batch at this context", f"{c['max_batch_kv']} sequences" + (" (below requested concurrency)" if c["batch_limited"] else "")],
+            ["Est. time to first token", f"~{c['ttft_ms']} ms (at {fmt_k(cfg['ctx'])} context)"],
             ["Basis", f"Memory-bandwidth bound — {gpu['bw']} GB/s x {cfg['n_gpu']} GPU(s)"],
         ]
         story.append(self._make_kv_table(tp_data))
@@ -654,7 +689,9 @@ def from_cli_args(args):
     if preset:
         return {
             "params": preset["p"], "active": preset["a"],
-            "bpp": {"bf16":2,"fp8":1,"int4":0.5,"q4km":0.63,"q6k":0.82,"q8":1.1}.get(args.prec, 0.5),
+            "bpp": {"bf16":2,"fp8":1,"int4":0.5,"awq":0.5,"gptq":0.5,"q4km":0.63,"q6k":0.82,"q8":1.1}.get(args.prec, 0.5),
+            "quant": {"bf16":"","fp8":"fp8","int4":"awq","awq":"awq","gptq":"gptq",
+                      "q4km":"gguf","q6k":"gguf","q8":"gguf"}.get(args.prec, "awq"),
             "layers": preset["l"], "kv_heads": preset["kv"], "h_dim": preset["hd"],
             "shared_exp": preset["se"], "ctx": args.ctx, "conc": args.conc,
             "n_gpu": args.ngpu, "gpu": gpu, "nvlink": not args.no_nvlink,
@@ -671,7 +708,7 @@ if __name__ == "__main__":
     parser.add_argument("--preset", help=f"Model preset: {', '.join(PRESETS.keys())}")
     parser.add_argument("--gpu", default="a100-40", help=f"GPU: {', '.join(GPUS.keys())}")
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs")
-    parser.add_argument("--prec", default="int4", help="Precision: bf16, fp8, int4, q4km, q6k, q8")
+    parser.add_argument("--prec", default="awq", help="Precision: bf16, fp8, awq, gptq, q4km, q6k, q8")
     parser.add_argument("--fp8-kv", action="store_true", help="Use FP8 KV cache")
     parser.add_argument("--no-nvlink", action="store_true", help="PCIe only (no NVLink)")
     parser.add_argument("--ctx", type=int, default=8192, help="Context length")
