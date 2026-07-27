@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run the whole suite. No dependencies beyond node and python3 — the project
+# deliberately has no build step, and the tests keep it that way.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "== model math (index.html) =="
+node tests/model.test.js
+
+echo "== JS/Python parity (index.html vs generate_report.py) =="
+python3 tests/parity.test.py
+
+echo "All suites passed."
