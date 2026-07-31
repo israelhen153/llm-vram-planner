@@ -978,9 +978,14 @@ function computeInference(state) {
    *
    * Compute ceiling: decode costs ~2 FLOPs per active parameter per token. At large
    * batch the GEMMs get dense enough for this to bind, so cap by MFU * dense FLOPS.
+   *
+   * Prefill gets its own MFU. One parallel pass over the whole prompt is dense GEMM
+   * work with high arithmetic intensity; published dense-prefill utilisation sits
+   * around 40-55%. Reusing decode's 0.35 here made TTFT ~1.3x pessimistic.
    */
   const MBU = 0.70;
   const MFU_DECODE = 0.35;
+  const MFU_PREFILL = 0.45;
   const interconnectPenalty = (gpuCount > 1 && !hasNVLink) ? 0.55 : (gpuCount > 1 ? 0.85 : 1.0);
   const achievedBandwidth = gpuBandwidth * 1e9 * gpuCount * MBU * interconnectPenalty;
   const activeWeightBytes = totalActiveParams * 1e9 * bytesPerParam;
@@ -1020,11 +1025,12 @@ function computeInference(state) {
 
   /* TTFT — prefill is compute-bound, not bandwidth-bound: the whole prompt is
    * processed in one parallel pass at ~2 FLOPs per active parameter per token.
-   * (Decode speed is irrelevant here; using it understates TTFT by ~10x.) */
-  const achievedFlops = MFU_DECODE * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty;
+   * (Decode speed is irrelevant here; using it understates TTFT by ~10x.
+   * MFU_PREFILL, not MFU_DECODE: dense GEMMs, not decode's starved ones.) */
+  const achievedPrefillFlops = MFU_PREFILL * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty;
   const prefillFlopsFor = (tokens) => 2 * totalActiveParams * 1e9 * Math.max(tokens, 0);
-  const ttftFor = (tokens) => achievedFlops > 0
-    ? Math.round((prefillFlopsFor(tokens) / achievedFlops) * 1000) : 0;
+  const ttftFor = (tokens) => achievedPrefillFlops > 0
+    ? Math.round((prefillFlopsFor(tokens) / achievedPrefillFlops) * 1000) : 0;
   // Cold: nothing cached, the whole prompt is prefilled. Warm: the shared prefix
   // is already in cache, so only the request-specific remainder is computed.
   // APC changes prefill only — decode speed is identical either way.

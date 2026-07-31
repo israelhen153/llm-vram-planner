@@ -296,6 +296,12 @@ test('TTFT grows with prompt length', () => {
 test('8B on H100 at 8K prompt gives a plausible sub-second TTFT', () => {
   between(computeInference(state()).ttftMs, 100, 1000, 'ttftMs');
 });
+test('TTFT uses the prefill MFU, not decode\'s', () => {
+  // Prefill is dense GEMM work; it runs at 45%, not decode's starved 35%.
+  const expected = (2 * 8e9 * 8192) / (0.45 * GPUS['H100 80GB'].tflops * 1e12) * 1000;
+  between(computeInference(state()).ttftMs, expected * 0.99, expected * 1.01,
+    'ttftMs vs the 45%-MFU prefill formula');
+});
 
 console.log('\nAgreement with published benchmarks');
 // The point of the rewrite: compare each estimate against the matching mode.

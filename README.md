@@ -35,7 +35,7 @@ It's a planning tool. It gets you to the right hardware and the right flags; it 
 
 **VRAM** is close to exact — weights, KV cache and optimizer state are arithmetic. Activations, CUDA context and NCCL buffers use fixed heuristics (1% of active params, 1.5 GiB/GPU, 0.2–0.3 GiB per extra GPU), so treat the total as ±10%, and don't plan to run at 99% utilisation.
 
-**Throughput** comes from a memory-bandwidth roofline at 70% MBU, capped by a compute roofline at 35% MFU:
+**Throughput** comes from a memory-bandwidth roofline at 70% MBU, capped by a compute roofline at 35% MFU. TTFT uses a separate 45% prefill MFU — dense prefill GEMMs run at higher utilisation than decode's starved ones:
 
 ```
 tok/s = (batch × achieved_bandwidth) / (active_weight_bytes + batch × kv_bytes_per_seq)
