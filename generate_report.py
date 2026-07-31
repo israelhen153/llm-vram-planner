@@ -233,7 +233,15 @@ def compute(cfg):
     MBU = 0.70          # achieved / peak HBM bandwidth during decode
     MFU_DECODE = 0.35   # achieved / peak dense FLOPS at large batch
     MFU_PREFILL = 0.45  # prefill GEMMs are dense; published utilisation ~40-55%
-    nv_penalty = 0.55 if (n_gpu > 1 and not nvlink) else (0.85 if n_gpu > 1 else 1.0)
+    # NVLink is roughly flat within a domain (full bisection); PCIe worsens with GPU
+    # count — decode all-reduces are small, so hop latency dominates. Heuristic step,
+    # same class as MBU/MFU. Mirrors index.html exactly; the parity suite enforces it.
+    if n_gpu <= 1:
+        nv_penalty = 1.0
+    elif nvlink:
+        nv_penalty = 0.85
+    else:
+        nv_penalty = max(0.55 - 0.05 * math.log2(n_gpu / 2), 0.40)
     achieved_bw = gpu["bw"] * 1e9 * n_gpu * MBU * nv_penalty
     active_weight_bytes = total_active_p * 1e9 * bpp
     kv_bytes_per_seq = kv_seq_bytes

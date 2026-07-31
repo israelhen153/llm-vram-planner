@@ -986,7 +986,13 @@ function computeInference(state) {
   const MBU = 0.70;
   const MFU_DECODE = 0.35;
   const MFU_PREFILL = 0.45;
-  const interconnectPenalty = (gpuCount > 1 && !hasNVLink) ? 0.55 : (gpuCount > 1 ? 0.85 : 1.0);
+  /* NVLink/NVSwitch has full bisection bandwidth, so TP cost is roughly flat within
+   * a domain. PCIe is not: decode all-reduces are small, so per-hop latency dominates
+   * and the cost grows with the ring. -0.05 per doubling is a heuristic, same class
+   * as MBU/MFU — flagged in MODEL.md, floor at 0.40. */
+  const interconnectPenalty = gpuCount <= 1 ? 1.0
+    : hasNVLink ? 0.85
+    : Math.max(0.55 - 0.05 * Math.log2(gpuCount / 2), 0.40);
   const achievedBandwidth = gpuBandwidth * 1e9 * gpuCount * MBU * interconnectPenalty;
   const activeWeightBytes = totalActiveParams * 1e9 * bytesPerParam;
   // Exact bytes for one sequence at this context, not per-token x ctx — those
@@ -1084,7 +1090,7 @@ function renderStrategyBadges(state, computed) {
   const isMoE = preset ? preset.moe : state.activePercent < 100;
   let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
   html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${state.gpuCount > 1 ? 'TP=' + state.gpuCount : 'Single GPU'}</span>`;
-  if (state.gpuCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 30-50% perf loss</span>';
+  if (state.gpuCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more GPUs</span>';
   if (isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
   if (state.kvBytesPerValue < 2) html += '<span class="badge" style="background:var(--success-bg);color:var(--success-text)">FP8 KV cache</span>';
   html += '</div>';
@@ -1413,7 +1419,7 @@ function renderNotes(state) {
   notes += state.kvBytesPerValue < 2 ? 'KV cache uses FP8 (1 byte/value) — enabled via --kv-cache-dtype fp8. ' : 'KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. ';
   notes += 'Throughput is a memory-bandwidth-bound decode estimate. ';
   if (state.sharedExperts > 0) notes += `Shared experts (${state.sharedExperts}) always active, included in activation memory. `;
-  if (state.gpuCount > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : 'PCIe 64-128 GB/s — 30-50% decode loss. ') + 'NCCL buffers ~0.3 GB/peer. ';
+  if (state.gpuCount > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : 'PCIe 64-128 GB/s — 45-60% decode loss, growing with GPU count. ') + 'NCCL buffers ~0.3 GB/peer. ';
   notes += 'Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. ';
   notes += 'GPU prices are mid-2026 per-GPU/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. ';
   if (trainingEnabled) notes += 'Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation. ';
