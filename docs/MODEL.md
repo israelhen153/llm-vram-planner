@@ -170,6 +170,8 @@ Observed ranges, not derived constants. MBU for decode sits at 60–80% across p
 **"Isn't a roofline just an upper bound?"**
 Yes, and it is labelled as a ceiling in the UI. Single-stream lands within ~4% of measurements because at B=1 the model is genuinely bandwidth-bound and there is little else to lose. Aggregate runs optimistic because real scheduling, prefill interleaving and preemption are not modelled.
 
+Caveat on that ~4%: both single-stream entries in `benchmarks/data.json` (`8b-rtx4090-24`, `14b-rtx4090-24`) are llama.cpp numbers, not vLLM — their `note` fields say so. The agreement is evidence that the bandwidth roofline is right about B=1 decode, which is engine-independent physics. It is not evidence about vLLM specifically. Single-stream vLLM measurements are the most valuable contribution this dataset could receive.
+
 **"Why is your KV cache smaller than every other calculator for Gemma?"**
 Because Gemma 4 interleaves 25 sliding-window layers with 5 global ones. Most calculators charge all 30 as full attention. At 128K that is a 5× overstatement. The config.json is the authority: `layer_types` lists `sliding_attention` and `full_attention` per layer.
 
