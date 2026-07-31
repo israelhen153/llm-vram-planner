@@ -108,7 +108,7 @@ Real decode kernels sustain roughly 60–80% of peak HBM bandwidth. Peak is a nu
 Decode costs about 2 FLOPs per active parameter per token, so aggregate throughput cannot exceed:
 
 ```
-ceiling = MFU × peak_dense_FLOPS / (2 × active_params),   MFU = 0.35
+ceiling = MFU_decode × peak_dense_FLOPS / (2 × active_params),   MFU_decode = 0.35
 ```
 
 This rarely binds for decode — for an 8B on H100 it sits around 22,000 tok/s, above the measured 12,500 — but it stops the batch model growing without limit.
@@ -120,10 +120,12 @@ This rarely binds for decode — for an 8B on H100 it sits around 22,000 tok/s, 
 Prefill is **compute-bound**, not bandwidth-bound. The whole prompt is processed in one parallel pass:
 
 ```
-ttft = 2 × active_params × prompt_tokens / (MFU × peak_FLOPS)
+ttft = 2 × active_params × prompt_tokens / (MFU_prefill × peak_FLOPS),   MFU_prefill = 0.45
 ```
 
 Deriving TTFT from decode speed — as if tokens were generated one at a time during prefill — understates it by roughly 10×. That was another real bug here.
+
+Prefill also gets its own utilisation figure. Decode's 0.35 exists because decode GEMMs have poor arithmetic intensity; prefill is the opposite case — one parallel pass over the whole prompt is dense GEMM work, and published dense-prefill utilisation sits around 40–55%. An earlier version reused 0.35 here, which made TTFT ~1.3× pessimistic. The same constant cannot describe both a bandwidth-starved GEMV and a dense GEMM.
 
 ---
 
@@ -164,8 +166,8 @@ Worth being able to answer without hedging.
 **"Your throughput number is way off from my benchmark."**
 First question back: single-stream or aggregate? They differ by 50–100×. If aggregate, was the GPU saturated? The tool compares against benchmarks at full batch because that is how benchmarks are run. If it is still off, the roofline runs 1.1–2.3× optimistic against real batch serving — schedulers lose time that physics does not.
 
-**"Why 70% MBU and 35% MFU?"**
-Observed ranges, not derived constants. MBU for decode sits at 60–80% across published measurements; MFU for batched decode is lower than training's 40–50% because decode GEMMs have poor arithmetic intensity. They are the two least defensible numbers in the model, which is why the README states them explicitly rather than burying them.
+**"Why 70% MBU, 35% decode MFU and 45% prefill MFU?"**
+Observed ranges, not derived constants. MBU for decode sits at 60–80% across published measurements; MFU for batched decode is lower than training's 40–50% because decode GEMMs have poor arithmetic intensity; prefill MFU is higher than decode's for the same reason in reverse — dense GEMMs over the whole prompt, with published utilisation around 40–55%. They are the three least defensible numbers in the model, which is why the README states them explicitly rather than burying them.
 
 **"Isn't a roofline just an upper bound?"**
 Yes, and it is labelled as a ceiling in the UI. Single-stream lands within ~4% of measurements because at B=1 the model is genuinely bandwidth-bound and there is little else to lose. Aggregate runs optimistic because real scheduling, prefill interleaving and preemption are not modelled.

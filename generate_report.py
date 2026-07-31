@@ -232,6 +232,7 @@ def compute(cfg):
     # These are different quantities and must never be compared to each other.
     MBU = 0.70          # achieved / peak HBM bandwidth during decode
     MFU_DECODE = 0.35   # achieved / peak dense FLOPS at large batch
+    MFU_PREFILL = 0.45  # prefill GEMMs are dense; published utilisation ~40-55%
     nv_penalty = 0.55 if (n_gpu > 1 and not nvlink) else (0.85 if n_gpu > 1 else 1.0)
     achieved_bw = gpu["bw"] * 1e9 * n_gpu * MBU * nv_penalty
     active_weight_bytes = total_active_p * 1e9 * bpp
@@ -259,12 +260,12 @@ def compute(cfg):
     batch_limited = conc > max_batch_kv
 
     # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
-    # understated TTFT by roughly 10x.
-    achieved_flops = MFU_DECODE * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
+    # understated TTFT by roughly 10x. MFU_PREFILL, not MFU_DECODE: dense GEMMs.
+    achieved_prefill_flops = MFU_PREFILL * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
 
     def ttft_for(tokens):
         flops = 2 * total_active_p * 1e9 * max(tokens, 0)
-        return round((flops / achieved_flops) * 1000) if achieved_flops > 0 else 0
+        return round((flops / achieved_prefill_flops) * 1000) if achieved_prefill_flops > 0 else 0
 
     # APC skips the shared prefix during prefill, so TTFT differs cold vs warm.
     # It never changes decode speed.
