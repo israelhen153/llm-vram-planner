@@ -2,7 +2,7 @@
   "_meta": {
     "version": "1.1.0",
     "last_updated": "2026-07-27",
-    "description": "Published vLLM benchmark data. Community-contributed. See CONTRIBUTING.md to add entries.",
+    "description": "Published inference benchmark data, mostly vLLM. Community-contributed. Two entries are llama.cpp single-stream numbers — check each entry's `note` for the engine before treating it as a vLLM measurement. See CONTRIBUTING.md to add entries.",
     "schema": {
       "key": "{paramBucket}-{gpuKey} e.g. 8b-h100-80",
       "tokS": "Throughput in tokens/sec — interpret according to `mode`",

@@ -41,9 +41,9 @@ It's a planning tool. It gets you to the right hardware and the right flags; it 
 tok/s = (batch × achieved_bandwidth) / (active_weight_bytes + batch × kv_bytes_per_seq)
 ```
 
-Against the measured benchmarks in `benchmarks/data.json`, single-stream lands within ~4%. Aggregate throughput runs 1.1–2.3× optimistic — a roofline is an upper bound, and real serving loses time to scheduling and prefill interleaving. It's labelled as a ceiling in the UI for that reason.
+Against the measured benchmarks in `benchmarks/data.json`, single-stream lands within ~4% — but read that number with its caveat: the only two single-stream entries in the dataset are llama.cpp measurements on an RTX 4090, not vLLM. Decode at batch 1 is bandwidth-bound in either engine, which is why the roofline tracks them, but nothing here validates vLLM's own single-stream behaviour. Aggregate throughput runs 1.1–2.3× optimistic — a roofline is an upper bound, and real serving loses time to scheduling and prefill interleaving. It's labelled as a ceiling in the UI for that reason.
 
-**Benchmark data** is 13 entries: 6 measured with a published source, 7 extrapolated or unverified. The estimated ones are flagged `"estimated": true` and the UI says so. Comparisons only ever run against a benchmark of the matching kind — a single-stream estimate is never scored against a batch measurement.
+**Benchmark data** is 13 entries: 7 measured with a published source, 6 extrapolated or unverified. The estimated ones are flagged `"estimated": true` and the UI says so. Comparisons only ever run against a benchmark of the matching kind — a single-stream estimate is never scored against a batch measurement.
 
 **Costs** are list prices from mid-2026 and drift constantly. Reserved and committed-use pricing typically runs 30–60% below on-demand.
 
