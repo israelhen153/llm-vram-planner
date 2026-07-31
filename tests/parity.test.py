@@ -139,6 +139,7 @@ FIELDS = [
     ("per_total", "perGPU.total", 0.01), ("free_kv", "freeForKVCache", 0.01),
     ("max_ctx_1", "maxContextSingleUser", 1), ("max_conc_8k", "maxConcurrentAt8K", 1),
     ("single_tok", "singleStreamTokS", 1), ("agg_tok", "aggregateTokS", 1),
+    ("agg_obs_lo", "aggregateObservedLoTokS", 1), ("agg_obs_hi", "aggregateObservedHiTokS", 1),
     ("per_user_load", "perUserAtLoadTokS", 1), ("eff_batch", "effectiveBatch", 0),
     ("max_batch_kv", "maxBatchByKV", 0), ("ttft_ms", "ttftMs", 1),
     ("sat_batch", "saturatedBatch", 0), ("sat_tok", "saturatedTokS", 1),

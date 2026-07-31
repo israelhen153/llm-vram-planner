@@ -350,6 +350,37 @@ for (const [key, b] of Object.entries(benchmarks.data)) {
   });
 }
 
+console.log('\nObserved-efficiency band');
+test('the hardcoded 0.43-0.91 band brackets every measured batch benchmark', () => {
+  // Re-derive the band from the data so it cannot silently drift as entries land.
+  const ratios = [];
+  for (const [key, b] of Object.entries(benchmarks.data)) {
+    if (b.estimated || b.mode !== 'batch') continue;
+    const m = key.match(/^(\d+)b-(.+)$/);
+    const gpu = GPU_FOR_KEY[m[2]];
+    if (!gpu) continue;
+    const params = Number(m[1]);
+    const s = state({
+      gpu, params, gpuCount: key === '70b-h100-80' ? 2 : 1,
+      bytesPerParam: PREC_BYTES[b.prec] ?? 2,
+      layers: params >= 60 ? 80 : params >= 20 ? 48 : 32,
+      contextLength: 1024, concurrency: 1,
+    });
+    ratios.push(b.tokS / computeInference(s).saturatedTokS);
+  }
+  assert.ok(ratios.length >= 3, `need >=3 measured batch entries, got ${ratios.length}`);
+  const lo = Math.min(...ratios), hi = Math.max(...ratios);
+  assert.ok(lo >= 0.43 - 0.02 && hi <= 0.91 + 0.02,
+    `measured/ceiling ratios span ${lo.toFixed(2)}-${hi.toFixed(2)}, escaping the ` +
+    `hardcoded 0.43-0.91 band — update OBSERVED_EFF_* in index.html and generate_report.py`);
+});
+test('the band scales the aggregate ceiling and nothing else', () => {
+  const c = computeInference(state({ concurrency: 64 }));
+  between(c.aggregateObservedLoTokS, c.aggregateTokS * 0.42, c.aggregateTokS * 0.44, 'band lo');
+  between(c.aggregateObservedHiTokS, c.aggregateTokS * 0.90, c.aggregateTokS * 0.92, 'band hi');
+  assert.ok(c.aggregateObservedHiTokS < c.aggregateTokS, 'the band must sit below the ceiling');
+});
+
 console.log('\nBenchmark lookup');
 const fbStart = html.indexOf('function findBenchmark(');
 assert.notStrictEqual(fbStart, -1, 'findBenchmark() not found');

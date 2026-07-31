@@ -172,6 +172,8 @@ Observed ranges, not derived constants. MBU for decode sits at 60–80% across p
 **"Isn't a roofline just an upper bound?"**
 Yes, and it is labelled as a ceiling in the UI. Single-stream lands within ~4% of measurements because at B=1 the model is genuinely bandwidth-bound and there is little else to lose. Aggregate runs optimistic because real scheduling, prefill interleaving and preemption are not modelled.
 
+The UI also shows the inverse of that optimism as an observed band: 43–91% of the ceiling, which is the 1.1–2.3× figure turned upside down. The band is not a promise — it is the spread of the measured batch entries in `benchmarks/data.json` against their matching saturated estimates, and the test suite re-derives it from that data so the displayed constants cannot drift from the evidence.
+
 Caveat on that ~4%: both single-stream entries in `benchmarks/data.json` (`8b-rtx4090-24`, `14b-rtx4090-24`) are llama.cpp numbers, not vLLM — their `note` fields say so. The agreement is evidence that the bandwidth roofline is right about B=1 decode, which is engine-independent physics. It is not evidence about vLLM specifically. Single-stream vLLM measurements are the most valuable contribution this dataset could receive.
 
 **"Why is your KV cache smaller than every other calculator for Gemma?"**
