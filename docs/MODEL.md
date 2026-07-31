@@ -151,7 +151,7 @@ kv_total = shareable(prefix) + concurrency × (kv_per_seq − shareable(prefix))
 
 **Tensor parallel** splits weights and KV cache across N GPUs; each holds `1/N`. Activations, CUDA context and NCCL buffers are replicated on every GPU, so total footprint across the cluster is *larger* than a single-device estimate of the same model.
 
-Interconnect matters: NVLink costs ~15% versus a single GPU, PCIe ~45%. TP is communication-heavy — every layer needs an all-reduce — so PCIe-only multi-GPU is much worse than the VRAM arithmetic suggests.
+Interconnect matters: NVLink costs ~15% versus a single GPU, roughly independent of count — NVSwitch gives full bisection bandwidth. PCIe starts at ~45% for 2 GPUs and worsens about 5 points per doubling (50% at 4, 55% at 8, floored at 60%): decode all-reduces are small, so per-hop latency dominates and grows with the ring. The per-doubling step is a heuristic in the same class as MBU/MFU. TP is communication-heavy — every layer needs an all-reduce — so PCIe-only multi-GPU is much worse than the VRAM arithmetic suggests.
 
 Above 8 GPUs the tool splits into TP × DP, because TP beyond a single NVLink domain crosses slower links. That split is a starting point, not an answer; the right topology depends on whether you are optimising latency or throughput.
 

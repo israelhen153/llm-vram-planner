@@ -254,6 +254,19 @@ test('missing NVLink costs throughput on multi-GPU', () => {
   const pcie = computeInference(state({ gpuCount: 4, hasNVLink: false })).singleStreamTokS;
   assert.ok(pcie < linked, 'PCIe should be slower than NVLink');
 });
+test('PCIe penalty worsens with GPU count', () => {
+  // Decode all-reduces are small, so hop latency dominates and grows with the ring.
+  const gap = (n) => computeInference(state({ gpuCount: n, hasNVLink: false })).singleStreamTokS
+                   / computeInference(state({ gpuCount: n })).singleStreamTokS;
+  assert.ok(gap(8) < gap(2),
+    `8x PCIe/NVLink ratio (${gap(8).toFixed(3)}) should be below 2x (${gap(2).toFixed(3)})`);
+});
+test('NVLink penalty is flat within a domain', () => {
+  const perGpu = (n) => computeInference(state({ gpuCount: n })).singleStreamTokS / n;
+  const s2 = perGpu(2), s8 = perGpu(8);
+  assert.ok(Math.abs(s8 - s2) <= s2 * 0.02,
+    `per-GPU single-stream should be ~flat on NVLink: 2x=${Math.round(s2)}, 8x=${Math.round(s8)}`);
+});
 
 console.log('\nThroughput — aggregate');
 test('aggregate exceeds single-stream once batching kicks in', () => {
