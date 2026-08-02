@@ -125,6 +125,22 @@ def fmt_tok(t):
 # =============================================================================
 # VRAM Computation
 # =============================================================================
+# Vendor-keyed performance constants (memory-bandwidth utilisation, decode/prefill
+# MFU, and the observed-efficiency band). Only "nvidia" is populated today — see
+# the matching comment inside compute() for what each value means and how it was
+# chosen. Mirrors index.html's PERF table exactly; the parity suite enforces it,
+# and both engines must move together when a value changes.
+PERF = {
+    "nvidia": {
+        "mbu": 0.70,          # achieved / peak HBM bandwidth during decode
+        "mfuDecode": 0.35,    # achieved / peak dense FLOPS at large batch
+        "mfuPrefill": 0.45,   # prefill GEMMs are dense; published utilisation ~40-55%
+        "obsLo": 0.43,        # measured/ceiling ratio floor across batch benchmarks
+        "obsHi": 0.91,        # measured/ceiling ratio ceiling across batch benchmarks
+    },
+}
+
+
 def compute(cfg):
     params = cfg["params"]
     active_pct = cfg["active"]
@@ -230,9 +246,9 @@ def compute(cfg):
     # At B=1 that is per-user speed; at B=batch it is aggregate server throughput,
     # capped by the compute roofline and by how many sequences fit in KV cache.
     # These are different quantities and must never be compared to each other.
-    MBU = 0.70          # achieved / peak HBM bandwidth during decode
-    MFU_DECODE = 0.35   # achieved / peak dense FLOPS at large batch
-    MFU_PREFILL = 0.45  # prefill GEMMs are dense; published utilisation ~40-55%
+    # An unknown or absent vendor falls back to nvidia rather than raising; this
+    # is called from report rendering, where a KeyError loses the whole document.
+    P = PERF.get(cfg.get("vendor") or "", PERF["nvidia"])
     # NVLink is roughly flat within a domain (full bisection); PCIe worsens with GPU
     # count — decode all-reduces are small, so hop latency dominates. Heuristic step,
     # same class as MBU/MFU. Mirrors index.html exactly; the parity suite enforces it.
@@ -242,7 +258,7 @@ def compute(cfg):
         nv_penalty = 0.85
     else:
         nv_penalty = max(0.55 - 0.05 * math.log2(n_gpu / 2), 0.40)
-    achieved_bw = gpu["bw"] * 1e9 * n_gpu * MBU * nv_penalty
+    achieved_bw = gpu["bw"] * 1e9 * n_gpu * P["mbu"] * nv_penalty
     active_weight_bytes = total_active_p * 1e9 * bpp
     kv_bytes_per_seq = kv_seq_bytes
 
@@ -255,7 +271,7 @@ def compute(cfg):
                     if kv_bytes_per_seq > 0 else conc)
     eff_batch = max(min(conc, max_batch_kv), 1)
     compute_ceiling = (
-        (MFU_DECODE * gpu["tflops"] * 1e12 * n_gpu * nv_penalty) / (2 * total_active_p * 1e9)
+        (P["mfuDecode"] * gpu["tflops"] * 1e12 * n_gpu * nv_penalty) / (2 * total_active_p * 1e9)
         if total_active_p > 0 else 0
     )
     single_tok = round(decode_at(1))
@@ -268,14 +284,13 @@ def compute(cfg):
     # The ceiling's observed discount: measured batch benchmarks land at 43-91% of
     # the roofline (the 1.1-2.3x optimism inverted). Mirrors index.html; the JS test
     # suite re-derives the band from benchmarks/data.json to keep it honest.
-    OBS_EFF_LO, OBS_EFF_HI = 0.43, 0.91
-    agg_obs_lo = round(agg_tok * OBS_EFF_LO)
-    agg_obs_hi = round(agg_tok * OBS_EFF_HI)
+    agg_obs_lo = round(agg_tok * P["obsLo"])
+    agg_obs_hi = round(agg_tok * P["obsHi"])
     batch_limited = conc > max_batch_kv
 
     # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
     # understated TTFT by roughly 10x. MFU_PREFILL, not MFU_DECODE: dense GEMMs.
-    achieved_prefill_flops = MFU_PREFILL * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
+    achieved_prefill_flops = P["mfuPrefill"] * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
 
     def ttft_for(tokens):
         flops = 2 * total_active_p * 1e9 * max(tokens, 0)
@@ -303,6 +318,12 @@ def compute(cfg):
         "max_ctx_1": max_ctx_1, "max_conc_8k": max_conc_8k, "max_conc_4k": max_conc_4k,
         "single_tok": single_tok, "agg_tok": agg_tok, "per_user_load": per_user_load,
         "agg_obs_lo": agg_obs_lo, "agg_obs_hi": agg_obs_hi,
+        # The constants this result was actually computed with, so callers can
+        # label it without re-reading PERF and drifting. The parity suite compares
+        # these, which pins the two engines to the same values as executed.
+        "perf_mbu": P["mbu"], "perf_mfu_decode": P["mfuDecode"],
+        "perf_mfu_prefill": P["mfuPrefill"],
+        "perf_obs_lo": P["obsLo"], "perf_obs_hi": P["obsHi"],
         "eff_batch": eff_batch, "max_batch_kv": max_batch_kv, "batch_limited": batch_limited,
         "ttft_ms": ttft_ms, "ttft_cold_ms": ttft_cold_ms, "ttft_warm_ms": ttft_warm_ms,
         "kv_saved_by_prefix_gb": kv_saved_by_prefix_gb, "eff_prefix": eff_prefix, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
@@ -590,7 +611,7 @@ class ReportCard:
         tp_data = [
             ["Single-stream decode (1 user)", f"~{fmt_tok(c['single_tok'])} tokens/sec"],
             [f"Aggregate ceiling @ {c['eff_batch']} concurrent", f"~{fmt_tok(c['agg_tok'])} tokens/sec (upper bound)"],
-            ["Observed range in practice", f"~{fmt_tok(c['agg_obs_lo'])}–{fmt_tok(c['agg_obs_hi'])} tokens/sec (43–91% of ceiling across measured benchmarks)"],
+            ["Observed range in practice", f"~{fmt_tok(c['agg_obs_lo'])}–{fmt_tok(c['agg_obs_hi'])} tokens/sec ({round(c['perf_obs_lo'] * 100)}–{round(c['perf_obs_hi'] * 100)}% of ceiling across measured benchmarks)"],
             ["Per user under that load", f"~{fmt_tok(c['per_user_load'])} tokens/sec"],
             ["Max batch at this context", f"{c['max_batch_kv']} sequences" + (" (below requested concurrency)" if c["batch_limited"] else "")],
             ["Est. time to first token", f"~{c['ttft_ms']} ms (at {fmt_k(cfg['ctx'])} context)"],

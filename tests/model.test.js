@@ -25,11 +25,14 @@ assert.notStrictEqual(end, -1, 'could not find end of computeInference()');
 // redefined here, so a change to the real value cannot silently pass these tests.
 const gibDecl = html.match(/^const GIB = .+;$/m);
 assert.ok(gibDecl, 'GIB constant not found in index.html');
+const perfDecl = html.match(/^const PERF = \{[\s\S]*?\n\};$/m);
+assert.ok(perfDecl, 'PERF constant not found in index.html');
 
 const computeInference = new Function(
-  `${gibDecl[0]}\n${html.slice(start, end + 2)}; return computeInference;`
+  `${gibDecl[0]}\n${perfDecl[0]}\n${html.slice(start, end + 2)}; return computeInference;`
 )();
 assert.strictEqual(new Function(`${gibDecl[0]}; return GIB;`)(), 1024 ** 3, 'GIB must be 2^30');
+const PERF = new Function(`${perfDecl[0]}; return PERF;`)();
 
 /* ---- GPU specs, parsed from the same <option> values the UI uses ---- */
 const GPUS = {};
@@ -290,7 +293,7 @@ test('KV cache caps the batch below an absurd concurrency request', () => {
 });
 test('aggregate never exceeds the compute roofline', () => {
   const c = computeInference(state({ concurrency: 100000, contextLength: 1024 }));
-  const ceiling = (0.35 * GPUS['H100 80GB'].tflops * 1e12) / (2 * 8e9);
+  const ceiling = (PERF.nvidia.mfuDecode * GPUS['H100 80GB'].tflops * 1e12) / (2 * 8e9);
   assert.ok(c.aggregateTokS <= ceiling * 1.01,
     `aggregate ${c.aggregateTokS} exceeded compute ceiling ${Math.round(ceiling)}`);
 });
@@ -310,10 +313,10 @@ test('8B on H100 at 8K prompt gives a plausible sub-second TTFT', () => {
   between(computeInference(state()).ttftMs, 100, 1000, 'ttftMs');
 });
 test('TTFT uses the prefill MFU, not decode\'s', () => {
-  // Prefill is dense GEMM work; it runs at 45%, not decode's starved 35%.
-  const expected = (2 * 8e9 * 8192) / (0.45 * GPUS['H100 80GB'].tflops * 1e12) * 1000;
+  // Prefill is dense GEMM work; it runs at the prefill MFU, not decode's lower one.
+  const expected = (2 * 8e9 * 8192) / (PERF.nvidia.mfuPrefill * GPUS['H100 80GB'].tflops * 1e12) * 1000;
   between(computeInference(state()).ttftMs, expected * 0.99, expected * 1.01,
-    'ttftMs vs the 45%-MFU prefill formula');
+    'ttftMs vs the prefill-MFU formula');
 });
 
 console.log('\nAgreement with published benchmarks');
@@ -351,7 +354,7 @@ for (const [key, b] of Object.entries(benchmarks.data)) {
 }
 
 console.log('\nObserved-efficiency band');
-test('the hardcoded 0.43-0.91 band brackets every measured batch benchmark', () => {
+test('the declared band matches the measured spread, and is no wider', () => {
   // Re-derive the band from the data so it cannot silently drift as entries land.
   const ratios = [];
   for (const [key, b] of Object.entries(benchmarks.data)) {
@@ -370,14 +373,21 @@ test('the hardcoded 0.43-0.91 band brackets every measured batch benchmark', () 
   }
   assert.ok(ratios.length >= 3, `need >=3 measured batch entries, got ${ratios.length}`);
   const lo = Math.min(...ratios), hi = Math.max(...ratios);
-  assert.ok(lo >= 0.43 - 0.02 && hi <= 0.91 + 0.02,
-    `measured/ceiling ratios span ${lo.toFixed(2)}-${hi.toFixed(2)}, escaping the ` +
-    `hardcoded 0.43-0.91 band — update OBSERVED_EFF_* in index.html and generate_report.py`);
+  const { obsLo, obsHi } = PERF.nvidia;
+  // Two-sided deliberately. Asserting only that the data fits inside the band lets
+  // the band be widened to fit anything, and wider is the flattering direction:
+  // it makes the tool look like it predicted whatever was measured. README.md and
+  // MODEL.md both promise this band tracks the evidence, so pin both edges.
+  assert.ok(Math.abs(obsLo - lo) <= 0.02 && Math.abs(obsHi - hi) <= 0.02,
+    `measured/ceiling ratios span ${lo.toFixed(2)}-${hi.toFixed(2)} but PERF.nvidia declares ` +
+    `${obsLo}-${obsHi} — the band must track the data in both directions. Update obsLo/obsHi ` +
+    `in index.html and generate_report.py to match the measurements.`);
 });
 test('the band scales the aggregate ceiling and nothing else', () => {
   const c = computeInference(state({ concurrency: 64 }));
-  between(c.aggregateObservedLoTokS, c.aggregateTokS * 0.42, c.aggregateTokS * 0.44, 'band lo');
-  between(c.aggregateObservedHiTokS, c.aggregateTokS * 0.90, c.aggregateTokS * 0.92, 'band hi');
+  const { obsLo, obsHi } = PERF.nvidia;
+  between(c.aggregateObservedLoTokS, c.aggregateTokS * (obsLo - 0.01), c.aggregateTokS * (obsLo + 0.01), 'band lo');
+  between(c.aggregateObservedHiTokS, c.aggregateTokS * (obsHi - 0.01), c.aggregateTokS * (obsHi + 0.01), 'band hi');
   assert.ok(c.aggregateObservedHiTokS < c.aggregateTokS, 'the band must sit below the ceiling');
 });
 
