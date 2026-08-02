@@ -16,7 +16,7 @@ Everything targets NVIDIA datacenter and consumer GPUs with vLLM.
 - [x] KV cache dtype (BF16 / FP8)
 - [x] MoE: shared vs routed experts
 - [x] Quantization: BF16, FP8, INT4/AWQ/GPTQ, GGUF Q2–Q8
-- [x] PDF report card
+- [x] PDF report card (via `generate_report.py`; the web tool copies Markdown)
 - [x] URL state sharing + comparison snapshots
 - [x] Offline-capable (single HTML file)
 - [x] GitHub project with contribution guide

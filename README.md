@@ -24,7 +24,7 @@ No single feature here is unique. The combination is what I wanted and couldn't 
 - **Executive mode** — one-click toggle. Shows verdict, cost range, and max users. Hand the URL to your manager.
 - **Per-user and aggregate throughput, kept separate** — a single user's decode speed and total server throughput differ by 50–100× under continuous batching, so they're reported as two numbers with two rooflines, and benchmarks are only ever compared against the matching one.
 - **Import any model** — paste a HuggingFace ID or drop a `config.json`. Works for models that aren't in any preset list.
-- **PDF report card** — export a procurement-ready document.
+- **Report export** — copy a Markdown summary straight from the tool, or run `generate_report.py` for a procurement-ready PDF.
 - **Works offline** — single HTML file, no backend, no internet required after first load.
 
 ---
