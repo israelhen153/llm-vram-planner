@@ -24,7 +24,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ---- load the Python model without pulling in reportlab -------------------
 src = open(os.path.join(ROOT, "generate_report.py")).read()
 tree = ast.parse(src)
-wanted = {"GIB", "GPUS"}
+# Every module-level name compute() closes over must be listed here, and must be
+# a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
+# gets skipped, and surfaces as a bare NameError from inside compute() much later.
+wanted = {"GIB", "GPUS", "PERF"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name == "compute")
@@ -34,7 +37,9 @@ nodes = [
 assert any(isinstance(n, ast.FunctionDef) for n in nodes), "compute() not found"
 ns = {"math": __import__("math")}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "<gr>", "exec"), ns)
-compute, GPUS = ns["compute"], ns["GPUS"]
+for name in sorted(wanted):
+    assert name in ns, f"{name} not extracted from generate_report.py — is it still a top-level assignment?"
+compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
 
 # ---- run the JS model on the same inputs ----------------------------------
 CASES = [
@@ -44,6 +49,12 @@ CASES = [
     {"name": "8B bf16, 64 users, H100",
      "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 64, "n_gpu": 1, "gpu": "h100-80"},
+    # Every other case is bandwidth-bound, which leaves the decode MFU unexercised:
+    # it only enters the maths through the compute ceiling, and a ceiling that never
+    # binds can drift between the two engines unnoticed. This case sits on it.
+    {"name": "8B bf16 on A100 80, compute-bound at high batch (pins decode MFU)",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 1024, "conc": 256, "n_gpu": 1, "gpu": "a100-80"},
     {"name": "70B awq, 4x A100 80",
      "params": 70, "active": 100, "bpp": 0.5, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "a100-80"},
@@ -96,8 +107,9 @@ js_runner = r"""
 const fs=require('fs');
 const html=fs.readFileSync(process.argv[1],'utf8');
 const gib=html.match(/^const GIB = .+;$/m)[0];
+const perf=html.match(/^const PERF = \{[\s\S]*?\n\};$/m)[0];
 const s=html.indexOf('function computeInference(state) {'), e=html.indexOf('\n}\n',s);
-const ci=new Function(`${gib}\n${html.slice(s,e+2)}; return computeInference;`)();
+const ci=new Function(`${gib}\n${perf}\n${html.slice(s,e+2)}; return computeInference;`)();
 const G={};
 for(const[,v,n]of html.matchAll(/<option value="([\d.|]+)"[^>]*data-n="([^"]+)"/g)){
   const[gb,bw,h,sp,st,tf]=v.split('|').map(Number); G[n]={gb,bw,h,sp,st,tf};
@@ -145,6 +157,11 @@ FIELDS = [
     ("sat_batch", "saturatedBatch", 0), ("sat_tok", "saturatedTokS", 1),
     ("ttft_cold_ms", "ttftColdMs", 1), ("ttft_warm_ms", "ttftWarmMs", 1),
     ("kv_saved_by_prefix_gb", "kvSavedByPrefixGB", 0.01),
+    # The constants as executed, not as extracted — this is what stops the two
+    # engines quietly disagreeing about a value no case happens to exercise.
+    ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),
+    ("perf_mfu_prefill", "perfMfuPrefill", 0),
+    ("perf_obs_lo", "perfObsLo", 0), ("perf_obs_hi", "perfObsHi", 0),
 ]
 dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
 
