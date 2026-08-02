@@ -1551,9 +1551,14 @@ function exportSummary() {
   });
 }
 
+/* AWQ, GPTQ and GGUF Q3_K_M are all 0.50 bytes/param, so the option value alone
+ * cannot round-trip through a shared URL — the first match wins and GPTQ comes
+ * back as AWQ, taking --quantization with it. The quant method disambiguates. */
+const precisionToken = opt => `${opt.dataset.q || ''}:${opt.value}`;
+
 function updateURLHash() {
   const state = readInputState();
-  const params = `p=${state.params}&a=${state.activePercent}&bpp=${state.bytesPerParam}&l=${state.layers}&kv=${state.kvHeads}&hd=${state.headDim}&se=${state.sharedExperts}&ctx=${state.contextLength}&cc=${state.concurrency}&ng=${state.gpuCount}&gpu=${encodeURIComponent(document.getElementById('gpu-model').value)}&nv=${state.hasNVLink ? 1 : 0}&kvp=${state.kvBytesPerValue}&pr=${encodeURIComponent(document.getElementById('weight-precision').value)}&pre=${state.presetKey}`;
+  const params = `p=${state.params}&a=${state.activePercent}&bpp=${state.bytesPerParam}&l=${state.layers}&kv=${state.kvHeads}&hd=${state.headDim}&se=${state.sharedExperts}&ctx=${state.contextLength}&cc=${state.concurrency}&ng=${state.gpuCount}&gpu=${encodeURIComponent(document.getElementById('gpu-model').value)}&nv=${state.hasNVLink ? 1 : 0}&kvp=${state.kvBytesPerValue}&pr=${encodeURIComponent(precisionToken(document.getElementById('weight-precision').selectedOptions[0]))}&pre=${state.presetKey}`;
   history.replaceState(null, '', '#' + params);
 }
 
@@ -1572,7 +1577,14 @@ function loadURLHash() {
     if (params.has('ng')) setVal('gpu-count', params.get('ng'));
     if (params.has('gpu')) { const sel = document.getElementById('gpu-model'); for (const opt of sel.options) if (opt.value === params.get('gpu')) { opt.selected = true; break; } }
     if (params.has('nv')) setVal('interconnect', params.get('nv'));
-    if (params.has('bpp') || params.has('pr')) { const val = params.get('pr') || params.get('bpp'); const sel = document.getElementById('weight-precision'); for (const opt of sel.options) if (opt.value === val) { opt.selected = true; break; } }
+    if (params.has('bpp') || params.has('pr')) {
+      const val = params.get('pr') || params.get('bpp');
+      const opts = [...document.getElementById('weight-precision').options];
+      // Links shared before the token format carry a bare byte count; resolve
+      // those the way they always did, on the first option with that value.
+      const match = opts.find(o => precisionToken(o) === val) || opts.find(o => o.value === val);
+      if (match) match.selected = true;
+    }
     if (params.has('kvp')) { const sel = document.getElementById('kv-precision'); for (const opt of sel.options) if (opt.value === params.get('kvp')) { opt.selected = true; break; } }
     if (params.has('pre') && params.get('pre')) document.getElementById('preset').value = params.get('pre');
     return true;
