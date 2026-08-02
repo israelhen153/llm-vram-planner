@@ -468,5 +468,39 @@ test('every unsourced entry is flagged as estimated', () => {
   }
 });
 
+console.log('\nShared-URL round-trip');
+// Extracted from source, not reimplemented — same reason as GIB above.
+const tokenDecl = html.match(/^const precisionToken = .+;$/m);
+assert.ok(tokenDecl, 'precisionToken not found in index.html');
+const precisionToken = new Function(`${tokenDecl[0]}; return precisionToken;`)();
+
+const precStart = html.indexOf('<select id="weight-precision"');
+const precBlock = html.slice(precStart, html.indexOf('</select>', precStart));
+const PREC_OPTS = [...precBlock.matchAll(/<option value="([\d.]+)"[^>]*data-q="([^"]*)"[^>]*>([^<]+)</g)]
+  .map(m => ({ value: m[1], dataset: { q: m[2] }, label: m[3].trim() }));
+// What loadURLHash() does: prefer the token, fall back to a bare byte count.
+const resolve = val => PREC_OPTS.find(o => precisionToken(o) === val) || PREC_OPTS.find(o => o.value === val);
+
+test('every precision option is parsed and has a distinct URL token', () => {
+  const declared = (precBlock.match(/<option /g) || []).length;
+  assert.strictEqual(PREC_OPTS.length, declared, `parsed ${PREC_OPTS.length} of ${declared} options`);
+  const tokens = PREC_OPTS.map(precisionToken);
+  assert.strictEqual(new Set(tokens).size, tokens.length,
+    `AWQ, GPTQ and GGUF Q3_K_M are all 0.50 B/param — tokens collided: ${tokens.join(' ')}`);
+});
+test('every precision survives a share-and-reload round trip', () => {
+  for (const want of PREC_OPTS) {
+    const got = resolve(precisionToken(want));
+    assert.strictEqual(got, want, `${want.label} came back as ${got ? got.label : 'nothing'}`);
+  }
+});
+test('links shared before the token format resolve as they always did', () => {
+  // Bare byte counts are ambiguous by construction; the contract is only that
+  // they keep landing on the first option with that value, as the old loop did.
+  for (const val of ['2', '1', '0.5', '0.63', '1.1']) {
+    assert.strictEqual(resolve(val), PREC_OPTS.find(o => o.value === val), `legacy bpp=${val} moved`);
+  }
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
