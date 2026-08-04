@@ -366,6 +366,14 @@ def build_vllm_cmd(cfg, comp):
         parts.append(f"    --quantization {shlex.quote(cfg['quant'])} \\")
     if cfg.get("kv_bpp", 2) < 2:
         parts.append("    --kv-cache-dtype fp8 \\")
+    # APC is on by default in vLLM V1, so only the opt-out is worth emitting —
+    # index.html's buildVllmCommand() has always done this. cfg already
+    # carries prefix_caching (validated in ARCH_TYPES, threaded through
+    # from_json/from_cli_args/interactive_mode); this function just never
+    # read it, so the flag silently never appeared here regardless of the
+    # setting, independent of anything to do with TP/DP.
+    if not cfg.get("prefix_caching", True):
+        parts.append("    --no-enable-prefix-caching \\")
     if comp["is_moe"] and cfg["n_gpu"] > 1:
         parts.append("    --enable-expert-parallel \\")
     parts.append("    --gpu-memory-utilization 0.90 \\")
