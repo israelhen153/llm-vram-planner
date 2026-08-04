@@ -346,6 +346,37 @@ def compute(cfg):
     }
 
 
+def split_parallelism(gpu_count):
+    """Below 8 GPUs: tp = gpu_count, dp = 1 - exactly master's behaviour, even
+    when gpu_count isn't a valid head-count split (TP=3, TP=6). That looks
+    wrong, but vLLM itself rejects an invalid TP loudly at startup; splitting
+    into DP replicas down here too would make the report silently claim
+    N-way sharding while the command runs 1-GPU replicas that each need the
+    *full* model - wrong in a way nothing catches. Fixing the <=8 regime's
+    own TP-validity problem is separate work.
+
+    Above 8 GPUs: tp = the largest power of two dividing gpu_count, capped at
+    8 (today's hardcoded single-node size; becomes a per-GPU `domain` field
+    once multi-node topology is modeled instead of assumed - not this
+    commit). dp absorbs whatever's left. Always exact (tp * dp == gpu_count,
+    so a GPU is never dropped) and tp is always a valid power-of-two split
+    for real attention head counts - unlike "largest divisor <= 8", which
+    picked TP=5 for 100 GPUs and TP=6 for 12. This is the regime that
+    actually diverged between the two engines.
+
+    Mirrors index.html's splitParallelism(); the parity suite enforces it."""
+    # n_gpu is declared (int, float) in ARCH_TYPES, so a fractional GPU count
+    # can arrive from JSON; truncate before it can leak a float into tp*dp
+    # (e.g. --data-parallel-size 3.0, or disagreeing with JS on a non-integer).
+    gpu_count = int(gpu_count)
+    if gpu_count <= 8:
+        return gpu_count, 1
+    tp = 1
+    while tp < 8 and tp * 2 <= gpu_count and gpu_count % (tp * 2) == 0:
+        tp *= 2
+    return tp, gpu_count // tp
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
@@ -355,10 +386,13 @@ def build_vllm_cmd(cfg, comp):
     # shlex.quote() is a no-op on an ordinary value and neutralizes anything
     # that isn't one, instead of executing it.
     hf = shlex.quote(cfg.get("hf_model", "/opt/models/YourModel"))
+    tp, dp = split_parallelism(cfg["n_gpu"])
     parts = [f"vllm serve {hf} \\"]
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     if cfg["n_gpu"] > 1:
-        parts.append(f"    --tensor-parallel-size {cfg['n_gpu']} \\")
+        parts.append(f"    --tensor-parallel-size {tp} \\")
+    if dp > 1:
+        parts.append(f"    --data-parallel-size {dp} \\")
     # --dtype auto reads torch_dtype from config.json. Forcing float16 breaks the
     # bf16-trained families (Llama 3, Gemma, Qwen), whose weights can overflow fp16.
     parts.append("    --dtype auto \\")
@@ -598,13 +632,21 @@ class ReportCard:
 
         # ---- GPU Configuration ----
         story.append(Paragraph("GPU configuration", self.styles["SectionHead"]))
+        # tp/dp, not cfg['n_gpu'] directly: above 8 GPUs this row used to say
+        # "TP=12" while build_vllm_cmd(), printed a few sections later in the
+        # same PDF, emitted --tensor-parallel-size 4 --data-parallel-size 3 —
+        # one document contradicting itself.
+        tp, dp = split_parallelism(cfg["n_gpu"])
+        parallelism_label = "Single GPU"
+        if cfg["n_gpu"] > 1:
+            parallelism_label = f"Tensor parallel (TP={tp})" + (f" + data parallel (DP={dp})" if dp > 1 else "")
         gpu_data = [
             ["GPU model", gpu["name"]],
             ["GPU count", str(cfg["n_gpu"])],
             ["Total VRAM", f"{c['total_vram']} GB"],
             ["Interconnect", "NVLink" if cfg.get("nvlink") else "PCIe"],
             ["Memory bandwidth", f"{gpu['bw']} GB/s per GPU"],
-            ["Parallelism", f"Tensor parallel (TP={cfg['n_gpu']})" if cfg["n_gpu"] > 1 else "Single GPU"],
+            ["Parallelism", parallelism_label],
         ]
         story.append(self._make_kv_table(gpu_data))
         story.append(Spacer(1, 3*mm))
@@ -713,6 +755,17 @@ class ReportCard:
             notes.append(f"NCCL buffers add ~0.3 GB per GPU peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
+        if dp > 1:
+            # Same caveat index.html shows on screen (renderGPUCards' warning
+            # banner) — repeated here because this PDF, not the screen, is
+            # the artifact README.md calls procurement-ready and that gets
+            # forwarded. A reader who only sees the PDF must not be able to
+            # read "Per GPU: X GiB" next to --data-parallel-size and conclude
+            # that's what actually fits.
+            notes.append(f"Per-GPU VRAM above assumes weights sharded across all {cfg['n_gpu']} GPUs; the "
+                         f"vLLM command below instead shards {tp}-way and replicates a full copy of the model "
+                         f"across each of {dp} data-parallel groups, so the fit verdict on page 1 is optimistic. "
+                         f"Reconciling this VRAM math with the real split is planned but not done yet.")
         notes.append("Parameter estimates from presets are approximate. Verify against the model's config.json.")
         notes.append("GPU prices are mid-2026 per-GPU/hr estimates across 3 tiers: hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave/RunPod), spot/marketplace (Vast.ai). Reserved instances typically 30-60% off.")
         for n in notes:
@@ -884,6 +937,21 @@ def validate_arch(cfg):
             raise TypeError(f"cfg['attn']='swa' requires cfg['swa_win'] > 0, got {cfg.get('swa_win', 0)!r}")
         if not cfg.get("swa_local", 0) > 0:
             raise TypeError(f"cfg['attn']='swa' requires cfg['swa_local'] > 0, got {cfg.get('swa_local', 0)!r}")
+
+    # n_gpu passes the generic (int, float) check above, but a fractional GPU
+    # count is physically meaningless, and vLLM rejects it loudly at startup
+    # (--tensor-parallel-size 3.7 fails to parse) — which is the correct
+    # failure mode. Truncating it instead (as an earlier version of this
+    # commit did, inside split_parallelism()) turns that loud rejection into
+    # a silently under-sharded config: the VRAM math keeps dividing by the
+    # untruncated float while the emitted command shards by the truncated
+    # integer, so the report's own per-GPU figure understates what the
+    # command it prints actually needs — 23% low at n_gpu=3.7. Rejecting it
+    # here means split_parallelism()'s own truncation is a defensive guard
+    # that should never actually be reached from a JSON config.
+    n_gpu = cfg.get("n_gpu")
+    if isinstance(n_gpu, (int, float)) and not isinstance(n_gpu, bool) and n_gpu != int(n_gpu):
+        raise TypeError(f"cfg['n_gpu'] must be a whole number, got {n_gpu!r}")
 
     return cfg
 

@@ -1110,13 +1110,52 @@ function renderSliderLabels(state) {
   document.getElementById('train-hidden-size-display').textContent = getVal('train-hidden-size');
 }
 
+// Below 8 GPUs, TP = gpuCount, DP = 1 — exactly master's behaviour, even
+// when gpuCount isn't a valid head-count split (TP=3, TP=6). That looks
+// wrong, but vLLM itself rejects an invalid TP loudly at startup; the
+// alternative (splitting into DP replicas down here too) makes the page
+// silently claim N-way sharding while the command runs 1-GPU replicas that
+// each need the *full* model — wrong in a way nothing catches. Fixing the
+// ≤8 regime's own TP-validity problem is separate work, not this commit.
+//
+// Above 8 GPUs, TP = the largest power of two dividing gpuCount, capped at 8
+// (today's hardcoded single-node size; becomes a per-GPU `domain` field once
+// multi-node topology is modeled instead of assumed — not this commit). DP
+// absorbs whatever's left. Always exact (tp * dp === gpuCount, so a GPU is
+// never dropped) and tp is always a valid power-of-two split for real
+// attention head counts — unlike "largest divisor <= 8", which picked TP=5
+// for 100 GPUs and TP=6 for 12, neither a valid head-count split. This is
+// the regime that actually diverged between the two engines.
+//
+// Single source of truth for every call site below and for
+// buildVllmCommand(), so the displayed split and the emitted command can
+// never disagree.
+function splitParallelism(gpuCount) {
+  // n_gpu is declared (int, float) on the Python side (ARCH_TYPES), so a
+  // fractional GPU count can arrive from JSON; truncate before it can leak
+  // a float into tp*dp (e.g. --data-parallel-size 3.0, or the two engines
+  // disagreeing on floor vs modulo of a non-integer gpuCount).
+  gpuCount = Math.trunc(gpuCount);
+  if (gpuCount <= 8) return { tp: gpuCount, dp: 1 };
+  let tp = 1;
+  while (tp < 8 && tp * 2 <= gpuCount && gpuCount % (tp * 2) === 0) tp *= 2;
+  return { tp, dp: gpuCount / tp };
+}
+
 function renderStrategyBadges(state, computed) {
-  const preset = MODEL_PRESETS[state.presetKey];
-  const isMoE = preset ? preset.moe : state.activePercent < 100;
+  // isMoE from computed (compute()'s own is_moe/isMoE, driven by
+  // activePercent < 100), not a preset lookup — a preset's activePercent
+  // and its own .moe flag agree for every entry in MODEL_PRESETS today, but
+  // a shared URL encodes preset (`pre=`) and active% (`a=`) independently
+  // and the active-% slider never resets the preset, so preset.moe and
+  // computed.isMoE *can* diverge on a loaded link. Reading the same source
+  // buildVllmCommand() already reads keeps this badge and the emitted
+  // --enable-expert-parallel flag from disagreeing about the same config.
+  const { tp, dp } = splitParallelism(state.gpuCount);
   let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
-  html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${state.gpuCount > 1 ? 'TP=' + state.gpuCount : 'Single GPU'}</span>`;
+  html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${state.gpuCount > 1 ? 'TP=' + tp + (dp > 1 ? ' × DP=' + dp : '') : 'Single GPU'}</span>`;
   if (state.gpuCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more GPUs</span>';
-  if (isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
+  if (computed.isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
   if (state.kvBytesPerValue < 2) html += '<span class="badge" style="background:var(--success-bg);color:var(--success-text)">FP8 KV cache</span>';
   html += '</div>';
   setHTML('strategy-badges', html);
@@ -1124,6 +1163,10 @@ function renderStrategyBadges(state, computed) {
 
 function renderGPUCards(state, computed) {
   const { perGPU } = computed;
+  // Computed once at function scope, not just inside the condensed-view
+  // branch below, because the NVLink/PCIe sharding line at the bottom of
+  // this function applies to every gpuCount > 1, individual cards included.
+  const { tp, dp } = splitParallelism(state.gpuCount);
   const maxBarValue = Math.max(perGPU.total, state.gpuGB) * 1.05;
   const weightsPct = Math.max(perGPU.weights / maxBarValue * 100, 0.5);
   const kvPct = Math.max(perGPU.kvCache / maxBarValue * 100, 0.5);
@@ -1163,8 +1206,6 @@ function renderGPUCards(state, computed) {
   } else {
     // Condensed view for 5+ GPUs
     const layersPerGPU = Math.ceil(state.layers / state.gpuCount);
-    let tensorParallel = state.gpuCount, dataParallel = 1;
-    if (state.gpuCount > 8) { for (let t = 8; t >= 2; t--) { if (state.gpuCount % t === 0) { tensorParallel = t; dataParallel = state.gpuCount / t; break; } } if (dataParallel === 1) { tensorParallel = 8; dataParallel = Math.floor(state.gpuCount / 8); } }
 
     html += '<div class="gpu-card" style="margin:10px 0">';
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
@@ -1174,18 +1215,43 @@ function renderGPUCards(state, computed) {
     html += buildBar(10);
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0">';
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(state.gpuGB * state.gpuCount)}</b></div>`;
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${state.gpuCount}-way</b> (${formatGB(perGPU.weights)}/GPU)</div>`;
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per GPU</span><br><b>~${layersPerGPU}</b> of ${state.layers}</div>`;
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Parallelism</span><br><b>TP=${tensorParallel}${dataParallel > 1 ? ' × DP=' + dataParallel : ''}</b></div>`;
-    if (state.gpuCount > 8) html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Est. nodes</span><br><b>~${Math.ceil(state.gpuCount / 8)}</b> (8 GPU/node)</div>`;
+    // dp > 1 (only possible above 8 GPUs — see splitParallelism) means the
+    // command shards tp-way, not gpuCount-way, but this tile's own number is
+    // still weights_gb / gpuCount (compute() isn't changed here — that's a
+    // later commit). Below 9 GPUs dp is always 1 and tp === gpuCount, so the
+    // old "N-way" wording stays exactly as it was: it isn't wrong there.
+    html += dp > 1
+      ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per GPU</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${state.gpuCount}</span></div>`
+      : `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${state.gpuCount}-way</b> (${formatGB(perGPU.weights)}/GPU)</div>`;
+    // layersPerGPU = ceil(layers / gpuCount) has the same all-GPU assumption
+    // baked in; same gating, so 1-8 is unchanged and only >8 gets the caveat.
+    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per GPU</span><br><b>~${layersPerGPU}</b> of ${state.layers}${dp > 1 ? '<br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ' + state.gpuCount + '</span>' : ''}</div>`;
+    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Parallelism</span><br><b>TP=${tp}${dp > 1 ? ' × DP=' + dp : ''}</b></div>`;
+    if (dp > 1) html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Est. nodes</span><br><b>~${Math.ceil(state.gpuCount / 8)}</b> (8 GPU/node)</div>`;
     html += '</div>';
-    if (state.gpuCount > 8) {
-      html += `<div style="font-size:11px;color:var(--warning-text);background:var(--warning-bg);border-radius:var(--radius);padding:6px 10px;margin:6px 0"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>${state.gpuCount} GPUs likely spans ${Math.ceil(state.gpuCount / 8)}+ nodes. TP=${tensorParallel}${dataParallel > 1 ? ' × DP=' + dataParallel : ''} is a starting point. Optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology.</div>`;
+    // dp > 1 only above 8 GPUs now (splitParallelism leaves 1-8 as tp=gpuCount,
+    // dp=1, matching master), so this is the >8 regime exactly and the
+    // node/topology sentence always applies here.
+    if (dp > 1) {
+      // Known inconsistency (fix is a later commit): the VRAM figures above
+      // assume weights sharded across every GPU, but the command below
+      // shards only tp-way and replicates a full copy per DP group, so the
+      // fit check is optimistic here.
+      const note = `${state.gpuCount} GPUs likely spans ${Math.ceil(state.gpuCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point. Optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology. Per-GPU VRAM above assumes weights sharded across all ${state.gpuCount} GPUs; the emitted command instead shards only ${tp}-way and replicates a full copy of the model across each of the ${dp} data-parallel groups, so the fit check above is optimistic here.`;
+      html += `<div style="font-size:11px;color:var(--warning-text);background:var(--warning-bg);border-radius:var(--radius);padding:6px 10px;margin:6px 0"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>${note}</div>`;
     }
     html += '</div>';
   }
 
-  if (state.gpuCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${state.hasNVLink ? 'NVLink — sharded ' + state.gpuCount + '-way, each GPU holds 1/' + state.gpuCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce'}</div>`;
+  // This line's job is the interconnect cost, not a sharding claim. Above 8
+  // GPUs (dp > 1) it used to assert "sharded gpuCount-way", which the actual
+  // command contradicts (tp-way, not gpuCount-way) — and the Parallelism
+  // tile above is already the one place that states the real split, so this
+  // line just drops the factor there instead of picking a number to repeat.
+  // Below 9 GPUs (dp === 1) nothing here was wrong, so it is unchanged.
+  if (state.gpuCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
+    ? (state.hasNVLink ? 'NVLink — all-reduce across GPUs' : 'PCIe — 5-12x slower all-reduce')
+    : (state.hasNVLink ? 'NVLink — sharded ' + state.gpuCount + '-way, each GPU holds 1/' + state.gpuCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
   setHTML('gpu-cards', html);
 }
 
@@ -1283,39 +1349,47 @@ function renderCost(state, computed) {
   setHTML('cost-output', html);
 }
 
+// Pure command-string builder: no DOM, no globals — state/computed/modelPath
+// are all it needs, so it can be extracted and run under node the same way
+// computeInference() already is, and diffed directly against
+// generate_report.py's build_vllm_cmd(cfg, comp) in tests/parity.test.py.
+// That diff is what would have caught this pair emitting different flags
+// above 8 GPUs. renderCommand() below adds the warning banner and writes the
+// result to the page; this function owns only the command text itself.
+function buildVllmCommand(state, computed, modelPath) {
+  if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
+  const { tp, dp } = splitParallelism(state.gpuCount);
+  let cmd = `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
+  if (state.gpuCount > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
+  if (dp > 1) cmd += `    --data-parallel-size ${dp} \\\n`;
+  /* --dtype auto reads torch_dtype from the model's config.json. Hardcoding
+     float16 was wrong for the bf16-trained families that dominate now (Llama 3,
+     Gemma, Qwen): fp16 has a much smaller exponent range and can overflow on
+     weights that were fine in bf16. For quantized models this governs the
+     activation dtype, where auto is also correct. */
+  cmd += '    --dtype auto \\\n';
+  if (state.quantMethod) cmd += `    --quantization ${state.quantMethod} \\\n`;
+  if (state.kvBytesPerValue < 2) cmd += '    --kv-cache-dtype fp8 \\\n';
+  // APC is on by default in vLLM V1, so only the opt-out is worth emitting.
+  if (!state.prefixCaching) cmd += '    --no-enable-prefix-caching \\\n';
+  // isMoE read from computed (compute()'s own output), not re-derived from a
+  // preset lookup — one source, so this can never disagree with the badges
+  // or verdict, which already read it from the same place.
+  if (computed.isMoE && state.gpuCount > 1) cmd += '    --enable-expert-parallel \\\n';
+  cmd += '    --gpu-memory-utilization 0.90 \\\n';
+  cmd += `    --max-model-len ${Math.min(computed.maxContextSingleUser, state.contextLength)}`;
+  return cmd;
+}
+
 function renderCommand(state, computed) {
   const preset = MODEL_PRESETS[state.presetKey];
-  const isMoE = preset ? preset.moe : state.activePercent < 100;
   const modelPath = preset ? preset.hf : (importedModelId && !importedModelId.endsWith('.json') ? importedModelId : '/opt/models/YourModel');
+  const cmd = buildVllmCommand(state, computed, modelPath);
 
-  let cmd = '', warning = '';
-  if (!computed.fits) {
-    cmd = '# Does not fit — increase GPUs, lower precision, or reduce context';
-  } else {
-    // Calculate optimal TP/DP split for >8 GPUs
-    let tp = state.gpuCount, dp = 1;
-    if (state.gpuCount > 8) {
-      for (let t = 8; t >= 2; t--) { if (state.gpuCount % t === 0) { tp = t; dp = state.gpuCount / t; break; } }
-      if (dp === 1 && state.gpuCount > 8) { tp = 8; dp = Math.floor(state.gpuCount / 8); }
-    }
-    cmd = `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
-    if (state.gpuCount > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
-    if (dp > 1) cmd += `    --data-parallel-size ${dp} \\\n`;
-    /* --dtype auto reads torch_dtype from the model's config.json. Hardcoding
-       float16 was wrong for the bf16-trained families that dominate now (Llama 3,
-       Gemma, Qwen): fp16 has a much smaller exponent range and can overflow on
-       weights that were fine in bf16. For quantized models this governs the
-       activation dtype, where auto is also correct. */
-    cmd += '    --dtype auto \\\n';
-    if (state.quantMethod) cmd += `    --quantization ${state.quantMethod} \\\n`;
-    if (state.kvBytesPerValue < 2) cmd += '    --kv-cache-dtype fp8 \\\n';
-    // APC is on by default in vLLM V1, so only the opt-out is worth emitting.
-    if (!state.prefixCaching) cmd += '    --no-enable-prefix-caching \\\n';
-    if (isMoE && state.gpuCount > 1) cmd += '    --enable-expert-parallel \\\n';
-    cmd += '    --gpu-memory-utilization 0.90 \\\n';
-    cmd += `    --max-model-len ${Math.min(computed.maxContextSingleUser, state.contextLength)}`;
-
-    if (state.gpuCount > 8) {
+  let warning = '';
+  if (computed.fits) {
+    const { tp, dp } = splitParallelism(state.gpuCount);
+    if (dp > 1) {
       warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${state.gpuCount} GPUs: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
     }
     if (state.quantMethod === 'gguf') {
@@ -1546,6 +1620,7 @@ function exportSummary() {
   const computed = computeInference(state);
   const preset = MODEL_PRESETS[state.presetKey];
   const name = preset ? document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text : (importedModelId || state.params + 'B model');
+  const { tp, dp } = splitParallelism(state.gpuCount);
 
   let report = `# LLM VRAM Plan — ${name}\n\n`;
   report += `## Model\n- Parameters: ${state.params}B${state.activePercent < 100 ? ' (MoE, ' + state.activePercent + '% active)' : ' (dense)'}\n`;
@@ -1554,6 +1629,12 @@ function exportSummary() {
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
   report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${state.gpuCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
   report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-GPU: ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
+  // Same caveat as the on-screen warning banner (renderGPUCards), repeated
+  // here because this copy-pasted summary is exactly the artifact that
+  // leaves the screen it was computed on — a reader downstream of the clip
+  // board sees "Per-GPU: X (FITS)" next to --data-parallel-size with nothing
+  // to say the two were computed on different sharding assumptions.
+  if (dp > 1) report += `- Note: the figures above assume weights sharded across all ${state.gpuCount} GPUs; the command below instead shards ${tp}-way and replicates a full copy of the model across each of ${dp} data-parallel groups, so the fit verdict is optimistic.\n`;
   report += `\n## Capacity\n- Max context (1 user): ${formatContext(computed.maxContextSingleUser)}\n- Max concurrent @ 8K: ${Math.max(computed.maxConcurrentAt8K, 0)}\n- Single-stream decode: ~${formatTokens(computed.singleStreamTokS)} tok/s\n- Aggregate @ ${computed.effectiveBatch} concurrent: ~${formatTokens(computed.aggregateTokS)} tok/s\n- TTFT: ~${computed.ttftMs} ms\n`;
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo\n`;
   report += `\n## vLLM command\n\`\`\`\n${document.querySelector('#command-output code').textContent}\n\`\`\`\n`;
