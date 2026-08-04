@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 import os
+import shlex
 import sys
 from datetime import datetime
 
@@ -120,6 +121,19 @@ def fmt_k(v):
 
 def fmt_tok(t):
     return f"{t/1000:.1f}K" if t >= 1000 else str(round(t))
+
+def attn_label(cfg):
+    """Describe the attention regime a cfg carries, with the detail that
+    actually changes the KV cache math (window/local layers for SWA, latent
+    dim for MLA) — this is the number that was silently wrong for a year
+    because nothing in the report said which regime produced it."""
+    mode = cfg.get("attn", "standard")
+    if mode == "swa":
+        local = min(cfg.get("swa_local", 0), cfg["layers"])
+        return f"Sliding window (SWA) — {fmt_k(cfg.get('swa_win', 0))} token window, {local}/{cfg['layers']} local layers"
+    if mode == "mla":
+        return f"Multi-head latent (MLA) — {cfg.get('mla_dim', 0)}-dim latent"
+    return "Standard (MHA/GQA)"
 
 
 # =============================================================================
@@ -335,7 +349,12 @@ def compute(cfg):
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
-    hf = cfg.get("hf_model", "/opt/models/YourModel")
+    # hf_model and quant can both originate from a user's own JSON now (the
+    # whole point of default-allow is that cfg carries whatever they wrote),
+    # and this command is meant to be copied straight into a terminal.
+    # shlex.quote() is a no-op on an ordinary value and neutralizes anything
+    # that isn't one, instead of executing it.
+    hf = shlex.quote(cfg.get("hf_model", "/opt/models/YourModel"))
     parts = [f"vllm serve {hf} \\"]
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     if cfg["n_gpu"] > 1:
@@ -344,7 +363,7 @@ def build_vllm_cmd(cfg, comp):
     # bf16-trained families (Llama 3, Gemma, Qwen), whose weights can overflow fp16.
     parts.append("    --dtype auto \\")
     if cfg.get("quant"):
-        parts.append(f"    --quantization {cfg['quant']} \\")
+        parts.append(f"    --quantization {shlex.quote(cfg['quant'])} \\")
     if cfg.get("kv_bpp", 2) < 2:
         parts.append("    --kv-cache-dtype fp8 \\")
     if comp["is_moe"] and cfg["n_gpu"] > 1:
@@ -560,6 +579,7 @@ class ReportCard:
             ["HuggingFace ID", cfg.get("hf_model", "N/A")],
             ["Parameters", f"{cfg['params']}B total" + (f" ({cfg['active']}% active per token)" if c["is_moe"] else "")],
             ["Architecture", arch_type + (f" — {cfg.get('shared_exp', 0)} shared expert(s)" if cfg.get("shared_exp", 0) else "")],
+            ["Attention", attn_label(cfg)],
             ["Weight precision", prec_label],
             ["KV cache precision", kv_label],
             ["Layers", str(cfg["layers"])],
@@ -707,6 +727,30 @@ class ReportCard:
 # =============================================================================
 # CLI
 # =============================================================================
+# PRESETS keys whose short-hand differs from what compute() (and a raw JSON
+# config) call them. Everything else in a preset passes through unchanged;
+# name/hf are excluded because they're presentation metadata handled
+# separately below (hf_model/model_name), and moe because compute() derives
+# is_moe from active < 100 and never reads it — carrying it forward would
+# just be a stray unused key in every cfg.
+PRESET_RENAME = {"p": "params", "l": "layers", "kv": "kv_heads", "hd": "h_dim",
+                  "a": "active", "se": "shared_exp"}
+PRESET_EXCLUDE = {"hf", "name", "moe"}
+
+def arch_fields(pd):
+    """Translate a PRESETS entry into the cfg keys compute() reads.
+
+    Default-allow, not default-deny: a key this function has never heard of —
+    a new attention mode's parameter, a new architecture field, anything added
+    to PRESETS in the future — passes through unchanged instead of needing
+    this function (and every builder that calls it) edited first. That
+    inversion is the actual fix for how attn/swa_win/swa_local/mla_dim, and
+    separately max_ctx, went missing: naming four keys to forward is a
+    whitelist by another name, and drops the fifth one exactly the same way.
+    """
+    return {PRESET_RENAME.get(k, k): v for k, v in pd.items() if k not in PRESET_EXCLUDE}
+
+
 def interactive_mode():
     print("\n=== LLM VRAM Planning Report Card ===\n")
     print("Available presets:")
@@ -715,25 +759,25 @@ def interactive_mode():
     choice = input("\nSelect preset number (or 'custom'): ").strip()
 
     if choice.lower() == "custom":
-        params = float(input("  Parameters (B): "))
-        active = float(input("  MoE active % (100 for dense): "))
-        layers = int(input("  Layers: "))
-        kv_heads = int(input("  KV heads: "))
-        h_dim = int(input("  Head dimension: "))
-        shared_exp = int(input("  Shared experts (0 if none): ") or "0")
+        arch = {
+            "params": float(input("  Parameters (B): ")),
+            "active": float(input("  MoE active % (100 for dense): ")),
+            "layers": int(input("  Layers: ")),
+            "kv_heads": int(input("  KV heads: ")),
+            "h_dim": int(input("  Head dimension: ")),
+            "shared_exp": int(input("  Shared experts (0 if none): ") or "0"),
+        }
         hf_model = input("  HuggingFace model ID: ").strip() or "/opt/models/YourModel"
-        model_name = input("  Display name: ").strip() or f"{params}B model"
-        preset_data = None
+        model_name = input("  Display name: ").strip() or f"{arch['params']}B model"
     else:
+        # Same construction path as from_cli_args/from_json: this is the
+        # no-args default a first-time user hits, so it gets the preset's
+        # attention fields (and anything future PRESETS entries add) the same
+        # way they do, not a fourth hand-copied field list.
         idx = int(choice) - 1
         key = list(PRESETS.keys())[idx]
         preset_data = PRESETS[key]
-        params = preset_data["p"]
-        active = preset_data["a"]
-        layers = preset_data["l"]
-        kv_heads = preset_data["kv"]
-        h_dim = preset_data["hd"]
-        shared_exp = preset_data["se"]
+        arch = arch_fields(preset_data)
         hf_model = preset_data["hf"]
         model_name = preset_data["name"]
 
@@ -758,13 +802,81 @@ def interactive_mode():
     ctx = int(input("Context length [8192]: ").strip() or "8192")
     conc = int(input("Concurrent requests [1]: ").strip() or "1")
 
-    cfg = {
-        "params": params, "active": active, "bpp": bpp,
-        "layers": layers, "kv_heads": kv_heads, "h_dim": h_dim,
-        "shared_exp": shared_exp, "ctx": ctx, "conc": conc,
+    return {
+        **arch, "bpp": bpp, "ctx": ctx, "conc": conc,
         "n_gpu": n_gpu, "gpu": gpu, "nvlink": nvlink,
         "kv_bpp": kv_bpp, "hf_model": hf_model, "model_name": model_name,
     }
+
+
+# Keys that describe the deployment request, not the model's architecture.
+# Both from_json branches resolve these explicitly, with their own defaults,
+# regardless of what the JSON says — raw's "gpu" is a lookup string, not the
+# resolved dict compute() needs, for instance — so they're excluded from the
+# architecture overlay below rather than merged from raw. Everything else in
+# the JSON is a deliberate architecture/runtime override and applies
+# unconditionally, including keys the selected preset never defines.
+# Restricting the overlay to "keys the preset already defines" was the
+# previous, broken version of this — it let attn flip to mla while dropping
+# mla_dim entirely. validate_arch() below now refuses an attn override that
+# arrives without the parameter that gives it meaning, rather than letting it
+# quietly compute a confident zero.
+REQUEST_KEYS = {"preset", "gpu", "bpp", "ctx", "conc", "n_gpu", "nvlink", "kv_bpp"}
+
+# Expected type for each value that can now reach cfg from a raw JSON config
+# without passing through a typed CLI flag or a Python literal in PRESETS.
+# Checked once, right before cfg leaves this function, because a bad type
+# reaches compute() unfiltered on purpose — that is what default-allow means —
+# and a bare TypeError several frames deep names no key and helps nobody.
+# bool is deliberately not in here as its own case: it is a subclass of int in
+# Python, so isinstance(True, int) is True, and JSON authors routinely write
+# 1/0 for true/false — both are handled explicitly in validate_arch() instead
+# of by isinstance() alone, which gets both wrong in opposite directions.
+ARCH_TYPES = {
+    "params": (int, float), "active": (int, float), "layers": int,
+    "kv_heads": int, "h_dim": int, "shared_exp": (int, float),
+    "attn": str, "swa_win": (int, float), "swa_local": (int, float),
+    "mla_dim": (int, float), "max_ctx": (int, float),
+    "shared_prefix": (int, float), "prefix_caching": bool,
+    "ctx": (int, float), "conc": (int, float), "n_gpu": (int, float),
+}
+
+def validate_arch(cfg):
+    """Raise a clear, key-named TypeError for a wrong-typed or incomplete cfg
+    value instead of letting it reach compute() and fail anonymously several
+    frames deep — or, worse, not fail at all and silently report a confident
+    zero."""
+    for key, types_ in ARCH_TYPES.items():
+        if key not in cfg:
+            continue
+        val = cfg[key]
+        if types_ is bool:
+            # Accept an actual bool or the 0/1 a JSON author reaches for
+            # first; reject anything else, including other ints.
+            ok = isinstance(val, bool) or val in (0, 1)
+            want = "bool (or 0/1)"
+        else:
+            # bool is an int subclass — exclude it explicitly, or a stray
+            # true/false silently passes as a valid layer count.
+            ok = isinstance(val, types_) and not isinstance(val, bool)
+            want = " or ".join(t.__name__ for t in types_) if isinstance(types_, tuple) else types_.__name__
+        if not ok:
+            raise TypeError(f"cfg[{key!r}] must be {want}, got {type(val).__name__}: {val!r}")
+
+    # An attention mode's own parameter must actually be given, not just
+    # implied by attn's value. This is the N1 bug's exact shape: attn flips
+    # to mla/swa correctly, but mla_dim/swa_win/swa_local stay at their zero
+    # default, and compute() silently reports an empty KV cache and fits=True
+    # instead of complaining that the config is incomplete.
+    attn = cfg.get("attn", "standard")
+    if attn == "mla" and not cfg.get("mla_dim", 0) > 0:
+        raise TypeError(f"cfg['attn']='mla' requires cfg['mla_dim'] > 0, got {cfg.get('mla_dim', 0)!r}")
+    if attn == "swa":
+        if not cfg.get("swa_win", 0) > 0:
+            raise TypeError(f"cfg['attn']='swa' requires cfg['swa_win'] > 0, got {cfg.get('swa_win', 0)!r}")
+        if not cfg.get("swa_local", 0) > 0:
+            raise TypeError(f"cfg['attn']='swa' requires cfg['swa_local'] > 0, got {cfg.get('swa_local', 0)!r}")
+
     return cfg
 
 
@@ -776,43 +888,65 @@ def from_json(path):
     preset = raw.get("preset")
     if preset and preset in PRESETS:
         pd = PRESETS[preset]
-        return {
-            "params": pd["p"], "active": pd["a"], "bpp": raw.get("bpp", 0.5),
-            "layers": pd["l"], "kv_heads": pd["kv"], "h_dim": pd["hd"],
-            "shared_exp": pd["se"], "ctx": raw.get("ctx", 8192),
+        cfg = arch_fields(pd)
+        # An explicit value in the JSON overrides the preset's — the same rule
+        # ctx/conc/kv_bpp/etc. already follow below. Selecting a preset sets
+        # defaults, it doesn't lock them.
+        cfg.update({k: v for k, v in raw.items() if k not in REQUEST_KEYS})
+        cfg.update({
+            "bpp": raw.get("bpp", 0.5), "ctx": raw.get("ctx", 8192),
             "conc": raw.get("conc", 1), "n_gpu": raw.get("n_gpu", 1),
             "gpu": gpu, "nvlink": raw.get("nvlink", True),
-            "kv_bpp": raw.get("kv_bpp", 2), "hf_model": pd["hf"],
-            "model_name": pd["name"],
-        }
-    return {
-        "params": raw["params"], "active": raw.get("active", 100),
-        "bpp": raw.get("bpp", 0.5), "layers": raw["layers"],
-        "kv_heads": raw["kv_heads"], "h_dim": raw.get("h_dim", 128),
-        "shared_exp": raw.get("shared_exp", 0), "ctx": raw.get("ctx", 8192),
-        "conc": raw.get("conc", 1), "n_gpu": raw.get("n_gpu", 1),
-        "gpu": gpu, "nvlink": raw.get("nvlink", True),
-        "kv_bpp": raw.get("kv_bpp", 2),
-        "hf_model": raw.get("hf_model", "/opt/models/YourModel"),
-        "model_name": raw.get("model_name", f"{raw['params']}B model"),
-    }
+            "kv_bpp": raw.get("kv_bpp", 2),
+            # Same "raw wins" rule as everything else in this block — this
+            # tool's origin story is an air-gapped deployment, and "pick a
+            # preset, point it at my local weights" is the obvious thing to
+            # write. Defaulting to the preset unconditionally silently served
+            # a HuggingFace id that needs network access to resolve instead.
+            "hf_model": raw.get("hf_model", pd["hf"]),
+            "model_name": raw.get("model_name", pd["name"]),
+        })
+        return validate_arch(cfg)
+
+    # No preset — cfg is built straight from the user's own JSON. Its keys
+    # already use compute()'s names (params, layers, attn, ...), so unlike a
+    # PRESETS entry there is nothing to rename: copy the config through and
+    # layer the well-known defaults on top. A field the user sets that this
+    # function has never heard of reaches compute() unchanged, same as above.
+    cfg = dict(raw)
+    for required in ("params", "layers", "kv_heads"):
+        if required not in cfg:
+            raise KeyError(required)
+    cfg["gpu"] = gpu
+    cfg.setdefault("active", 100)
+    cfg.setdefault("h_dim", 128)
+    cfg.setdefault("shared_exp", 0)
+    cfg.setdefault("bpp", 0.5)
+    cfg.setdefault("ctx", 8192)
+    cfg.setdefault("conc", 1)
+    cfg.setdefault("n_gpu", 1)
+    cfg.setdefault("nvlink", True)
+    cfg.setdefault("kv_bpp", 2)
+    cfg.setdefault("hf_model", "/opt/models/YourModel")
+    cfg.setdefault("model_name", f"{cfg['params']}B model")
+    return validate_arch(cfg)
 
 
 def from_cli_args(args):
     preset = PRESETS.get(args.preset)
     gpu = GPUS.get(args.gpu, GPUS["a100-40"])
     if preset:
-        return {
-            "params": preset["p"], "active": preset["a"],
+        cfg = arch_fields(preset)
+        cfg.update({
             "bpp": {"bf16":2,"fp8":1,"int4":0.5,"awq":0.5,"gptq":0.5,"q4km":0.63,"q6k":0.82,"q8":1.1}.get(args.prec, 0.5),
             "quant": {"bf16":"","fp8":"fp8","int4":"awq","awq":"awq","gptq":"gptq",
                       "q4km":"gguf","q6k":"gguf","q8":"gguf"}.get(args.prec, "awq"),
-            "layers": preset["l"], "kv_heads": preset["kv"], "h_dim": preset["hd"],
-            "shared_exp": preset["se"], "ctx": args.ctx, "conc": args.conc,
+            "ctx": args.ctx, "conc": args.conc,
             "n_gpu": args.ngpu, "gpu": gpu, "nvlink": not args.no_nvlink,
             "kv_bpp": 1 if args.fp8_kv else 2,
             "hf_model": preset["hf"], "model_name": preset["name"],
-        }
+        })
+        return cfg
     else:
         raise ValueError(f"Unknown preset: {args.preset}. Available: {', '.join(PRESETS.keys())}")
 

@@ -10,4 +10,7 @@ node tests/model.test.js
 echo "== JS/Python parity (index.html vs generate_report.py) =="
 python3 tests/parity.test.py
 
+echo "== report generator cfg builders (generate_report.py) =="
+python3 tests/report.test.py
+
 echo "All suites passed."
