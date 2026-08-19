@@ -200,9 +200,12 @@ const perf=html.match(/^const PERF = \{[\s\S]*?\n\};$/m)[0];
 const mp=html.match(/^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m)[0];
 const s=html.indexOf('function computeInference(state) {'), e=html.indexOf('\n}\n',s);
 const scope=new Function(`${gib}\n${perf}\n${mp}\n${html.slice(s,e+2)}; return {computeInference, MODEL_PRESETS};`)();
+const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
+if(!gt) throw new Error('GPU_TABLE not found in index.html');
+const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
-for(const[,v,n]of html.matchAll(/<option value="([\d.|]+)"[^>]*data-n="([^"]+)"/g)){
-  const[gb,bw,h,sp,st,tf]=v.split('|').map(Number); G[n]={gb,bw,h,sp,st,tf};
+for(const g of Object.values(GPU_TABLE)){
+  G[g.name.replace(/ GB$/,'GB')]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops};
 }
 const req=JSON.parse(process.argv[2]);
 const g=G[req.gpuName];
@@ -224,11 +227,11 @@ for (const key of Object.keys(scope.MODEL_PRESETS)) {
 console.log(JSON.stringify(out));
 """
 
-NAMES = {"t4-16": "T4 16GB", "l4-24": "L4 24GB", "rtx4090-24": "RTX 4090 24GB",
-         "rtx5090-32": "RTX 5090 32GB", "a100-40": "A100 40GB",
-         "rtx6000ada-48": "RTX 6000 Ada 48GB", "l40s-48": "L40S 48GB",
-         "a100-80": "A100 80GB", "h100-80": "H100 80GB", "rtxpro-96": "RTX PRO 6000 96GB",
-         "h200-141": "H200 141GB", "b200-192": "B200 192GB"}
+# Derived from the generated table, not hand-maintained. index.html's getGpuSpec()
+# strips the space out of "H100 80 GB" before handing the name to computeInference();
+# mirror that so the oracle runner's lookup keys match.
+def display_name(slug):
+    return gr.GPUS[slug]["name"].replace(" GB", "GB")
 
 # Same field mapping parity.test.py uses — duplicated rather than imported,
 # consistent with every test file here being runnable and readable on its own.
@@ -247,7 +250,7 @@ JS_FIELDS = [
 js_dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
 
 print("\nJS engine as oracle (index.html's own MODEL_PRESETS + computeInference)")
-req_for_js = dict(REQ, bpp=BPP, gpuName=NAMES[REQ["gpu"]])
+req_for_js = dict(REQ, bpp=BPP, gpuName=display_name(REQ["gpu"]))
 proc = subprocess.run(
     ["node", "-e", JS_ORACLE_RUNNER, os.path.join(ROOT, "index.html"), json.dumps(req_for_js)],
     capture_output=True, text=True)

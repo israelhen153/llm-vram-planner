@@ -122,9 +122,12 @@ const gib=html.match(/^const GIB = .+;$/m)[0];
 const perf=html.match(/^const PERF = \{[\s\S]*?\n\};$/m)[0];
 const s=html.indexOf('function computeInference(state) {'), e=html.indexOf('\n}\n',s);
 const ci=new Function(`${gib}\n${perf}\n${html.slice(s,e+2)}; return computeInference;`)();
+const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
+if(!gt) throw new Error('GPU_TABLE not found in index.html');
+const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
-for(const[,v,n]of html.matchAll(/<option value="([\d.|]+)"[^>]*data-n="([^"]+)"/g)){
-  const[gb,bw,h,sp,st,tf]=v.split('|').map(Number); G[n]={gb,bw,h,sp,st,tf};
+for(const g of Object.values(GPU_TABLE)){
+  G[g.name.replace(/ GB$/,'GB')]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
   const g=G[c.gpuName];
@@ -141,13 +144,13 @@ const out=JSON.parse(process.argv[2]).map(c=>{
 console.log(JSON.stringify(out));
 """
 
-NAMES = {"t4-16": "T4 16GB", "l4-24": "L4 24GB", "rtx4090-24": "RTX 4090 24GB",
-         "rtx5090-32": "RTX 5090 32GB", "a100-40": "A100 40GB",
-         "rtx6000ada-48": "RTX 6000 Ada 48GB", "l40s-48": "L40S 48GB",
-         "a100-80": "A100 80GB", "h100-80": "H100 80GB", "rtxpro-96": "RTX PRO 6000 96GB",
-         "h200-141": "H200 141GB", "b200-192": "B200 192GB"}
+# Derived from the table both engines are generated from, not hand-maintained.
+# getGpuSpec() in index.html strips the space out of "H100 80 GB" before handing
+# the name to computeInference(); mirror that so the JS runner keys match.
+def display_name(slug):
+    return GPUS[slug]["name"].replace(" GB", "GB")
 
-js_in = [dict(c, gpuName=NAMES[c["gpu"]], max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
+js_in = [dict(c, gpuName=display_name(c["gpu"]), max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
 proc = subprocess.run(
     ["node", "-e", js_runner, os.path.join(ROOT, "index.html"), json.dumps(js_in)],
     capture_output=True, text=True)
@@ -214,36 +217,73 @@ for case, js in zip(CASES, js_results):
 # confidently wrong numbers, so compare them field by field.
 js_gpus = json.loads(subprocess.run(
     ["node", "-e", """
-const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');const o={};
-for(const[,v,n]of h.matchAll(/<option value="([\\d.|]+)"[^>]*data-n="([^"]+)"/g)){
-  const[gb,bw,hyper,spec,spot,tflops]=v.split('|').map(Number);
-  o[n]={gb,bw,hyper,spec,spot,tflops};
-}
-console.log(JSON.stringify(o));""", os.path.join(ROOT, "index.html")],
+const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');
+const gt=h.match(/^const GPU_TABLE = \\{[\\s\\S]*?\\n\\};$/m);
+if(!gt) throw new Error('GPU_TABLE not found in index.html');
+console.log(JSON.stringify(new Function(`${gt[0]}; return GPU_TABLE;`)()));""",
+     os.path.join(ROOT, "index.html")],
     capture_output=True, text=True).stdout)
 
-py_by_name = {v["name"].replace(" GB", "GB"): v for v in GPUS.values()}
-js_by_name = {k.replace(" GB", "GB"): v for k, v in js_gpus.items()}
-if set(py_by_name) != set(js_by_name):
-    only_py = sorted(set(py_by_name) - set(js_by_name))
-    only_js = sorted(set(js_by_name) - set(py_by_name))
+# Both engines now key on the slug, so compare on that and treat `name` as an
+# ordinary field. Joining on the display name (as this did while the names were
+# hand-authored) made a name drift invisible — it surfaced as a card missing from
+# one side rather than as the mismatch it is.
+if set(GPUS) != set(js_gpus):
+    only_py = sorted(set(GPUS) - set(js_gpus))
+    only_js = sorted(set(js_gpus) - set(GPUS))
     print(f"  FAIL GPU tables list different cards: only-python={only_py} only-js={only_js}")
     failed += 1
 else:
     drift = []
-    for name in sorted(py_by_name):
-        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops"):
-            a, b = py_by_name[name][f], js_by_name[name][f]
-            if abs(a - b) > 1e-9:
-                drift.append(f"{name}.{f}: py={a} js={b}")
+    for key in sorted(GPUS):
+        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "name"):
+            a, b = GPUS[key][f], js_gpus[key][f]
+            differs = (a != b) if f == "name" else (abs(a - b) > 1e-9)
+            if differs:
+                drift.append(f"{key}.{f}: py={a!r} js={b!r}")
     if drift:
         print("  FAIL GPU tables have drifted")
         for d in drift:
             print(f"       {d}")
         failed += 1
     else:
-        print(f"  ok   GPU tables identical across both engines ({len(py_by_name)} cards)")
+        print(f"  ok   GPU tables identical across both engines ({len(GPUS)} cards)")
         passed += 1
+
+# ---- generated blocks vs the JSON they are generated from ------------------
+# data/gpus.json is the contributor-facing source; both engines carry a generated
+# inline copy because a browser on file:// cannot fetch a sibling JSON. Nothing
+# forces anyone to re-run tools/sync_data.py, so assert it here: a failure means
+# either the JSON was edited without re-running the script, or a generated block
+# was hand-edited instead of the source.
+gpus_json = json.load(open(os.path.join(ROOT, "data", "gpus.json")))["data"]
+
+for label, inline in (("generate_report.py", GPUS), ("index.html", js_gpus)):
+    if inline != gpus_json:
+        only_src = sorted(set(gpus_json) - set(inline))
+        only_gen = sorted(set(inline) - set(gpus_json))
+        diffs = [f"{k}.{f}: json={gpus_json[k].get(f)!r} {label}={inline[k].get(f)!r}"
+                 for k in sorted(set(gpus_json) & set(inline))
+                 for f in sorted(set(gpus_json[k]) | set(inline[k]))
+                 if gpus_json[k].get(f) != inline[k].get(f)]
+        print(f"  FAIL {label}'s GPU_TABLE block is out of sync with data/gpus.json")
+        if only_src:
+            print(f"       missing from {label}: {only_src}")
+        if only_gen:
+            print(f"       not in the JSON: {only_gen}")
+        for d in diffs[:10]:
+            print(f"       {d}")
+        print("       run: python3 tools/sync_data.py")
+        failed += 1
+    else:
+        print(f"  ok   {label}'s GPU_TABLE block matches data/gpus.json")
+        passed += 1
+
+# The same guard is owed to BENCHMARK_DATA, which has had this hole since v1.0:
+# tests/model.test.js substitutes benchmarks/data.json in place of the inline copy
+# when testing findBenchmark(), so the suite validates the JSON while the browser
+# runs the inline block, with nothing comparing them. It lands in the commit that
+# fixes the drift it finds, so this one stays green on its own terms.
 
 # ---- emitted vllm command, across a widened matrix -------------------------
 # Everything above compares compute() output — VRAM, throughput, verdicts —

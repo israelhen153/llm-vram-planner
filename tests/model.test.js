@@ -34,12 +34,34 @@ const computeInference = new Function(
 assert.strictEqual(new Function(`${gibDecl[0]}; return GIB;`)(), 1024 ** 3, 'GIB must be 2^30');
 const PERF = new Function(`${perfDecl[0]}; return PERF;`)();
 
-/* ---- GPU specs, parsed from the same <option> values the UI uses ---- */
+/* ---- GPU specs, read from the GPU_TABLE the UI builds its options from ----
+   This used to scrape the <option> markup, which no longer exists — the options
+   are generated from GPU_TABLE at load time. Reading the table directly is also
+   strictly safer: the old regex accepted only digits, dots and pipes, so a single
+   non-numeric field silently dropped a card and surfaced much later as a
+   misleading "unknown GPU" failure. */
+const gpuTableDecl = html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
+assert.ok(gpuTableDecl, 'GPU_TABLE constant not found in index.html');
+const GPU_TABLE = new Function(`${gpuTableDecl[0]}; return GPU_TABLE;`)();
+
+/* getGpuSpec() hands computeInference() the no-space form ("H100 80GB") while the
+   table and the dropdown label carry "H100 80 GB". Mirror that derivation rather
+   than hand-maintaining a second list of names — the tests address a GPU by the
+   name the engine actually sees. */
+const displayName = (g) => g.name.replace(/ GB$/, 'GB');
 const GPUS = {};
-for (const [, val, name] of html.matchAll(/<option value="([\d.|]+)"[^>]*data-n="([^"]+)"/g)) {
-  const [gb, bw, hyper, spec, spot, tflops] = val.split('|').map(Number);
-  GPUS[name] = { gb, bw, hyper, spec, spot, tflops };
-}
+for (const g of Object.values(GPU_TABLE)) GPUS[displayName(g)] = g;
+
+/* Benchmark keys are `<params>b-<gpu slug>`, and the slug half is a GPU_TABLE key
+   by construction. This asserts rather than skipping: an unmatched slug used to be
+   silently dropped, which is exactly how dead benchmark data survives unnoticed. */
+const gpuForKey = (key) => {
+  const m = key.match(/^(\d+)b-(.+)$/);
+  assert.ok(m, `benchmark key "${key}" is not <params>b-<gpu slug>`);
+  const g = GPU_TABLE[m[2]];
+  assert.ok(g, `benchmark key "${key}" names GPU "${m[2]}", which is not in GPU_TABLE`);
+  return { params: Number(m[1]), gpu: displayName(g), gb: g.gb };
+};
 
 const state = (o = {}) => {
   const gpu = GPUS[o.gpu || 'H100 80GB'];
@@ -322,18 +344,11 @@ test('TTFT uses the prefill MFU, not decode\'s', () => {
 console.log('\nAgreement with published benchmarks');
 // The point of the rewrite: compare each estimate against the matching mode.
 // Order-of-magnitude agreement (0.25x-4x) is the bar for a planning tool.
-const GPU_FOR_KEY = {
-  'a100-80': 'A100 80GB', 'a100-40': 'A100 40GB', 'h100-80': 'H100 80GB',
-  'b200-192': 'B200 192GB', 'rtx4090-24': 'RTX 4090 24GB',
-};
 const PREC_BYTES = { bf16: 2, fp8: 1, q4: 0.5, int4: 0.5 };
 
 for (const [key, b] of Object.entries(benchmarks.data)) {
   if (b.estimated) continue; // only score against real measurements
-  const m = key.match(/^(\d+)b-(.+)$/);
-  const params = Number(m[1]);
-  const gpu = GPU_FOR_KEY[m[2]];
-  if (!gpu) continue;
+  const { params, gpu } = gpuForKey(key);
   const gpuCount = key === '70b-h100-80' ? 2 : 1;
   // Benchmarks are run at short context with a full batch; mirror that.
   const s = state({
@@ -359,10 +374,7 @@ test('the declared band matches the measured spread, and is no wider', () => {
   const ratios = [];
   for (const [key, b] of Object.entries(benchmarks.data)) {
     if (b.estimated || b.mode !== 'batch') continue;
-    const m = key.match(/^(\d+)b-(.+)$/);
-    const gpu = GPU_FOR_KEY[m[2]];
-    if (!gpu) continue;
-    const params = Number(m[1]);
+    const { params, gpu } = gpuForKey(key);
     const s = state({
       gpu, params, gpuCount: key === '70b-h100-80' ? 2 : 1,
       bytesPerParam: PREC_BYTES[b.prec] ?? 2,
@@ -453,16 +465,14 @@ test('sizes beyond every bucket still fall back rather than throwing', () => {
 test('every benchmark key is reachable as an exact match', () => {
   // A key nothing can select exactly is dead data — the bucket table and the
   // data file have drifted apart.
-  const GPU = { 'a100-80': ['A100 80GB', 80], 'a100-40': ['A100 40GB', 40],
-                'h100-80': ['H100 80GB', 80], 'b200-192': ['B200 192GB', 192],
-                'rtx4090-24': ['RTX 4090 24GB', 24] };
   const PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
   for (const key of Object.keys(benchmarks.data)) {
-    const m = key.match(/^(\d+b)-(.+)$/);
-    const [name, gb] = GPU[m[2]];
-    const hit = findBenchmark(PROBE[m[1]], name, gb);
+    const { gpu: name, gb } = gpuForKey(key);
+    const size = key.match(/^(\d+b)-/)[1];
+    assert.ok(PROBE[size], `${key} has size bucket "${size}" with no probe value`);
+    const hit = findBenchmark(PROBE[size], name, gb);
     assert.ok(hit && hit.exact && hit.data.tokS === benchmarks.data[key].tokS,
-      `${key} is unreachable: probing ${PROBE[m[1]]}B on ${name} did not return it exactly`);
+      `${key} is unreachable: probing ${PROBE[size]}B on ${name} did not return it exactly`);
   }
 });
 
