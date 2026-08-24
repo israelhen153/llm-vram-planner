@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "last_updated": "2026-08-24",
+    "description": "GPU catalog for the VRAM/throughput planner \u2014 capacity, bandwidth, dense BF16 compute, and 3-tier hourly pricing. Keyed by slug (t4-16, a100-80, ...), the same convention benchmarks/data.json's GPU half of each key uses. index.html's GPU_TABLE and generate_report.py's GPUS are generated from this file by tools/sync_data.py, between 'GPU_TABLE:BEGIN'/'GPU_TABLE:END' marker comments in each \u2014 edit this file, then re-run that script; do not hand-edit the generated blocks. The row schema carries what both engines read plus the structural fields the v1.1 work needs (vendor, devices, form, caps). It is designed to grow \u2014 a vendor tag, a per-board device count, a fabric/interconnect tier are all expected to land on this same table in later commits \u2014 so a new column is the likely shape of that change, not a new table.",
+    "schema": {
+      "gb": "VRAM per card, in GiB. Matches the manufacturer's marketing number, which is already GiB in practice \u2014 nvidia-smi reports an '80 GB' H100 as 79.6 GiB, not 80/1e9*2^30 worth of decimal GB.",
+      "bw": "Memory bandwidth in GB/s, used as the decode roofline's bandwidth term.",
+      "hyper": "Hyperscaler on-demand price in $/hr per GPU (AWS/GCP/Azure).",
+      "spec": "Specialized-cloud price in $/hr per GPU (Lambda, CoreWeave, RunPod and similar).",
+      "spot": "Spot/marketplace price in $/hr per GPU (Vast.ai and similar).",
+      "tflops": "Dense BF16 tensor-core TFLOPS. NVIDIA datasheets headline the 2:4-structured-sparsity number (e.g. H100 SXM '1,979 teraFLOPS* / *With sparsity'); LLM inference does not use structured sparsity, so this is the dense figure \u2014 half the headline number.",
+      "name": "Display name shown in the GPU dropdown's option label and in generate_report.py's PDF/CLI output, e.g. 'H100 80 GB'.",
+      "vendor": "Which vendor's performance constants apply: the key looked up in each engine's PERF table (MBU, decode/prefill MFU, observed band). 'nvidia' today; AMD lands its own entry rather than borrowing NVIDIA's.",
+      "devices": "How many independent accelerator devices one board presents to the runtime. 1 for every card here. Multi-GCD boards \u2014 MI250X is one OAM containing two GCDs \u2014 are one catalog row with devices:2, because that is how they are bought and priced, and the engine multiplies rather than the catalog duplicating a row.",
+      "form": "Board form factor: 'sxm', 'pcie' or 'consumer'. Read today as the NVLink gate \u2014 only sxm boards here carry it \u2014 and the prerequisite for the fabric/domain tier a later commit adds.",
+      "caps": "Architecture-determined capability flags. caps.fp8 is FP8 tensor-core support: false on Turing (T4) and Ampere (A100), true from Ada and Hopper on.",
+      "default": "Present and true on exactly one row: the card the tool selects when nothing else is specified. Derived by both engines instead of each hardcoding a slug."
+    }
+  },
+  "data": {
+    "t4-16":         { "gb": 16,    "bw": 320,    "hyper": 0.76,   "spec": 0.35,   "spot": 0.15,   "tflops": 65,     "name": "T4 16 GB",              "vendor": "nvidia",  "devices": 1,  "form": "pcie",      "caps": { "fp8": false } },
+    "l4-24":         { "gb": 24,    "bw": 300,    "hyper": 0.8,    "spec": 0.43,   "spot": 0.22,   "tflops": 121,    "name": "L4 24 GB",              "vendor": "nvidia",  "devices": 1,  "form": "pcie",      "caps": { "fp8": true } },
+    "rtx4090-24":    { "gb": 24,    "bw": 1008,   "hyper": 0.75,   "spec": 0.45,   "spot": 0.29,   "tflops": 165,    "name": "RTX 4090 24 GB",        "vendor": "nvidia",  "devices": 1,  "form": "consumer",  "caps": { "fp8": true } },
+    "rtx5090-32":    { "gb": 32,    "bw": 1792,   "hyper": 0.89,   "spec": 0.65,   "spot": 0.45,   "tflops": 419,    "name": "RTX 5090 32 GB",        "vendor": "nvidia",  "devices": 1,  "form": "consumer",  "caps": { "fp8": true } },
+    "a100-40":       { "gb": 40,    "bw": 1555,   "hyper": 3.67,   "spec": 1.29,   "spot": 0.63,   "tflops": 312,    "name": "A100 40 GB",            "vendor": "nvidia",  "devices": 1,  "form": "sxm",       "caps": { "fp8": false }, "default": true },
+    "rtx6000ada-48": { "gb": 48,    "bw": 960,    "hyper": 1.5,    "spec": 0.9,    "spot": 0.6,    "tflops": 364,    "name": "RTX 6000 Ada 48 GB",    "vendor": "nvidia",  "devices": 1,  "form": "pcie",      "caps": { "fp8": true } },
+    "l40s-48":       { "gb": 48,    "bw": 864,    "hyper": 2.8,    "spec": 1.3,    "spot": 0.9,    "tflops": 362,    "name": "L40S 48 GB",            "vendor": "nvidia",  "devices": 1,  "form": "pcie",      "caps": { "fp8": true } },
+    "a100-80":       { "gb": 80,    "bw": 2039,   "hyper": 4.5,    "spec": 1.79,   "spot": 0.99,   "tflops": 312,    "name": "A100 80 GB",            "vendor": "nvidia",  "devices": 1,  "form": "sxm",       "caps": { "fp8": false } },
+    "h100-80":       { "gb": 80,    "bw": 3352,   "hyper": 12.3,   "spec": 3.99,   "spot": 2.25,   "tflops": 990,    "name": "H100 80 GB",            "vendor": "nvidia",  "devices": 1,  "form": "sxm",       "caps": { "fp8": true } },
+    "rtxpro-96":     { "gb": 96,    "bw": 1792,   "hyper": 5.0,    "spec": 3.5,    "spot": 2.0,    "tflops": 504,    "name": "RTX PRO 6000 96 GB",    "vendor": "nvidia",  "devices": 1,  "form": "pcie",      "caps": { "fp8": true } },
+    "h200-141":      { "gb": 141,   "bw": 4800,   "hyper": 10.6,   "spec": 3.99,   "spot": 2.5,    "tflops": 990,    "name": "H200 141 GB",           "vendor": "nvidia",  "devices": 1,  "form": "sxm",       "caps": { "fp8": true } },
+    "b200-192":      { "gb": 192,   "bw": 8000,   "hyper": 14.24,  "spec": 5.5,    "spot": 2.12,   "tflops": 2250,   "name": "B200 192 GB",           "vendor": "nvidia",  "devices": 1,  "form": "sxm",       "caps": { "fp8": true } }
+  }
+}

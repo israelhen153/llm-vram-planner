@@ -37,7 +37,7 @@ wanted = {"GIB", "GPUS", "PERF"}
 # cfg/comp as plain dicts and gpu_count as a plain int), so wanted stays as-is —
 # they just need to ride along in the same exec() so build_vllm_cmd can call
 # split_parallelism, plus shlex in ns below since build_vllm_cmd shells out to it.
-wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism"}
+wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -51,6 +51,7 @@ exec(compile(ast.Module(body=nodes, type_ignores=[]), "<gr>", "exec"), ns)
 for name in sorted(wanted):
     assert name in ns, f"{name} not extracted from generate_report.py — is it still a top-level assignment?"
 compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
+supports_nvlink = ns["supports_nvlink"]
 build_vllm_cmd = ns["build_vllm_cmd"]
 
 # ---- run the JS model on the same inputs ----------------------------------
@@ -122,17 +123,27 @@ const gib=html.match(/^const GIB = .+;$/m)[0];
 const perf=html.match(/^const PERF = \{[\s\S]*?\n\};$/m)[0];
 const s=html.indexOf('function computeInference(state) {'), e=html.indexOf('\n}\n',s);
 const ci=new Function(`${gib}\n${perf}\n${html.slice(s,e+2)}; return computeInference;`)();
+const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
+if(!gt) throw new Error('GPU_TABLE not found in index.html');
+const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
+/* Keyed by catalog slug, which is what a case names. Keying by display name
+   meant reproducing getGpuSpec()'s " GB" -> "GB" rewrite here, and this copy
+   was unanchored where the source anchors on /$/ — the two agree on all twelve
+   current names and disagree on the first name with " GB" in the middle of it,
+   as a card carrying a parenthesised suffix would have. */
 const G={};
-for(const[,v,n]of html.matchAll(/<option value="([\d.|]+)"[^>]*data-n="([^"]+)"/g)){
-  const[gb,bw,h,sp,st,tf]=v.split('|').map(Number); G[n]={gb,bw,h,sp,st,tf};
+for(const [k,g] of Object.entries(GPU_TABLE)){
+  G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
+        name:g.name.replace(/ GB$/,'GB')};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
-  const g=G[c.gpuName];
+  const g=G[c.gpu];
+  if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
   return ci({params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
-    gpuSpotCost:g.st,gpuName:c.gpuName,
+    gpuSpotCost:g.st,gpuName:g.name,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
@@ -141,13 +152,7 @@ const out=JSON.parse(process.argv[2]).map(c=>{
 console.log(JSON.stringify(out));
 """
 
-NAMES = {"t4-16": "T4 16GB", "l4-24": "L4 24GB", "rtx4090-24": "RTX 4090 24GB",
-         "rtx5090-32": "RTX 5090 32GB", "a100-40": "A100 40GB",
-         "rtx6000ada-48": "RTX 6000 Ada 48GB", "l40s-48": "L40S 48GB",
-         "a100-80": "A100 80GB", "h100-80": "H100 80GB", "rtxpro-96": "RTX PRO 6000 96GB",
-         "h200-141": "H200 141GB", "b200-192": "B200 192GB"}
-
-js_in = [dict(c, gpuName=NAMES[c["gpu"]], max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
+js_in = [dict(c, max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
 proc = subprocess.run(
     ["node", "-e", js_runner, os.path.join(ROOT, "index.html"), json.dumps(js_in)],
     capture_output=True, text=True)
@@ -212,38 +217,181 @@ for case, js in zip(CASES, js_results):
 
 # The GPU tables are maintained twice. Drift there is silent and produces
 # confidently wrong numbers, so compare them field by field.
-js_gpus = json.loads(subprocess.run(
+js_side = json.loads(subprocess.run(
     ["node", "-e", """
-const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');const o={};
-for(const[,v,n]of h.matchAll(/<option value="([\\d.|]+)"[^>]*data-n="([^"]+)"/g)){
-  const[gb,bw,hyper,spec,spot,tflops]=v.split('|').map(Number);
-  o[n]={gb,bw,hyper,spec,spot,tflops};
-}
-console.log(JSON.stringify(o));""", os.path.join(ROOT, "index.html")],
+const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');
+const gt=h.match(/^const GPU_TABLE = \\{[\\s\\S]*?\\n\\};$/m);
+if(!gt) throw new Error('GPU_TABLE not found in index.html');
+const T=new Function(`${gt[0]}; return GPU_TABLE;`)();
+const fn=h.match(/^function supportsNVLink\\(gpu\\) \\{.*\\}$/m);
+if(!fn) throw new Error('supportsNVLink() not found in index.html');
+const supportsNVLink=new Function(`${fn[0]}; return supportsNVLink;`)();
+const nvlink={};
+for(const [k,g] of Object.entries(T)) nvlink[k]=supportsNVLink(g);
+const bd=h.match(/^const BENCHMARK_DATA = \\{[\\s\\S]*?\\n\\};$/m);
+if(!bd) throw new Error('BENCHMARK_DATA not found in index.html');
+const benchmarks=new Function(`${bd[0]}; return BENCHMARK_DATA;`)();
+console.log(JSON.stringify({table:T, nvlink, benchmarks}));""",
+     os.path.join(ROOT, "index.html")],
     capture_output=True, text=True).stdout)
+js_gpus = js_side["table"]
 
-py_by_name = {v["name"].replace(" GB", "GB"): v for v in GPUS.values()}
-js_by_name = {k.replace(" GB", "GB"): v for k, v in js_gpus.items()}
-if set(py_by_name) != set(js_by_name):
-    only_py = sorted(set(py_by_name) - set(js_by_name))
-    only_js = sorted(set(js_by_name) - set(py_by_name))
+# Both engines now key on the slug, so compare on that and treat `name` as an
+# ordinary field. Joining on the display name (as this did while the names were
+# hand-authored) made a name drift invisible — it surfaced as a card missing from
+# one side rather than as the mismatch it is.
+if set(GPUS) != set(js_gpus):
+    only_py = sorted(set(GPUS) - set(js_gpus))
+    only_js = sorted(set(js_gpus) - set(GPUS))
     print(f"  FAIL GPU tables list different cards: only-python={only_py} only-js={only_js}")
     failed += 1
 else:
     drift = []
-    for name in sorted(py_by_name):
-        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops"):
-            a, b = py_by_name[name][f], js_by_name[name][f]
-            if abs(a - b) > 1e-9:
-                drift.append(f"{name}.{f}: py={a} js={b}")
+    for key in sorted(GPUS):
+        # Numeric fields compare with a tolerance; everything else — names,
+        # vendor, form, the caps object, the optional default flag — is an
+        # exact match, and .get() rather than [] so a field present on one
+        # side only reads as drift instead of raising.
+        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
+                  "name", "vendor", "devices", "form", "caps", "default"):
+            a, b = GPUS[key].get(f), js_gpus[key].get(f)
+            numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
+            differs = (abs(a - b) > 1e-9) if numeric else (a != b)
+            if differs:
+                drift.append(f"{key}.{f}: py={a!r} js={b!r}")
     if drift:
         print("  FAIL GPU tables have drifted")
         for d in drift:
             print(f"       {d}")
         failed += 1
     else:
-        print(f"  ok   GPU tables identical across both engines ({len(py_by_name)} cards)")
+        print(f"  ok   GPU tables identical across both engines ({len(GPUS)} cards)")
         passed += 1
+
+# ---- generated blocks vs the JSON they are generated from ------------------
+# data/gpus.json is the contributor-facing source; both engines carry a generated
+# inline copy because a browser on file:// cannot fetch a sibling JSON. Nothing
+# forces anyone to re-run tools/sync_data.py, so assert it here: a failure means
+# either the JSON was edited without re-running the script, or a generated block
+# was hand-edited instead of the source.
+gpus_json = json.load(open(os.path.join(ROOT, "data", "gpus.json")))["data"]
+
+for label, inline in (("generate_report.py", GPUS), ("index.html", js_gpus)):
+    if inline != gpus_json:
+        only_src = sorted(set(gpus_json) - set(inline))
+        only_gen = sorted(set(inline) - set(gpus_json))
+        diffs = [f"{k}.{f}: json={gpus_json[k].get(f)!r} {label}={inline[k].get(f)!r}"
+                 for k in sorted(set(gpus_json) & set(inline))
+                 for f in sorted(set(gpus_json[k]) | set(inline[k]))
+                 if gpus_json[k].get(f) != inline[k].get(f)]
+        print(f"  FAIL {label}'s GPU_TABLE block is out of sync with data/gpus.json")
+        if only_src:
+            print(f"       missing from {label}: {only_src}")
+        if only_gen:
+            print(f"       not in the JSON: {only_gen}")
+        for d in diffs[:10]:
+            print(f"       {d}")
+        print("       run: python3 tools/sync_data.py")
+        failed += 1
+    else:
+        print(f"  ok   {label}'s GPU_TABLE block matches data/gpus.json")
+        passed += 1
+
+# ---- the NVLink gate, card by card ---------------------------------------
+# Both engines decide whether a card can have NVLink at all, and both decide it
+# from the catalog's `form`. If they ever disagree, the web tool and the PDF
+# apply different interconnect scaling to the same hardware — a 0.85 factor on
+# one side and a PCIe curve on the other — with nothing else to catch it: the
+# compute() diff above is driven by cases that state nvlink explicitly.
+nv_drift = [f"{k}: py={supports_nvlink(GPUS[k])} js={js_side['nvlink'].get(k)}"
+            for k in sorted(GPUS)
+            if supports_nvlink(GPUS[k]) != js_side["nvlink"].get(k)]
+if nv_drift:
+    print("  FAIL the two engines disagree about which cards have NVLink")
+    for d in nv_drift:
+        print(f"       {d}")
+    failed += 1
+else:
+    print(f"  ok   both engines gate NVLink on the same cards ({len(GPUS)} cards)")
+    passed += 1
+
+# Two-sided on purpose: a gate that answers the same way for every card would
+# pass the agreement check above while being useless. The catalog must contain
+# both kinds, and every answer must follow `form` rather than the card's name.
+with_nv = sorted(k for k in GPUS if supports_nvlink(GPUS[k]))
+without_nv = sorted(k for k in GPUS if not supports_nvlink(GPUS[k]))
+by_form = sorted(k for k, g in GPUS.items() if g["form"] == "sxm")
+if not with_nv or not without_nv:
+    print(f"  FAIL the NVLink gate is not discriminating: with={with_nv} without={without_nv}")
+    failed += 1
+elif with_nv != by_form:
+    print(f"  FAIL NVLink support does not track `form`: gate={with_nv} sxm={by_form}")
+    failed += 1
+else:
+    print(f"  ok   NVLink tracks `form`: {len(with_nv)} cards have it, {len(without_nv)} do not")
+    passed += 1
+
+# ---- the same guard, for the benchmark table ------------------------------
+# BENCHMARK_DATA had this hole from v1.0 until the block became generated:
+# tests/model.test.js substituted benchmarks/data.json in place of the inline
+# copy when testing findBenchmark(), so the suite validated the JSON while the
+# browser ran the inline block and nothing compared them. They had drifted by
+# 16 fields across 13 rows — every `mode`, every `estimated`, every date and
+# url, plus six softened `src` strings — which is how two entries measured
+# single-stream were scored against an aggregate estimate on screen.
+bench_json = json.load(open(os.path.join(ROOT, "benchmarks", "data.json")))["data"]
+js_bench = js_side["benchmarks"]
+
+if js_bench != bench_json:
+    only_src = sorted(set(bench_json) - set(js_bench))
+    only_gen = sorted(set(js_bench) - set(bench_json))
+    diffs = [f"{k}.{f}: json={bench_json[k].get(f)!r} index.html={js_bench[k].get(f)!r}"
+             for k in sorted(set(bench_json) & set(js_bench))
+             for f in sorted(set(bench_json[k]) | set(js_bench[k]))
+             if bench_json[k].get(f) != js_bench[k].get(f)]
+    print("  FAIL index.html's BENCHMARK_DATA block is out of sync with benchmarks/data.json")
+    if only_src:
+        print(f"       missing from index.html: {only_src}")
+    if only_gen:
+        print(f"       not in the JSON: {only_gen}")
+    for d in diffs[:10]:
+        print(f"       {d}")
+    if len(diffs) > 10:
+        print(f"       ... and {len(diffs) - 10} more")
+    print("       run: python3 tools/sync_data.py")
+    failed += 1
+else:
+    print(f"  ok   index.html's BENCHMARK_DATA block matches benchmarks/data.json "
+          f"({len(bench_json)} entries)")
+    passed += 1
+
+# The fields that decide how an entry is *presented* rather than what it says.
+# Their absence is what made the drift invisible: a missing `mode` reads as
+# 'batch' at the call site and a missing `estimated` reads as "measured", so
+# both failure modes are silent and confident.
+presentation = [f"{k}: {f}" for k, e in sorted(bench_json.items())
+                for f in ("mode",) if f not in js_bench.get(k, {})]
+if presentation:
+    print("  FAIL entries in index.html are missing the fields that decide how they render")
+    for m in presentation[:10]:
+        print(f"       {m}")
+    failed += 1
+else:
+    est_json = {k for k, e in bench_json.items() if e.get("estimated")}
+    est_js = {k for k, e in js_bench.items() if e.get("estimated")}
+    single_js = {k for k, e in js_bench.items() if e.get("mode") == "single"}
+    if est_json != est_js:
+        print(f"  FAIL estimated entries differ: json={sorted(est_json)} index.html={sorted(est_js)}")
+        failed += 1
+    elif not est_js or not single_js:
+        print(f"  FAIL the presentation fields are not discriminating: "
+              f"estimated={sorted(est_js)} single={sorted(single_js)}")
+        failed += 1
+    else:
+        print(f"  ok   index.html carries mode on every entry, {len(est_js)} estimated "
+              f"and {len(single_js)} single-stream, same as the JSON")
+        passed += 1
+
 
 # ---- emitted vllm command, across a widened matrix -------------------------
 # Everything above compares compute() output — VRAM, throughput, verdicts —

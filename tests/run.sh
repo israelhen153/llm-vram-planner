@@ -13,4 +13,7 @@ python3 tests/parity.test.py
 echo "== report generator cfg builders (generate_report.py) =="
 python3 tests/report.test.py
 
+echo "== generated data blocks (tools/sync_data.py) =="
+python3 tests/sync.test.py
+
 echo "All suites passed."

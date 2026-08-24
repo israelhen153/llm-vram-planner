@@ -34,12 +34,34 @@ const computeInference = new Function(
 assert.strictEqual(new Function(`${gibDecl[0]}; return GIB;`)(), 1024 ** 3, 'GIB must be 2^30');
 const PERF = new Function(`${perfDecl[0]}; return PERF;`)();
 
-/* ---- GPU specs, parsed from the same <option> values the UI uses ---- */
+/* ---- GPU specs, read from the GPU_TABLE the UI builds its options from ----
+   This used to scrape the <option> markup, which no longer exists — the options
+   are generated from GPU_TABLE at load time. Reading the table directly is also
+   strictly safer: the old regex accepted only digits, dots and pipes, so a single
+   non-numeric field silently dropped a card and surfaced much later as a
+   misleading "unknown GPU" failure. */
+const gpuTableDecl = html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
+assert.ok(gpuTableDecl, 'GPU_TABLE constant not found in index.html');
+const GPU_TABLE = new Function(`${gpuTableDecl[0]}; return GPU_TABLE;`)();
+
+/* getGpuSpec() hands computeInference() the no-space form ("H100 80GB") while the
+   table and the dropdown label carry "H100 80 GB". Mirror that derivation rather
+   than hand-maintaining a second list of names — the tests address a GPU by the
+   name the engine actually sees. */
+const displayName = (g) => g.name.replace(/ GB$/, 'GB');
 const GPUS = {};
-for (const [, val, name] of html.matchAll(/<option value="([\d.|]+)"[^>]*data-n="([^"]+)"/g)) {
-  const [gb, bw, hyper, spec, spot, tflops] = val.split('|').map(Number);
-  GPUS[name] = { gb, bw, hyper, spec, spot, tflops };
-}
+for (const g of Object.values(GPU_TABLE)) GPUS[displayName(g)] = g;
+
+/* Benchmark keys are `<params>b-<gpu slug>`, and the slug half is a GPU_TABLE key
+   by construction. This asserts rather than skipping: an unmatched slug used to be
+   silently dropped, which is exactly how dead benchmark data survives unnoticed. */
+const gpuForKey = (key) => {
+  const m = key.match(/^(\d+)b-(.+)$/);
+  assert.ok(m, `benchmark key "${key}" is not <params>b-<gpu slug>`);
+  const g = GPU_TABLE[m[2]];
+  assert.ok(g, `benchmark key "${key}" names GPU "${m[2]}", which is not in GPU_TABLE`);
+  return { params: Number(m[1]), slug: m[2], gpu: displayName(g), gb: g.gb };
+};
 
 const state = (o = {}) => {
   const gpu = GPUS[o.gpu || 'H100 80GB'];
@@ -322,18 +344,11 @@ test('TTFT uses the prefill MFU, not decode\'s', () => {
 console.log('\nAgreement with published benchmarks');
 // The point of the rewrite: compare each estimate against the matching mode.
 // Order-of-magnitude agreement (0.25x-4x) is the bar for a planning tool.
-const GPU_FOR_KEY = {
-  'a100-80': 'A100 80GB', 'a100-40': 'A100 40GB', 'h100-80': 'H100 80GB',
-  'b200-192': 'B200 192GB', 'rtx4090-24': 'RTX 4090 24GB',
-};
 const PREC_BYTES = { bf16: 2, fp8: 1, q4: 0.5, int4: 0.5 };
 
 for (const [key, b] of Object.entries(benchmarks.data)) {
   if (b.estimated) continue; // only score against real measurements
-  const m = key.match(/^(\d+)b-(.+)$/);
-  const params = Number(m[1]);
-  const gpu = GPU_FOR_KEY[m[2]];
-  if (!gpu) continue;
+  const { params, gpu } = gpuForKey(key);
   const gpuCount = key === '70b-h100-80' ? 2 : 1;
   // Benchmarks are run at short context with a full batch; mirror that.
   const s = state({
@@ -359,10 +374,7 @@ test('the declared band matches the measured spread, and is no wider', () => {
   const ratios = [];
   for (const [key, b] of Object.entries(benchmarks.data)) {
     if (b.estimated || b.mode !== 'batch') continue;
-    const m = key.match(/^(\d+)b-(.+)$/);
-    const gpu = GPU_FOR_KEY[m[2]];
-    if (!gpu) continue;
-    const params = Number(m[1]);
+    const { params, gpu } = gpuForKey(key);
     const s = state({
       gpu, params, gpuCount: key === '70b-h100-80' ? 2 : 1,
       bytesPerParam: PREC_BYTES[b.prec] ?? 2,
@@ -391,27 +403,46 @@ test('the band scales the aggregate ceiling and nothing else', () => {
   assert.ok(c.aggregateObservedHiTokS < c.aggregateTokS, 'the band must sit below the ceiling');
 });
 
+/* One parameter count per bucket that lands squarely inside it — used to probe
+   the lookup from the data side. Mirrors BUCKET_PARAMS in index.html except for
+   '8b' and '32b', where the bucket's representative value sits on a boundary. */
+const BUCKET_PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
+
 console.log('\nBenchmark lookup');
 const fbStart = html.indexOf('function findBenchmark(');
 assert.notStrictEqual(fbStart, -1, 'findBenchmark() not found');
 const fbEnd = html.indexOf('\n}\n', fbStart);
 const bucketDecl = html.match(/^const BUCKET_PARAMS = .+;$/m);
 assert.ok(bucketDecl, 'BUCKET_PARAMS not found in index.html');
+/* The inline block, not benchmarks/data.json. This test file used to substitute
+   the JSON in place of the inline copy here, which meant the suite validated a
+   table the browser never runs — and the two had drifted by 16 fields, including
+   every `mode`, so the panel scored single-stream measurements against an
+   aggregate estimate with nothing to catch it. The block is generated from the
+   JSON now and tests/parity.test.py compares them; this reads what ships. */
+const benchDecl = html.match(/^const BENCHMARK_DATA = \{[\s\S]*?\n\};$/m);
+assert.ok(benchDecl, 'BENCHMARK_DATA constant not found in index.html');
+const INLINE_BENCHMARKS = new Function(`${benchDecl[0]}; return BENCHMARK_DATA;`)();
 const findBenchmark = new Function(
-  `const BENCHMARK_DATA = ${JSON.stringify(benchmarks.data)};
+  `${benchDecl[0]}
    ${bucketDecl[0]}
    ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
 )();
 
+test('the inline benchmark table is the one in benchmarks/data.json', () => {
+  assert.deepStrictEqual(INLINE_BENCHMARKS, benchmarks.data,
+    'index.html and benchmarks/data.json disagree — run: python3 tools/sync_data.py');
+});
+
 test('buckets match the table documented in CONTRIBUTING.md', () => {
   // 7b covers 5-7B, 8b covers 8-10B. These were inverted.
-  const a = findBenchmark(7, 'A100 80GB', 80), b = findBenchmark(8, 'A100 80GB', 80);
+  const a = findBenchmark(7, 'a100-80'), b = findBenchmark(8, 'a100-80');
   assert.ok(a.exact && b.exact, 'both should be exact matches');
   assert.strictEqual(a.data.tokS, benchmarks.data['7b-a100-80'].tokS);
   assert.strictEqual(b.data.tokS, benchmarks.data['8b-a100-80'].tokS);
 });
 test('an unmatched size degrades to the nearest entry on the SAME GPU', () => {
-  const hit = findBenchmark(26, 'A100 40GB', 40);
+  const hit = findBenchmark(26, 'a100-40');
   assert.ok(hit, 'should fall back rather than return nothing');
   assert.strictEqual(hit.exact, false, 'must be flagged as inexact');
   assert.strictEqual(hit.requestedParams, 26);
@@ -420,10 +451,10 @@ test('an unmatched size degrades to the nearest entry on the SAME GPU', () => {
 });
 test('the fallback picks the closest bucket, not just any', () => {
   // H100 has 8b/14b/27b/70b. 30B lands in the 27b bucket, which exists.
-  assert.ok(findBenchmark(30, 'H100 80GB', 80).exact, '30B is covered by the 27b bucket');
+  assert.ok(findBenchmark(30, 'h100-80').exact, '30B is covered by the 27b bucket');
   // 35B lands in the 32b bucket, which has no H100 entry — a genuine gap.
   // Candidates are 27 (dist 8) and 70 (dist 35), so it must choose 27.
-  const gap = findBenchmark(35, 'H100 80GB', 80);
+  const gap = findBenchmark(35, 'h100-80');
   assert.strictEqual(gap.exact, false);
   assert.strictEqual(gap.nearestParams, 27, 'must pick 27B over 70B on distance');
   assert.strictEqual(gap.slower, true, 'a 35B model is slower than a 27B measurement');
@@ -431,38 +462,101 @@ test('the fallback picks the closest bucket, not just any', () => {
 test('the fallback reports direction correctly in both directions', () => {
   // 4B on B200: only a 27b entry exists, so the nearest match is larger and
   // the user's model is the faster one.
-  const smaller = findBenchmark(4, 'B200 192GB', 192);
+  const smaller = findBenchmark(4, 'b200-192');
   assert.strictEqual(smaller.slower, false, '4B is faster than the 27B match');
 });
 test('fallback never crosses to a different GPU', () => {
-  const hit = findBenchmark(4, 'B200 192GB', 192);
+  const hit = findBenchmark(4, 'b200-192');
   assert.ok(hit, 'B200 has a 27b entry to fall back to');
   assert.strictEqual(hit.exact, false);
   assert.strictEqual(hit.data.tokS, benchmarks.data['27b-b200-192'].tokS,
     'must stay on the B200, not borrow an A100 number');
 });
 test('a GPU with no data at all returns nothing', () => {
-  assert.strictEqual(findBenchmark(8, 'T4 16GB', 16), null);
-  assert.strictEqual(findBenchmark(8, 'L40S 48GB', 48), null);
+  assert.strictEqual(findBenchmark(8, 't4-16'), null);
+  assert.strictEqual(findBenchmark(8, 'l40s-48'), null);
+});
+test('the cards the old name map could never reach now answer from the data', () => {
+  /* T4, RTX 6000 Ada and RTX PRO 6000 matched no branch of the display-name
+     chain findBenchmark() used to open with, so they returned null before a
+     single key was examined — contributed measurements for them would not have
+     rendered. They have no data today, so the answer is still "nothing", but it
+     is now the data saying so: adding a key for one of them is enough to make it
+     appear, which is what CONTRIBUTING.md promises. */
+  for (const slug of ['t4-16', 'rtx6000ada-48', 'rtxpro-96']) {
+    assert.ok(GPU_TABLE[slug], `${slug} missing from GPU_TABLE`);
+    const keys = Object.keys(benchmarks.data).filter(k => k.endsWith(`-${slug}`));
+    assert.strictEqual(keys.length, 0, `${slug} now has data — this test needs updating`);
+    assert.strictEqual(findBenchmark(8, slug), null, `${slug} should report no benchmark`);
+  }
+});
+test('a card only reachable by slug resolves once data exists for it', () => {
+  /* The point of the change: the lookup is decided by the data, not by whether
+     someone remembered to add a branch. Probe with a synthetic table so the
+     assertion does not depend on what benchmarks/data.json happens to hold. */
+  const withData = new Function(
+    `const BENCHMARK_DATA = ${JSON.stringify({ '8b-rtxpro-96': { tokS: 4242, mode: 'batch', src: 'synthetic', note: 'test', prec: 'bf16' } })};
+     ${bucketDecl[0]}
+     ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
+  )();
+  const hit = withData(8, 'rtxpro-96');
+  assert.ok(hit && hit.exact, 'RTX PRO 6000 should match its own entry');
+  assert.strictEqual(hit.data.tokS, 4242);
 });
 test('sizes beyond every bucket still fall back rather than throwing', () => {
-  const hit = findBenchmark(400, 'H100 80GB', 80);
+  const hit = findBenchmark(400, 'h100-80');
   assert.ok(hit && hit.exact === false, '400B has no bucket but should degrade');
   assert.strictEqual(hit.nearestParams, 70);
 });
 test('every benchmark key is reachable as an exact match', () => {
   // A key nothing can select exactly is dead data — the bucket table and the
   // data file have drifted apart.
-  const GPU = { 'a100-80': ['A100 80GB', 80], 'a100-40': ['A100 40GB', 40],
-                'h100-80': ['H100 80GB', 80], 'b200-192': ['B200 192GB', 192],
-                'rtx4090-24': ['RTX 4090 24GB', 24] };
-  const PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
+  const PROBE = BUCKET_PROBE;
   for (const key of Object.keys(benchmarks.data)) {
-    const m = key.match(/^(\d+b)-(.+)$/);
-    const [name, gb] = GPU[m[2]];
-    const hit = findBenchmark(PROBE[m[1]], name, gb);
+    const { slug, gpu: name } = gpuForKey(key);
+    const size = key.match(/^(\d+b)-/)[1];
+    assert.ok(PROBE[size], `${key} has size bucket "${size}" with no probe value`);
+    const hit = findBenchmark(PROBE[size], slug);
     assert.ok(hit && hit.exact && hit.data.tokS === benchmarks.data[key].tokS,
-      `${key} is unreachable: probing ${PROBE[m[1]]}B on ${name} did not return it exactly`);
+      `${key} is unreachable: probing ${PROBE[size]}B on ${name} did not return it exactly`);
+  }
+});
+
+console.log('\nThe benchmark panel compares like with like');
+/* The drift repro, kept as a test rather than a scratch script.
+   8b-rtx4090-24 is a single-stream llama.cpp measurement: 104 tok/s for one
+   user. The inline table carried no `mode`, the panel reads `b.mode || 'batch'`,
+   so it scored that measurement against the *aggregate at full batch* estimate
+   and reported 159% — a tool that says it is beating a published benchmark by
+   60% when it is actually 61% short of it. The comparison the panel makes is
+   reproduced here from the same inputs. */
+test('an 8B on an RTX 4090 is scored single-stream at ~39%, not batch at ~159%', () => {
+  const b = INLINE_BENCHMARKS['8b-rtx4090-24'];
+  assert.strictEqual(b.mode, 'single', 'this entry is a single-user llama.cpp figure');
+  const c = computeInference(state({ gpu: 'RTX 4090 24GB', params: 8, layers: 32 }));
+
+  // The panel's own rule: mode picks which of our two numbers is comparable.
+  const ours = b.mode === 'single' ? c.singleStreamTokS : c.saturatedTokS;
+  const shown = Math.round(ours / b.tokS * 100);
+  assert.strictEqual(ours, c.singleStreamTokS, 'must score against the single-stream estimate');
+  assert.ok(shown >= 35 && shown <= 45, `single-stream comparison showed ${shown}%, expected ~39%`);
+
+  // And what the missing field used to produce, so the flip is pinned in both
+  // directions: if this ever matches the line above, the fix has come undone.
+  const wasShown = Math.round(c.saturatedTokS / b.tokS * 100);
+  assert.ok(wasShown > 140, `the pre-fix batch comparison should be ~159%, got ${wasShown}%`);
+  assert.notStrictEqual(shown, wasShown, 'the two modes must not produce the same number');
+});
+test('every entry that says it is estimated arrives at the panel saying so', () => {
+  // `estimated` is what renders "estimated, not measured" next to the figure.
+  // It was absent from all 13 inline entries, so six extrapolated numbers were
+  // presented exactly like measured ones.
+  const flagged = Object.keys(INLINE_BENCHMARKS).filter(k => INLINE_BENCHMARKS[k].estimated);
+  assert.strictEqual(flagged.length, 6, `expected 6 estimated entries, got ${flagged.length}`);
+  for (const key of flagged) {
+    const hit = findBenchmark(BUCKET_PROBE[key.match(/^(\d+b)-/)[1]], key.replace(/^\d+b-/, ''));
+    assert.ok(hit, `${key} did not resolve`);
+    assert.strictEqual(hit.data.estimated, true, `${key} lost its estimated flag on the way out`);
   }
 });
 
@@ -510,6 +604,146 @@ test('links shared before the token format resolve as they always did', () => {
   for (const val of ['2', '1', '0.5', '0.63', '1.1']) {
     assert.strictEqual(resolve(val), PREC_OPTS.find(o => o.value === val), `legacy bpp=${val} moved`);
   }
+});
+
+console.log('\nNVLink is a property of the card');
+/* The interconnect dropdown defaults to "NVLink / NVSwitch" and seven of the
+   twelve catalogued cards have no NVLink at all, so that default silently
+   applied a 0.85 multi-GPU scaling factor to consumer and PCIe boards. The gate
+   is a one-line function over the catalog's `form`, extracted here from source
+   for the same reason PERF and GIB are: a change to the real rule must not be
+   able to pass a test that carries its own copy. */
+const nvDecl = html.match(/^function supportsNVLink\(gpu\) \{.*\}$/m);
+assert.ok(nvDecl, 'supportsNVLink() not found in index.html');
+const supportsNVLink = new Function(`${nvDecl[0]}; return supportsNVLink;`)();
+
+test('NVLink follows the catalog form, not the card name', () => {
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    assert.strictEqual(supportsNVLink(gpu), gpu.form === 'sxm',
+      `${key} (form=${gpu.form}) answered ${supportsNVLink(gpu)}`);
+  }
+});
+test('the consumer and PCIe boards are refused NVLink', () => {
+  // Named explicitly: this is the live bug, and a catalog edit that quietly
+  // relabels one of these as sxm should have to change this list too.
+  for (const key of ['t4-16', 'l4-24', 'rtx4090-24', 'rtx5090-32',
+                     'rtx6000ada-48', 'l40s-48', 'rtxpro-96']) {
+    assert.ok(GPU_TABLE[key], `${key} missing from GPU_TABLE`);
+    assert.strictEqual(supportsNVLink(GPU_TABLE[key]), false, `${key} was granted NVLink`);
+  }
+});
+test('the SXM boards still have it', () => {
+  for (const key of ['a100-40', 'a100-80', 'h100-80', 'h200-141', 'b200-192']) {
+    assert.ok(GPU_TABLE[key], `${key} missing from GPU_TABLE`);
+    assert.strictEqual(supportsNVLink(GPU_TABLE[key]), true, `${key} lost NVLink`);
+  }
+});
+
+console.log('\nThe catalog names its own default card');
+test('exactly one row carries default:true, and DEFAULT_GPU_KEY is derived from it', () => {
+  const flagged = Object.keys(GPU_TABLE).filter(k => GPU_TABLE[k].default);
+  assert.strictEqual(flagged.length, 1, `rows flagged default: ${flagged.join(', ') || 'none'}`);
+  const decl = html.match(/^const DEFAULT_GPU_KEY = .+;$/m);
+  assert.ok(decl, 'DEFAULT_GPU_KEY not found in index.html');
+  const key = new Function(`const GPU_TABLE = ${JSON.stringify(GPU_TABLE)}; ${decl[0]}; return DEFAULT_GPU_KEY;`)();
+  assert.strictEqual(key, flagged[0], `DEFAULT_GPU_KEY=${key} but the catalog flags ${flagged[0]}`);
+});
+test('every row carries the structural fields the engines read', () => {
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    assert.strictEqual(typeof gpu.vendor, 'string', `${key}.vendor`);
+    assert.strictEqual(typeof gpu.devices, 'number', `${key}.devices`);
+    assert.ok(['sxm', 'pcie', 'consumer'].includes(gpu.form), `${key}.form=${gpu.form}`);
+    assert.strictEqual(typeof gpu.caps?.fp8, 'boolean', `${key}.caps.fp8`);
+  }
+});
+
+console.log('\nCONTRIBUTING.md describes the tool that exists');
+const contributing = fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8');
+test('the documented parameter buckets are the ones the lookup can select', () => {
+  // A bucket documented but unreachable is an invitation to contribute dead
+  // data: 100b/400b/671b were listed for a year and could never match.
+  const documented = [...contributing.matchAll(/^\| `(\d+b)` \| /gm)].map(m => m[1]);
+  const selectable = Object.keys(new Function(`${bucketDecl[0]}; return BUCKET_PARAMS;`)());
+  assert.deepStrictEqual(documented, selectable,
+    `CONTRIBUTING.md lists [${documented}] but findBenchmark can select [${selectable}]`);
+});
+test('CONTRIBUTING.md carries no second copy of the GPU catalog', () => {
+  // The catalog moved into data/gpus.json; a table here would drift the moment
+  // a row is added, and it is the fifth such copy this refactor removed.
+  const copied = Object.keys(GPU_TABLE).filter(k => contributing.includes(`\`${k}\``));
+  assert.strictEqual(copied.length, 0,
+    `CONTRIBUTING.md hardcodes catalog keys: ${copied.join(', ')}`);
+});
+test('CONTRIBUTING.md names objects that exist in the source', () => {
+  for (const name of ['MODEL_PRESETS', 'BUCKET_PARAMS', 'findBenchmark']) {
+    if (!contributing.includes(name)) continue;
+    assert.ok(html.includes(name), `CONTRIBUTING.md names ${name}, which is not in index.html`);
+  }
+  assert.ok(!/`PR` object/.test(contributing), 'the `PR` object has never existed');
+});
+
+console.log('\nShared links resolve to the card they named');
+const legacyDecl = html.match(/^function legacyGpuKeyFromPipeString\(raw\) \{[\s\S]*?\n\}$/m);
+assert.ok(legacyDecl, 'legacyGpuKeyFromPipeString() not found in index.html');
+const paramDecl = html.match(/^function gpuKeyFromParam\(raw\) \{[\s\S]*?\n\}$/m);
+assert.ok(paramDecl, 'gpuKeyFromParam() not found in index.html');
+const gpuKeyFromParam = new Function(
+  `const GPU_TABLE = ${JSON.stringify(GPU_TABLE)};
+   ${legacyDecl[0]}
+   ${paramDecl[0]}
+   return gpuKeyFromParam;`
+)();
+const legacyString = (g, prices) => [g.gb, g.bw, ...(prices || [g.hyper, g.spec, g.spot]), g.tflops].join('|');
+
+test('capacity, bandwidth and TFLOPS identify a card uniquely', () => {
+  // What the legacy decoder joins on. A new row colliding on all three would
+  // make old links ambiguous, and the decoder would return whichever came first.
+  const seen = new Map();
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    const id = `${g.gb}|${g.bw}|${g.tflops}`;
+    assert.ok(!seen.has(id), `${key} and ${seen.get(id)} share gb/bw/tflops (${id})`);
+    seen.set(id, key);
+  }
+});
+test('a link shared under the old format still resolves to its own card', () => {
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    assert.strictEqual(gpuKeyFromParam(legacyString(g)), key, `${key} did not round-trip`);
+  }
+});
+test('a price revision does not invalidate links shared before it', () => {
+  // The reason for the change: prices are a market snapshot this catalog
+  // revises, so joining on them meant every old link broke on the next update
+  // — silently, landing on the default card.
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    const repriced = legacyString(g, [g.hyper + 1.11, g.spec + 0.5, g.spot * 2]);
+    assert.strictEqual(gpuKeyFromParam(repriced), key, `${key} was lost when its prices changed`);
+  }
+});
+test('an inherited property name is not mistaken for a catalog key', () => {
+  // GPU_TABLE[raw] is truthy for these, so they took the already-a-key branch,
+  // matched no <option>, and left the default card silently selected.
+  for (const raw of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+    assert.strictEqual(gpuKeyFromParam(raw), null, `"${raw}" resolved to a card`);
+  }
+});
+test('a card the catalog no longer has resolves to nothing, not to something else', () => {
+  assert.strictEqual(gpuKeyFromParam('64|1600|2|1|0.5|181'), null, 'unknown numbers matched a row');
+  assert.strictEqual(gpuKeyFromParam('not-a-key'), null);
+  assert.strictEqual(gpuKeyFromParam('16|320|0.76|0.35|0.15'), null, 'a five-field string is malformed');
+  assert.strictEqual(gpuKeyFromParam(''), null);
+});
+test('the current format resolves without going near the legacy path', () => {
+  for (const key of Object.keys(GPU_TABLE)) {
+    assert.strictEqual(gpuKeyFromParam(key), key);
+  }
+});
+test('an unresolvable link is reported to the user, not absorbed', () => {
+  // The decoder returning null is only half the fix; loadURLHash has to say so.
+  assert.ok(/else warnUnresolvedGpu\(raw\)/.test(html),
+    'loadURLHash does not call warnUnresolvedGpu() when the gpu param resolves to nothing');
+  assert.ok(/id="gpu-url-warning"/.test(html), 'the warning has nowhere to render');
+  assert.ok(/el\.textContent = /.test(html.slice(html.indexOf('function warnUnresolvedGpu'))),
+    'the warning must be set as text, never as HTML — raw comes from the URL');
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
