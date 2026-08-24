@@ -22,12 +22,24 @@ if [ $# -eq 0 ]; then
 fi
 
 USERNAME="$1"
+SITE_CODE="${2:-}"
 FILES=("index.html" "README.md" "CONTRIBUTING.md")
 
 if [ "$USERNAME" = "$UPSTREAM_USER" ]; then
     echo "That is already the upstream account — nothing to rewrite."
     exit 1
 fi
+
+# Both values are interpolated into sed expressions. A & in the replacement
+# means "the whole match" and a # ends the expression, so an unchecked argument
+# corrupts every URL while the script reports success. GitHub usernames and
+# GoatCounter site codes are both [A-Za-z0-9-] anyway.
+for arg in "$USERNAME" ${SITE_CODE:+"$SITE_CODE"}; do
+    if ! printf '%s' "$arg" | grep -qE '^[A-Za-z0-9][A-Za-z0-9-]*$'; then
+        echo "Refusing '$arg': expected letters, digits and hyphens only."
+        exit 1
+    fi
+done
 
 # Rewrite the two forms the name appears in — the Pages URL and the repo URL —
 # rather than every occurrence of the string. The analytics beacon points at
@@ -36,7 +48,10 @@ fi
 # It is handled below, on its own terms.
 for f in "${FILES[@]}"; do
     if [ -f "$f" ]; then
-        before=$(grep -o -e "${UPSTREAM_USER}\.github\.io" -e "github\.com/${UPSTREAM_USER}" "$f" | wc -l)
+        # `|| true`: grep exits 1 when there is nothing left to rewrite, and
+        # under `set -o pipefail` that killed the whole script on any second
+        # run — including the re-run this script itself suggests.
+        before=$(grep -o -e "${UPSTREAM_USER}\.github\.io" -e "github\.com/${UPSTREAM_USER}" "$f" | wc -l || true)
         sed -i -e "s#${UPSTREAM_USER}\.github\.io#${USERNAME}.github.io#g" \
                -e "s#github\.com/${UPSTREAM_USER}#github.com/${USERNAME}#g" "$f"
         echo "Updated $f ($before link(s))"
@@ -45,27 +60,48 @@ done
 
 # GoatCounter analytics — already enabled, pointed at the upstream author's
 # site. A fork must not report its traffic there: repoint it, or remove it.
-if [ -n "${2:-}" ]; then
-    sed -i "s#${UPSTREAM_USER}.goatcounter.com#$2.goatcounter.com#g" index.html
-    echo "Pointed the page-view counter at $2.goatcounter.com"
+if [ -n "$SITE_CODE" ]; then
+    # Say what happened, not what was asked for: on a tree whose counter has
+    # already been removed there is nothing to repoint, and claiming otherwise
+    # is the same kind of false statement this whole section exists to end.
+    if grep -q "data-goatcounter" index.html; then
+        sed -i "s#${UPSTREAM_USER}.goatcounter.com#${SITE_CODE}.goatcounter.com#g" index.html
+        echo "Pointed the page-view counter at ${SITE_CODE}.goatcounter.com"
+    else
+        echo "No page-view counter in index.html — nothing to point at ${SITE_CODE}.goatcounter.com."
+        echo "      A previous run removed it; restore it from git history if you want one."
+    fi
 else
     # Remove rather than leave it: an unattended fork reporting to someone
     # else's analytics is the wrong default, and the README documents how to
     # put a counter back.
-    python3 - <<'PYEOF'
-import re
-# Both regions, never one: the footer notice tells the reader the page counts
-# views, so leaving it behind after deleting the beacon would make the fork
-# claim something it no longer does — the exact failure this notice exists to
-# fix, running the other way.
-src = open("index.html").read()
-new = src
-for tag in ("ANALYTICS-BEACON", "ANALYTICS-NOTICE"):
-    new = re.sub(r"[ \t]*<!-- %s:BEGIN.*?%s:END -->\n?" % (tag, tag), "", new, flags=re.S)
-open("index.html", "w").write(new)
-print("Removed the page-view counter and the notice that described it."
-      if new != src else "No page-view counter found — nothing to remove.")
-PYEOF
+    # Every region at once, never one of them: the footer line and the README
+    # section both tell the reader the page counts views, so leaving either
+    # behind would make the fork claim something it no longer does — the same
+    # defect as an undisclosed counter, running the other way.
+    # sed rather than python3: this used to shell out to python3, which is not
+    # present everywhere, and when it was missing the script died with the
+    # links already rewritten and the counter still aimed upstream.
+    removed=0
+    for pair in "index.html ANALYTICS-BEACON" "index.html ANALYTICS-NOTICE" \
+                "README.md ANALYTICS-SECTION" "README.md ANALYTICS-DOC"; do
+        set -- $pair
+        [ -f "$1" ] || continue
+        if grep -q "$2:BEGIN" "$1"; then
+            # ANALYTICS-DOC sits inside a sentence; the others own their lines.
+            if [ "$2" = "ANALYTICS-DOC" ]; then
+                sed -i "s#<!-- $2:BEGIN -->.*<!-- $2:END -->##" "$1"
+            else
+                sed -i "/$2:BEGIN/,/$2:END/d" "$1"
+            fi
+            removed=$((removed + 1))
+        fi
+    done
+    if [ "$removed" -gt 0 ]; then
+        echo "Removed the page-view counter and every claim about it ($removed region(s))."
+    else
+        echo "No page-view counter found — nothing to remove."
+    fi
     echo "      Pass a GoatCounter site code as the 2nd argument to keep one."
     echo "      See the Analytics section of README.md."
 fi

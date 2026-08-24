@@ -433,7 +433,7 @@ body.exec-mode .exec-summary { display: block; }
 <div style="margin:24px 0 0;padding:16px 0 0;border-top:.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
   <div style="font-size:12px;color:var(--text-muted);max-width:60ch"><b>LLM VRAM Planner</b> v1.0.0 · Free and open source<br>
     <!-- ANALYTICS-NOTICE:BEGIN — removed together with the beacon by setup.sh -->
-    <span style="font-size:11px">Online, this page counts views with <a href="https://www.goatcounter.com" target="_blank" style="color:var(--accent-text);text-decoration:none">GoatCounter</a> — that is how I know whether anyone uses this. No cookies, no IP addresses, and your configuration is never sent: it lives in the URL fragment, which the counter does not read. <a href="https://github.com/israelhen153/llm-vram-planner#analytics" target="_blank" style="color:var(--accent-text);text-decoration:none">Details and opt-out</a>. Opened offline, nothing is sent at all.</span>
+    <span style="font-size:11px">Online, this page counts views with <a href="https://www.goatcounter.com" target="_blank" style="color:var(--accent-text);text-decoration:none">GoatCounter</a> — that is how I know whether anyone uses this. It sends the page path, the referrer, this page's title and your screen width; no cookies, and your configuration is never sent, because it lives in the URL fragment and the counter never transmits that. <a href="https://github.com/israelhen153/llm-vram-planner#analytics" target="_blank" style="color:var(--accent-text);text-decoration:none">Details</a> · <a href="#" id="counting-toggle" onclick="toggleCounting(event)" style="color:var(--accent-text);text-decoration:none"></a>. Opened offline, nothing is sent at all.</span>
     <!-- ANALYTICS-NOTICE:END --></div>
   <div style="display:flex;gap:10px;font-size:12px">
     <a href="https://github.com/israelhen153/llm-vram-planner" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><svg class="ti-ico" style="font-size:14px" aria-hidden="true" focusable="false"><use href="#ico-brand-github"></use></svg> Source</a>
@@ -1814,6 +1814,35 @@ function applyParam(id, raw, label) {
   return took;
 }
 
+/* GoatCounter's opt-out is a localStorage flag its own script checks before it
+   sends anything: count.js refuses with 'disabled with #toggle-goatcounter'
+   when localStorage.skipgc === 't'. The documented way to set that flag is to
+   load the page with #toggle-goatcounter — which cannot work here. This tool
+   keeps its whole configuration in the fragment and rewrites it during boot,
+   synchronously, while the counter script is still loading async; by the time
+   count.js reads location.hash the toggle is long gone. So the page offers the
+   control directly instead of documenting a gesture that does nothing.
+   Every access is guarded: localStorage throws outright in some privacy modes,
+   and a counter opt-out that breaks the page would be a poor trade. */
+function countingDisabled() {
+  try { return localStorage.getItem('skipgc') === 't'; } catch { return false; }
+}
+function toggleCounting(e) {
+  e.preventDefault();
+  try {
+    if (countingDisabled()) localStorage.removeItem('skipgc');
+    else localStorage.setItem('skipgc', 't');
+  } catch { /* nothing was stored, so there is nothing to undo */ }
+  renderCountingToggle();
+}
+function renderCountingToggle() {
+  const el = document.getElementById('counting-toggle');
+  if (!el) return;   // a fork that removed the analytics block entirely
+  el.textContent = countingDisabled()
+    ? 'Your visits are not counted — count them again'
+    : 'Don\u2019t count my visits';
+}
+
 /* textContent, never innerHTML: every `raw` here came out of the URL. */
 function renderRestoreNotice() {
   const el = document.getElementById('url-restore-warning');
@@ -1886,16 +1915,21 @@ function copyURL() {
 renderGpuOptions();
 if (!loadURLHash()) applyPreset();
 recalculate();
+renderCountingToggle();
 </script>
 <!-- ANALYTICS-BEACON:BEGIN — removed together with the footer notice by setup.sh -->
 <!-- Analytics — GoatCounter. It is here for one reason: so the author can tell whether
-     the tool is used at all. Stored, as per-day/per-hour aggregate counts: path,
-     referrer, browser, OS, country, language, screen width. Not stored: IP address,
-     full User-Agent, any tracker ID — and nothing is written to the browser (no
-     cookies, no localStorage, no cache). count.js sends location.pathname +
-     location.search only, so the #-fragment this tool keeps its entire configuration
-     in never leaves the browser. Readers opt out per-browser by loading the page once
-     with #toggle-goatcounter. Sources and detail: README.md § Analytics.
+     the tool is used at all. What count.js sends: the path (pathname + search, or the
+     canonical link's), the referrer, this page's title, the screen width, a bot flag
+     and a cache-buster. What GoatCounter stores, as per-day/per-hour aggregate counts:
+     path, referrer, browser, OS, country, language, screen width. Not stored: IP
+     address, full User-Agent, any tracker ID — though site+IP+User-Agent is held in
+     memory for up to eight hours to count repeat visits. Nothing is written to the
+     browser by the counter itself. The #-fragment this tool keeps its configuration in
+     is never transmitted: count.js reads location.hash only for its own opt-out and
+     puts it in no request. That opt-out gesture does not work on this page — boot
+     rewrites the fragment before the async script can see it — so the footer carries
+     a control that sets the same flag. Sources and detail: README.md § Analytics.
      Forking or self-hosting? Repoint this at your own site code or delete the two
      lines below — the tool behaves identically without them, and they are inert from
      file:// anyway. -->
