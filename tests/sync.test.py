@@ -123,6 +123,69 @@ def check_missing_field_names_itself():
 test("a row missing a required field names the row and the field", check_missing_field_names_itself)
 
 
+def check_marker_text_in_a_value_is_refused():
+    """A note discussing this tool by name is ordinary contributor prose.
+
+    Before the marker had to sit on a comment line, such a note ended the
+    block as far as the replacement regex was concerned: the next sync spliced
+    a new block into the middle of the old one and left an orphaned `};`, so
+    the whole inline script stopped parsing and nothing on the page ran.
+    """
+    poisoned = "see the BENCHMARK_DATA:END marker in tools/sync_data.py"
+    rows = {"8b-h100-80": {"tokS": 1, "mode": "batch", "src": "x", "note": poisoned,
+                           "prec": "bf16", "date": "2026-01", "url": ""}}
+    try:
+        sync_data.render_benchmark_js(rows)
+    except SystemExit as e:
+        assert "8b-h100-80" in str(e) and "note" in str(e), f"error names neither row nor field: {e}"
+        return
+    raise AssertionError("a value carrying a block marker was rendered anyway")
+
+test("a value containing a block marker is refused, naming the row and field",
+     check_marker_text_in_a_value_is_refused)
+
+
+def check_a_data_line_cannot_end_the_block():
+    """The regex itself, independently of the refusal above: an indented data
+    line carrying the end tag must not terminate the match, or a file that
+    somehow acquires one is unrecoverable by re-running the tool."""
+    body = (
+        "/* GPU_TABLE:BEGIN — generated */\n"
+        "const GPU_TABLE = {\n"
+        "  'x': { note: 'GPU_TABLE:END is just text here' },\n"
+        "};\n"
+        "/* GPU_TABLE:END */\n"
+        "after = 1\n"
+    )
+    m = sync_data.BLOCK_RES["GPU_TABLE"].search(body)
+    assert m, "the real marker pair no longer matches"
+    assert m.group(0).rstrip().endswith("/* GPU_TABLE:END */"), (
+        "the match stopped at a data line instead of the closing comment:\n" + m.group(0))
+    assert "after = 1" not in m.group(0), "the match ran past the end marker"
+
+test("a data line carrying the end tag does not end the block",
+     check_a_data_line_cannot_end_the_block)
+
+
+def check_control_characters_cannot_reach_the_page():
+    """A raw NUL never reaches JavaScript: the HTML tokenizer rewrites it to
+    U+FFFD first, so the note a contributor wrote is not the note the page
+    shows. Node's evaluator does not tokenise HTML and cannot see this, so the
+    check is on the rendered text itself."""
+    for raw in ("null\x00byte", "bell\x07here", "vertical\x0btab"):
+        rows = {"8b-h100-80": {"tokS": 1, "mode": "batch", "src": "x", "note": raw,
+                               "prec": "bf16", "date": "2026-01", "url": ""}}
+        block = sync_data.render_benchmark_js(rows)
+        for ch in block:
+            assert ch >= " " or ch in "\n", (
+                f"a raw control character (U+{ord(ch):04X}) reached the generated block")
+        body = "\n".join(l for l in block.splitlines() if not l.startswith("/*"))
+        assert js_eval(body, "BENCHMARK_DATA") == rows, f"{raw!r} did not round-trip"
+
+test("control characters are escaped, not passed through as raw bytes",
+     check_control_characters_cannot_reach_the_page)
+
+
 print("\nEvery generated block is claimed by exactly one marker pair")
 
 def check_every_block_is_present_once():
