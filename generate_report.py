@@ -146,6 +146,12 @@ PREC_LABELS = {
 }
 
 
+def capacity_label(gb):
+    """Mirrors capacityLabel() in index.html: an integer catalog capacity keeps
+    rendering as an integer, so an unchanged card's report is unchanged."""
+    return f"{int(gb)} GiB" if float(gb).is_integer() else fmt_gb(gb)
+
+
 def fmt_gb(gb):
     if gb < 0.01: return "0 GiB"
     if gb >= 100: return f"{round(gb)} GiB"
@@ -272,7 +278,10 @@ def compute(cfg):
     per_a = act_gb / device_count
     per_oh = oh_per_gpu + ((0.3 if nvlink else 0.2) if device_count > 1 else 0)
     per_total = per_w + per_kv + per_a + per_oh
-    total_vram = device_gb * device_count
+    # gpu["gb"] * n_gpu, not device_gb * device_count: the two are equal by
+    # construction, and this one keeps an integer catalog value an integer
+    # rather than rendering "160.0 GB" where every previous report said 160.
+    total_vram = gpu["gb"] * n_gpu
 
     fixed_pg = per_w + per_a + per_oh
     # Both operands move together, or free KV silently halves or doubles.
@@ -390,11 +399,10 @@ def compute(cfg):
         "ttft_ms": ttft_ms, "ttft_cold_ms": ttft_cold_ms, "ttft_warm_ms": ttft_warm_ms,
         "kv_saved_by_prefix_gb": kv_saved_by_prefix_gb, "eff_prefix": eff_prefix, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
         "is_moe": is_moe, "total_tokens": total_tokens,
-        "device_count": device_count, "device_gb": device_gb,
         # The device view, so a renderer never has to re-derive it and get
         # it wrong: per-device figures must be read against per-device
         # capacity, not against the board they share.
-        "device_count": device_count, "device_gb": device_gb,
+        "device_count": device_count, "device_gb": device_gb, "device_bw": device_bw,
         "fits": fits, "comfortable": comfortable,
     }
 
@@ -603,8 +611,12 @@ class ReportCard:
         bar_w = self.width - 2 * self.margin
         bar_h = 20
         d = Drawing(bar_w, bar_h + 18)
-        gpu_gb = self.cfg["gpu"]["gb"]
         c = self.comp
+        # The bar draws per-device components, so its scale and its free
+        # space are the device's. Drawn against the board it printed
+        # "59.1 GiB free" directly beneath a verdict saying the same
+        # configuration was over by 4.89 GiB.
+        gpu_gb = c["device_gb"]
         total_max = max(c["per_total"], gpu_gb) * 1.05
 
         segments = [
@@ -651,8 +663,8 @@ class ReportCard:
         story.append(Paragraph(
             f"Generated {datetime.now().strftime('%B %d, %Y at %H:%M')} — "
             f"{cfg['n_gpu']}x {gpu['name']}"
-            f"{' (NVLink)' if cfg.get('nvlink') and cfg['n_gpu'] > 1 else ''}"
-            f"{' (PCIe)' if not cfg.get('nvlink') and cfg['n_gpu'] > 1 else ''}",
+            f"{' (NVLink)' if cfg.get('nvlink') and device_count_for(cfg) > 1 else ''}"
+            f"{' (PCIe)' if not cfg.get('nvlink') and device_count_for(cfg) > 1 else ''}",
             self.styles["ReportSub"]
         ))
 
@@ -660,12 +672,12 @@ class ReportCard:
         if c["comfortable"]:
             style_name = "VerdictOK"
             icon = "FITS"
-            msg = (f"{fmt_gb(c['per_total'])} per device of {fmt_gb(c['device_gb'])} "
+            msg = (f"{fmt_gb(c['per_total'])} per device of {capacity_label(c['device_gb'])} "
                    f"({round(c['per_total'] / c['device_gb'] * 100)}%). Headroom available.")
         elif c["fits"]:
             style_name = "VerdictWarn"
             icon = "TIGHT"
-            msg = (f"{fmt_gb(c['per_total'])} per device of {fmt_gb(c['device_gb'])} "
+            msg = (f"{fmt_gb(c['per_total'])} per device of {capacity_label(c['device_gb'])} "
                    f"({round(c['per_total'] / c['device_gb'] * 100)}%). Risk of OOM under load.")
         else:
             style_name = "VerdictErr"
@@ -714,7 +726,7 @@ class ReportCard:
             ["GPU count", str(cfg["n_gpu"])],
             ["Total VRAM", f"{c['total_vram']} GB"],
             ["Interconnect", "NVLink" if cfg.get("nvlink") else "PCIe"],
-            ["Memory bandwidth", f"{gpu['bw']} GB/s per GPU"],
+            ["Memory bandwidth", f"{c['device_bw']:g} GB/s per device"],
             ["Parallelism", parallelism_label],
         ]
         story.append(self._make_kv_table(gpu_data))
@@ -754,7 +766,7 @@ class ReportCard:
             ["Per user under that load", f"~{fmt_tok(c['per_user_load'])} tokens/sec"],
             ["Max batch at this context", f"{c['max_batch_kv']} sequences" + (" (below requested concurrency)" if c["batch_limited"] else "")],
             ["Est. time to first token", f"~{c['ttft_ms']} ms (at {fmt_k(cfg['ctx'])} context)"],
-            ["Basis", f"Memory-bandwidth bound — {gpu['bw']} GB/s x {cfg['n_gpu']} GPU(s)"],
+            ["Basis", f"Memory-bandwidth bound — {c['device_bw']:g} GB/s x {c['device_count']} device(s)"],
         ]
         story.append(self._make_kv_table(tp_data))
         story.append(Paragraph(
@@ -831,7 +843,7 @@ class ReportCard:
             # forwarded. A reader who only sees the PDF must not be able to
             # read "Per GPU: X GiB" next to --data-parallel-size and conclude
             # that's what actually fits.
-            notes.append(f"Per-GPU VRAM above assumes weights sharded across all {cfg['n_gpu']} GPUs; the "
+            notes.append(f"Per-GPU VRAM above assumes weights sharded across all {device_count_for(cfg)} devices; the "
                          f"vLLM command below instead shards {tp}-way and replicates a full copy of the model "
                          f"across each of {dp} data-parallel groups, so the fit verdict on page 1 is optimistic. "
                          f"Reconciling this VRAM math with the real split is planned but not done yet.")

@@ -150,7 +150,7 @@ const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
 for(const [k,g] of Object.entries(GPU_TABLE)){
   G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
-        name:g.name.replace(/ GB$/,'GB')};
+        name:g.name.replace(/ GB$/,'GB'),devices:g.devices};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
   /* c.card lets a case carry a row the catalog does not have yet — the
@@ -201,6 +201,11 @@ FIELDS = [
     # nothing would have said so.
     ("hourly_hyper", "hourlyHyper", 0.001), ("hourly_spec", "hourlySpec", 0.001),
     ("hourly_spot", "hourlySpot", 0.001),
+    # The device view each engine derived. Nothing compared these, so a Python
+    # export scoped to boards would corrupt every figure in the PDF while the
+    # web tool stayed right — with the suite green.
+    ("device_count", "deviceCount", 0), ("device_gb", "deviceGB", 0.001),
+    ("device_bw", "deviceBandwidth", 0.001),
     # The constants as executed, not as extracted — this is what stops the two
     # engines quietly disagreeing about a value no case happens to exercise.
     ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),

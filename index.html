@@ -598,6 +598,11 @@ function setHTML(id, html) { document.getElementById(id).innerHTML = html; }
    label mixed the two and made every fit calculation ~7% pessimistic. */
 const GIB = 1024 ** 3;
 function formatGB(gb) { return gb < 0.01 ? '0 GiB' : gb >= 100 ? Math.round(gb)+' GiB' : gb >= 10 ? gb.toFixed(1)+' GiB' : gb.toFixed(2)+' GiB'; }
+/* A capacity is a catalog figure, not a computed one. 80 has rendered as
+   "80 GiB" since v1.0 and must keep doing so, or every unchanged card gains a
+   decimal point in every screenshot and shared report. Halving a board yields a
+   fraction only when the board is odd, and that case does want the decimal. */
+function capacityLabel(gb) { return Number.isInteger(gb) ? gb + ' GiB' : formatGB(gb); }
 function formatContext(v) { return v >= 1024 ? Math.round(v / 1024) + 'K' : v + ''; }
 function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math.round(t) + ''; }
 
@@ -1171,7 +1176,7 @@ function computeInference(state) {
 
   return {
     isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
-    perGPU, totalVRAM: deviceGB * deviceCount, deviceCount, deviceGB,
+    perGPU, totalVRAM: deviceGB * deviceCount, deviceCount, deviceGB, deviceBandwidth,
     freeForKVCache, kvPerTokenGB, kvBytesPerToken,
     maxContextSingleUser, maxConcurrentAt8K, maxConcurrentAt4K,
     singleStreamTokS, aggregateTokS, perUserAtLoadTokS, effectiveBatch,
@@ -1308,7 +1313,7 @@ function renderGPUCards(state, computed) {
       if (computed.deviceCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
       html += '</p>';
       html += buildBar(14);
-      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.min(usagePct, 999)}%)${computed.deviceCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
+      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)${computed.deviceCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
     }
     html += '</div>';
   } else {
@@ -1319,23 +1324,25 @@ function renderGPUCards(state, computed) {
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
     if (state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
     html += '</p>';
-    html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each device — ${formatGB(perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.min(usagePct, 999)}%)</div>`;
+    html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each device — ${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)</div>`;
     html += buildBar(10);
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0">';
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(computed.totalVRAM)}</b></div>`;
-    // dp > 1 (only possible above 8 GPUs — see splitParallelism) means the
-    // command shards tp-way, not gpuCount-way, but this tile's own number is
-    // still weights_gb / gpuCount (compute() isn't changed here — that's a
-    // later commit). Below 9 GPUs dp is always 1 and tp === gpuCount, so the
-    // old "N-way" wording stays exactly as it was: it isn't wrong there.
+    /* dp > 1 (only above 8 devices — see splitParallelism) means the command
+       shards tp-way while this tile's own number is still weights / deviceCount,
+       which compute() has not been changed to reflect: that is the next commit.
+       At dp === 1, tp === deviceCount and the "N-way" caption is exactly true.
+       Everything here counts devices, never boards — a dual-GCD module is two
+       of them, and the figures beside these captions are already divided that
+       way. */
     html += dp > 1
-      ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per GPU</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${state.gpuCount}</span></div>`
+      ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per GPU</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${computed.deviceCount}</span></div>`
       : `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.deviceCount}-way</b> (${formatGB(perGPU.weights)}/GPU)</div>`;
-    // layersPerGPU = ceil(layers / gpuCount) has the same all-GPU assumption
+    // layersPerGPU = ceil(layers / deviceCount) has the same all-device assumption
     // baked in; same gating, so 1-8 is unchanged and only >8 gets the caveat.
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per GPU</span><br><b>~${layersPerGPU}</b> of ${state.layers}${dp > 1 ? '<br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ' + state.gpuCount + '</span>' : ''}</div>`;
+    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per device</span><br><b>~${layersPerGPU}</b> of ${state.layers}${dp > 1 ? '<br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ' + computed.deviceCount + '</span>' : ''}</div>`;
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Parallelism</span><br><b>TP=${tp}${dp > 1 ? ' × DP=' + dp : ''}</b></div>`;
-    if (dp > 1) html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Est. nodes</span><br><b>~${Math.ceil(state.gpuCount / 8)}</b> (8 GPU/node)</div>`;
+    if (dp > 1) html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Est. nodes</span><br><b>~${Math.ceil(computed.deviceCount / 8)}</b> (8 devices/node)</div>`;
     html += '</div>';
     // dp > 1 only above 8 GPUs now (splitParallelism leaves 1-8 as tp=gpuCount,
     // dp=1, matching master), so this is the >8 regime exactly and the
@@ -1345,7 +1352,7 @@ function renderGPUCards(state, computed) {
       // assume weights sharded across every GPU, but the command below
       // shards only tp-way and replicates a full copy per DP group, so the
       // fit check is optimistic here.
-      const note = `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point. Optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology. Per-GPU VRAM above assumes weights sharded across all ${state.gpuCount} GPUs; the emitted command instead shards only ${tp}-way and replicates a full copy of the model across each of the ${dp} data-parallel groups, so the fit check above is optimistic here.`;
+      const note = `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point. Optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology. Per-device VRAM above assumes weights sharded across all ${computed.deviceCount} devices; the emitted command instead shards only ${tp}-way and replicates a full copy of the model across each of the ${dp} data-parallel groups, so the fit check above is optimistic here.`;
       html += `<div style="font-size:11px;color:var(--warning-text);background:var(--warning-bg);border-radius:var(--radius);padding:6px 10px;margin:6px 0"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>${note}</div>`;
     }
     html += '</div>';
@@ -1378,8 +1385,8 @@ function boardsNeeded(state, computed) {
 
 function renderVerdict(state, computed) {
   let html;
-  if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%).</div>`;
-  else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)}. May OOM under load.</div>`;
+  if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%).</div>`;
+  else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)}. May OOM under load.</div>`;
   else { const needed = boardsNeeded(state, computed); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - computed.deviceGB)} per device. Need ${needed}+ boards or lower precision.</div>`; }
   setHTML('verdict-output', html);
 }
@@ -1411,7 +1418,7 @@ function renderThroughput(state, computed) {
 
   // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
   // aggregate is what the server delivers across the whole batch. Never compare them.
-  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${state.gpuBandwidth} GB/s × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
+  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${computed.deviceBandwidth} GB/s per device × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
   html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
   if (computed.batchLimitedByKV) {
@@ -1509,7 +1516,7 @@ function renderCommand(state, computed) {
   if (computed.fits) {
     const { tp, dp } = parallelismFor(state);
     if (dp > 1) {
-      warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${state.gpuCount} GPUs: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
+      warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${computed.deviceCount} devices: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
     }
     if (state.quantMethod === 'gguf') {
       warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> GGUF support in vLLM is experimental and slower than its native formats — point <code>vllm serve</code> at a single <code>.gguf</code> file, not a repo. For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM.</div>`;
@@ -1628,7 +1635,7 @@ function renderComparisons() {
     html += `<div class="row"><span class="label">Precision</span><span class="val">${s.bytesPerParam} B/param</span></div>`;
     html += `<div class="row"><span class="label">KV dtype</span><span class="val">${s.kvBytesPerValue < 2 ? 'FP8' : 'BF16'}</span></div>`;
     html += `<div class="row"><span class="label">Weights</span><span class="val">${formatGB(c.weightsGB)}</span></div>`;
-    html += `<div class="row"><span class="label">Per-GPU</span><span class="val" style="color:${c.fits ? 'var(--success-text)' : 'var(--danger-text)'}">${formatGB(c.perGPU.total)} / ${s.gpuGB}</span></div>`;
+    html += `<div class="row"><span class="label">Per-device</span><span class="val" style="color:${c.fits ? 'var(--success-text)' : 'var(--danger-text)'}">${formatGB(c.perGPU.total)} / ${capacityLabel(c.deviceGB)}</span></div>`;
     html += `<div class="row"><span class="label">Max ctx (1u)</span><span class="val">${formatContext(c.maxContextSingleUser)}</span></div>`;
     html += `<div class="row"><span class="label">Max users @8K</span><span class="val">${Math.max(c.maxConcurrentAt8K, 0)}</span></div>`;
     html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s</span></div>`;
@@ -1735,7 +1742,7 @@ function renderExecutiveSummary(state, computed) {
 
   // Key metrics in clean rows
   html += `<div class="exec-row"><span class="exec-label">Hardware</span><span class="exec-value">${state.gpuCount}× ${state.gpuName}</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} per device (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%)</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} per device (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%)</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Max concurrent users (8K context)</span><span class="exec-value">${Math.max(computed.maxConcurrentAt8K, 0)}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec</span></div>`;
@@ -1769,9 +1776,11 @@ function saveSnapshot() {
 
 function removeSnapshot(index) { savedSnapshots.splice(index, 1); renderComparisons(); }
 
-function exportSummary() {
-  const state = readInputState();
-  const computed = computeInference(state);
+/* The two arguments default to reading the page, which is what the button
+   does. Passing them lets the copied report be exercised against a known
+   configuration — it carries the same board-versus-device wording as the views
+   above it and had no coverage at all. */
+function exportSummary(state = readInputState(), computed = computeInference(state)) {
   const preset = MODEL_PRESETS[state.presetKey];
   const name = preset ? document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text : (importedModelId || state.params + 'B model');
   const { tp, dp } = parallelismFor(state);
@@ -1782,7 +1791,7 @@ function exportSummary() {
   report += `- Layers: ${state.layers}, KV heads: ${state.kvHeads}, head dim: ${state.headDim}\n`;
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
   report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${computed.deviceCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
-  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-device: ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
+  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-device: ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
   // Same caveat as the on-screen warning banner (renderGPUCards), repeated
   // here because this copy-pasted summary is exactly the artifact that
   // leaves the screen it was computed on — a reader downstream of the clip
@@ -1791,7 +1800,8 @@ function exportSummary() {
   if (dp > 1) report += `- Note: the figures above assume weights sharded across all ${computed.deviceCount} devices; the command below instead shards ${tp}-way and replicates a full copy of the model across each of ${dp} data-parallel groups, so the fit verdict is optimistic.\n`;
   report += `\n## Capacity\n- Max context (1 user): ${formatContext(computed.maxContextSingleUser)}\n- Max concurrent @ 8K: ${Math.max(computed.maxConcurrentAt8K, 0)}\n- Single-stream decode: ~${formatTokens(computed.singleStreamTokS)} tok/s\n- Aggregate @ ${computed.effectiveBatch} concurrent: ~${formatTokens(computed.aggregateTokS)} tok/s\n- TTFT: ~${computed.ttftMs} ms\n`;
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo\n`;
-  report += `\n## vLLM command\n\`\`\`\n${document.querySelector('#command-output code').textContent}\n\`\`\`\n`;
+  const emitted = document.querySelector('#command-output code');
+  report += `\n## vLLM command\n\`\`\`\n${emitted ? emitted.textContent : ''}\n\`\`\`\n`;
 
   navigator.clipboard.writeText(report).then(() => {
     const btn = document.querySelector('.action-bar button');
@@ -1799,6 +1809,8 @@ function exportSummary() {
     btn.innerHTML = '<svg class="ti-ico" style="font-size:14px" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg> Copied!';
     setTimeout(() => btn.innerHTML = orig, 2000);
   });
+  // Returned so the copied text can be asserted on; the button ignores it.
+  return report;
 }
 
 /* AWQ, GPTQ and GGUF Q3_K_M are all 0.50 bytes/param, so the option value alone

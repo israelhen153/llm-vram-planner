@@ -848,5 +848,139 @@ test("a config that names no GPU gets the one the catalog marks default",
      check_default_gpu_key_comes_from_the_catalog)
 
 
+# ---- the PDF says the same thing however the silicon is packaged -----------
+# Every prose string in generate() is board-scoped or device-scoped, and an
+# independent review reverted six of them one at a time without the suite
+# noticing: the fit verdict, the over-by figure, the parallelism label, the
+# notes gate, the interactive NVLink gate and the exported device view. The
+# same guard the JS suite uses closes all of them at once — one dual-GCD board
+# and two single-GCD boards are the same hardware, so the document must read
+# the same, apart from what is genuinely counted in boards.
+print("\nThe report reads the same however the silicon is packaged")
+
+DUAL = {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2, "tflops": 383,
+        "name": "X", "vendor": "nvidia", "devices": 2, "form": "sxm", "caps": {"fp8": True}}
+SINGLE = dict(DUAL, gb=64, bw=DUAL["bw"] / 2, tflops=DUAL["tflops"] / 2,
+              hyper=DUAL["hyper"] / 2, spec=DUAL["spec"] / 2, spot=DUAL["spot"] / 2, devices=1)
+
+
+def report_text(card, boards, preset="llama31-70b", bpp=2, conc=16, **over):
+    """Every string generate() puts in the document, in order."""
+    cfg = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=bpp, ctx=8192, conc=conc,
+               n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+               hf_model="m", model_name="M", **over)
+    card_obj = gr.ReportCard(cfg, output_path=os.devnull)
+    seen = []
+
+    class Spy(list):
+        def append(self, item):
+            text = getattr(item, "text", None)
+            if text:
+                seen.append(text)
+            elif hasattr(item, "_cellvalues"):        # a table
+                for row in item._cellvalues:
+                    seen.extend(getattr(cell, "text", str(cell)) for cell in row)
+            super().append(item)
+
+    real_build = gr.SimpleDocTemplate.build
+    gr.SimpleDocTemplate.build = lambda self, story, **kw: None
+    real_list = gr.Paragraph
+    try:
+        import builtins
+        orig = gr.ReportCard.generate
+        # generate() builds `story` locally; run it and capture through the doc.
+        captured = {}
+
+        def fake_build(self, story, **kw):
+            captured["story"] = story
+        gr.SimpleDocTemplate.build = fake_build
+        card_obj.generate()
+        for item in captured.get("story", []):
+            Spy().append(item)
+    finally:
+        gr.SimpleDocTemplate.build = real_build
+    return seen
+
+
+def check_packaging_is_invisible_to_the_report():
+    import re
+    # Three configurations, because the verdict has three branches and only the
+    # "does not fit" one was being reached: a 70B at BF16 overflows a 64 GiB
+    # device, the same model at INT4 fits, and an 8B is comfortable.
+    cases = [("llama31-70b", 2, 16),     # over a 64 GiB device: DOES NOT FIT
+             ("llama31-70b", 0.5, 16),   # comfortable
+             ("llama31-70b", 1, 20)]     # 60.0 of 64.0: TIGHT
+    # A price per board is legitimately different — one dual-GCD module costs
+    # what two single-GCD ones do — so currency cells are compared as totals
+    # below rather than cell by cell.
+    def norm(xs):
+        out = []
+        for t in xs:
+            if "$" in t:
+                continue
+            # Board counts: the GPU-count row and the cost table's multiplier.
+            if re.fullmatch(r"\d+", t) or t.startswith("Total/hr ("):
+                continue
+            t = re.sub(r"(Need|requires) \d+\+ boards", r"\1 N+ boards", t)
+            out.append(re.sub(r"\b\d+x X", "Nx X", t))
+        return out
+    verdicts = set()
+
+    # and the totals themselves must match, or the exclusion above would hide
+    # exactly the double-count this change exists to prevent
+    def hourly(card, boards):
+        cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
+                   n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"])
+        c = gr.compute(cfg)
+        return tuple(round(c[k], 6) for k in ("hourly_hyper", "hourly_spec", "hourly_spot"))
+    assert hourly(DUAL, 1) == hourly(SINGLE, 2), (
+        f"cost differs by packaging: {hourly(DUAL, 1)} vs {hourly(SINGLE, 2)}")
+    for preset, bpp, conc in cases:
+        a = norm(report_text(DUAL, 1, preset, bpp, conc))
+        b = norm(report_text(SINGLE, 2, preset, bpp, conc))
+        assert a, "no text captured from the report — the spy is not seeing the story"
+        verdicts.update(t.split("]")[0] for t in a if t.startswith("["))
+        diffs = [f"{x!r} != {y!r}" for x, y in zip(a, b) if x != y]
+        assert not diffs, (
+            f"{preset} at {bpp} B/param, {conc} concurrent, differs between one dual-GCD board and two "
+            "single-GCD boards holding the same silicon:\n       " + "\n       ".join(diffs[:6]))
+    assert len(verdicts) >= 3, (
+        f"only reached the verdict branches {sorted(verdicts)} — the fits and tight "
+        "branches carry their own capacity expression and go unchecked otherwise")
+
+test("one dual-GCD board and two single-GCD boards produce the same report",
+     check_packaging_is_invisible_to_the_report)
+
+
+def check_compute_is_blind_to_packaging():
+    """compute() itself, not the prose around it.
+
+    The decode ceiling is the one arithmetic site no case exercised with more
+    than one device per board: every other case is bandwidth-bound there, and
+    the product device_tflops * device_count is unchanged by the sabotage —
+    what moves is the interconnect penalty, 1.0 at one board against 0.85 at
+    two devices. So it has to be compared where those two disagree.
+    """
+    bound = dict(params=30, active=10, layers=48, kv_heads=8, h_dim=128,
+                 ctx=256, conc=256, bpp=2, kv_bpp=2, shared_exp=0, max_ctx=1048576)
+    dual = gr.compute(dict(bound, n_gpu=1, gpu=DUAL, nvlink=True, vendor="nvidia"))
+    single = gr.compute(dict(bound, n_gpu=2, gpu=SINGLE, nvlink=True, vendor="nvidia"))
+    # Python's compute() exports no compute-bound flag (the JS engine does), so
+    # bindingness is established directly: ten times the bandwidth must not move
+    # the saturated figure if the compute ceiling is what is holding it.
+    faster = gr.compute(dict(bound, n_gpu=1, gpu=dict(DUAL, bw=DUAL["bw"] * 10),
+                             nvlink=True, vendor="nvidia"))
+    assert abs(faster["sat_tok"] - dual["sat_tok"]) < 1, (
+        "the probe is bandwidth-bound, so it does not exercise the compute ceiling")
+    skip = {"gpu"}
+    diffs = [f"{k}: {dual[k]!r} != {single[k]!r}" for k in dual
+             if k not in skip and dual[k] != single.get(k)]
+    assert not diffs, ("compute() differs between one dual-GCD board and two single-GCD "
+                       "boards holding the same silicon:\n       " + "\n       ".join(diffs[:6]))
+
+test("compute() gives the same answer however the silicon is packaged",
+     check_compute_is_blind_to_packaging)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

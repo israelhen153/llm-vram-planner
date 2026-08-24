@@ -773,24 +773,34 @@ const renderHarness = (inputs = {}) => {
     // Executive mode is on: renderExecutiveSummary() returns immediately
     // otherwise, and this suite exists to read what it writes.
     body: { classList: { add() {}, remove() {}, contains: () => true } },
+    // exportSummary() reads the comparison table and copies to the clipboard.
+    querySelector: () => ({ textContent: '', innerHTML: '', parentElement: null }),
+    querySelectorAll: () => [],
   };
   const start = html.indexOf('function getVal(id)');
   const before = [/^const GPU_TABLE = \{[\s\S]*?\n\};$/m, /^const BENCHMARK_DATA = \{[\s\S]*?\n\};$/m,
                   /^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m, /^const WORKLOAD_PROFILES = \{[\s\S]*?\n\};$/m]
     .map(re => html.match(re)[0]).filter(d => html.indexOf(d) < start).join('\n');
-  const api = new Function('document', `
+  const navigator = { clipboard: { writeText: () => Promise.resolve() } };
+  const api = new Function('document', 'navigator', `
     let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
     let currentModelMaxCtx = 131072, importedModelId = null, urlRestoreLost = [], comparisonSnapshots = [];
     ${before}
     ${html.slice(start, html.indexOf('function updateURLHash()'))}
-    return { renderVerdict, renderGPUCards, renderTraining, renderNotes,
-             renderExecutiveSummary, computeInference, buildVllmCommand };`)(document);
+    return { renderVerdict, renderGPUCards, renderTraining, renderNotes, renderStrategyBadges,
+             renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary,
+             computeInference, buildVllmCommand };`)(document, navigator);
   return { ...api, out };
 };
 
 /* index.html's own formatter, read from source so a change to it cannot make
    these assertions quietly stop comparing what the page shows. */
 const formatGBLike = new Function(`${html.match(/^function formatGB\(gb\) .+$/m)[0]}; return formatGB;`)();
+/* Capacity has its own formatter, so an integer catalog value keeps rendering
+   without a decimal. Read from source for the same reason as the above. */
+const capacityLabelLike = new Function(
+  `${html.match(/^function formatGB\(gb\) .+$/m)[0]}
+   ${html.match(/^function capacityLabel\(gb\) .+$/m)[0]}; return capacityLabel;`)();
 
 console.log('\nWhat the renderers actually put on the page');
 test('the training estimate renders at all', () => {
@@ -843,9 +853,12 @@ test('the sharding a card claims is the sharding the command performs', () => {
   // Five dual-GCD boards: ten devices, and the condensed view used to caption
   // them "sharded 5-way" beside a number divided by ten.
   const h = renderHarness();
-  // Four dual-GCD boards: eight devices, so the split is TP=8 with no data
-  // parallelism and the strict branch below applies.
-  const state = asState(dualGCD, 4, { params: 8, layers: 32, bytesPerParam: 2 });
+  // Both branches: four dual-GCD boards give eight devices and a pure TP=8
+  // split, five give ten and a TP=2 x DP=5 one. The review found the dp>1
+  // branch of this test dead because the comment said five and the code said
+  // four.
+  for (const boards of [4, 5]) {
+  const state = asState(dualGCD, boards, { params: 8, layers: 32, bytesPerParam: 2 });
   const computed = h.computeInference(state);
   h.renderGPUCards(state, computed);
   const text = h.out['gpu-cards'] || h.out['vram-output'] || Object.values(h.out).join(' ');
@@ -867,8 +880,11 @@ test('the sharding a card claims is the sharding the command performs', () => {
     // A data-parallel split shards weights tp-way per replica while the panel's
     // own figures divide by every device. That gap is real and is the next
     // commit's subject; what this pins is that the view admits it.
-    assert.ok(/assumes sharding across all \d+/.test(text),
-      `a dp>1 view must carry the caveat about its own figures: ${text.slice(0, 300)}`);
+    const caveat = text.match(/assumes sharding across all (\d+)/);
+    assert.ok(caveat, `a dp>1 view must carry the caveat about its own figures: ${text.slice(0, 300)}`);
+    assert.strictEqual(Number(caveat[1]), computed.deviceCount,
+      'the caveat must name the count the figures actually used');
+  }
   }
 });
 test('the executive summary reads the device it fills, not the board', () => {
@@ -886,8 +902,8 @@ test('the executive summary reads the device it fills, not the board', () => {
   // And the capacity it names, not only the percentage it derives: those are
   // two separate expressions and only one of them was wrong before.
   const named = (text.match(/\/ ([\d.]+ GiB) per device/) || [])[1];
-  assert.strictEqual(named, formatGBLike(computed.deviceGB),
-    `exec summary names ${named} as the capacity of a ${formatGBLike(computed.deviceGB)} device`);
+  assert.strictEqual(named, capacityLabelLike(computed.deviceGB),
+    `exec summary names ${named} as the capacity of a ${capacityLabelLike(computed.deviceGB)} device`);
 });
 test('one board that is two devices still explains its interconnect', () => {
   // The note describing NVLink/PCIe was gated on the board count, so a single
@@ -898,6 +914,93 @@ test('one board that is two devices still explains its interconnect', () => {
   const notes = Object.values(h.out).join(' ');
   assert.ok(/NVLink|PCIe/.test(notes),
     'no interconnect note for a board whose two devices must talk to each other');
+});
+
+console.log('\nThe same silicon renders the same however it is packaged');
+test('two dual-GCD boards and four single-GCD boards produce identical output', () => {
+  /* The strongest guard available for this class, and the one that replaces
+     enumerating every rendered site: any surface that reads boards where it
+     should read devices differs between these two descriptions of the same
+     hardware. Prices are halved on the single-device card so even the cost
+     tiles match, leaving the board count in the "N× name" header as the only
+     legitimate difference. */
+  const dual = { ...dualGCD, name: 'X' };
+  const single = { ...dual, gb: dual.gb / 2, bw: dual.bw / 2, tflops: dual.tflops / 2,
+                   hyper: dual.hyper / 2, spec: dual.spec / 2, spot: dual.spot / 2, devices: 1 };
+  const cfg = { params: 70, layers: 80, bytesPerParam: 2, contextLength: 8192, concurrency: 16 };
+  const renderAll = (card, boards) => {
+    const h = renderHarness();
+    const state = asState(card, boards, cfg);
+    const computed = h.computeInference(state);
+    h.renderVerdict(state, computed);
+    h.renderGPUCards(state, computed);
+    h.renderExecutiveSummary(state, computed);
+    h.renderStrategyBadges(state, computed);
+    h.renderTraining(state, computed);
+    h.renderNotes(state);
+    h.renderThroughput(state, computed);
+    h.renderCapacity(state, computed);
+    h.out['__export'] = h.exportSummary(state, computed);
+    return h.out;
+  };
+  // Several pairs, not one. A gate written as `gpuCount > 1` reads the same for
+  // two boards as for four, so only the one-board pair can see it; a
+  // denominator written in boards is invisible at one board but not at four.
+  /* Two things are legitimately board-scoped and so legitimately differ: the
+     "N× card" hardware line, and any shortfall counted in boards — two dual-GCD
+     modules and four single-GCD ones are the same silicon but not the same
+     shopping list. Everything else must match exactly. */
+  const norm = (t) => (t || '').replace(/\d+× X/g, 'N× X').replace(/Need \d+\+ boards/g, 'Need N+ boards')
+    .replace(/requires \d+\+ boards/g, 'requires N+ boards');
+  // 8 boards = 16 devices, which is the only pair here that produces a
+  // data-parallel split and so the only one that renders the dp>1 captions.
+  for (const boards of [1, 2, 4, 8]) {
+    const a = renderAll(dual, boards), b = renderAll(single, boards * 2);
+    for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      assert.strictEqual(norm(a[id]), norm(b[id]),
+        `${id} differs between ${boards} dual-GCD board(s) and ${boards * 2} single-GCD boards ` +
+        'holding the same silicon');
+    }
+  }
+});
+test('the state builder carries the catalog device count to the page', () => {
+  // Deleting this one line disconnects the catalog from every derivation above
+  // while leaving the whole suite green — verified by review.
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const state = readInputStateFor(key, '1');
+    assert.strictEqual(state.gpuDevices, gpu.devices,
+      `${key}: state carries gpuDevices=${state.gpuDevices}, catalog says ${gpu.devices}`);
+  }
+});
+test('a compute-bound estimate is bound by the devices, not the boards', () => {
+  // The decode ceiling was the one arithmetic site no case exercised with
+  // devices > 1: every parity case is bandwidth-bound there.
+  const h = renderHarness();
+  const bound = { params: 30, activePercent: 10, contextLength: 256, concurrency: 256, layers: 48 };
+  const single = { ...dualGCD, gb: 64, bw: dualGCD.bw / 2, tflops: dualGCD.tflops / 2, devices: 1 };
+  const dual = h.computeInference(asState(dualGCD, 1, bound));
+  const two = h.computeInference(asState(single, 2, bound));
+  // Sized in boards the product deviceTFLOPS*deviceCount is unchanged; what
+  // moves is the interconnect penalty, which is 1.0 at one board and 0.85 at
+  // two devices. So the ceiling has to be compared where those disagree.
+  assert.ok(dual.computeBound || two.computeBound, 'the probe must sit on the compute ceiling');
+  assert.ok(Math.abs(dual.saturatedTokS - two.saturatedTokS) < 1,
+    `compute ceiling differs by packaging: ${dual.saturatedTokS} vs ${two.saturatedTokS}`);
+});
+test('a single dual-GCD board emits the flags its devices require', () => {
+  // Reverting the TP and expert-parallel gates in *both* engines at once is
+  // invisible to a cross-engine diff. These are absolute.
+  const h = renderHarness();
+  const state = asState(dualGCD, 1, { params: 8, layers: 32 });
+  const computed = h.computeInference(state);
+  const cmd = h.buildVllmCommand(state, computed, 'm');
+  assert.match(cmd, /--tensor-parallel-size 2/,
+    `one dual-GCD module needs TP=2 or half the silicon idles:\n${cmd}`);
+  const moe = asState(dualGCD, 1, { params: 30, activePercent: 10, layers: 48 });
+  const moeComputed = h.computeInference(moe);
+  assert.ok(moeComputed.isMoE, 'the probe must be an MoE');
+  assert.match(h.buildVllmCommand(moe, moeComputed, 'm'), /--enable-expert-parallel/,
+    'an MoE across two devices needs expert parallelism');
 });
 
 console.log('\nA verdict reads per-device numbers against per-device capacity');
