@@ -203,12 +203,21 @@ const scope=new Function(`${gib}\n${perf}\n${mp}\n${html.slice(s,e+2)}; return {
 const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
 if(!gt) throw new Error('GPU_TABLE not found in index.html');
 const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
+/* Keyed by catalog slug. Keying by display name meant reproducing
+   getGpuSpec()'s " GB" -> "GB" rewrite on both sides of this file, and the two
+   copies did not agree: the JS here anchored on /$/ while the Python below did
+   not. They match on all twelve current names and diverge on the first name
+   with " GB" anywhere but the end — which is the shape a multi-GCD board's name
+   takes. The failure would have been an opaque "cannot read properties of
+   undefined", not a diff. */
 const G={};
-for(const g of Object.values(GPU_TABLE)){
-  G[g.name.replace(/ GB$/,'GB')]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops};
+for(const [k,g] of Object.entries(GPU_TABLE)){
+  G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
+        name:g.name.replace(/ GB$/,'GB')};
 }
 const req=JSON.parse(process.argv[2]);
-const g=G[req.gpuName];
+const g=G[req.gpu];
+if(!g) throw new Error('no GPU_TABLE row for slug '+req.gpu);
 const out={};
 for (const key of Object.keys(scope.MODEL_PRESETS)) {
   const p=scope.MODEL_PRESETS[key];
@@ -218,7 +227,7 @@ for (const key of Object.keys(scope.MODEL_PRESETS)) {
     contextLength:req.ctx, concurrency:req.conc, gpuCount:req.n_gpu,
     hasNVLink:req.nvlink, kvBytesPerValue:req.kv_bpp,
     gpuGB:g.gb, gpuBandwidth:g.bw, gpuTFLOPS:g.tf, gpuHyperCost:g.h,
-    gpuSpecCost:g.sp, gpuSpotCost:g.st, gpuName:req.gpuName,
+    gpuSpecCost:g.sp, gpuSpotCost:g.st, gpuName:g.name,
     attnMode:p.attn||'standard', swaWindow:p.swaWin||0,
     swaLocalLayers:p.swaLocal||0, mlaLatentDim:p.mlaDim||0,
     modelMaxCtx:p.maxCtx||131072,
@@ -226,12 +235,6 @@ for (const key of Object.keys(scope.MODEL_PRESETS)) {
 }
 console.log(JSON.stringify(out));
 """
-
-# Derived from the generated table, not hand-maintained. index.html's getGpuSpec()
-# strips the space out of "H100 80 GB" before handing the name to computeInference();
-# mirror that so the oracle runner's lookup keys match.
-def display_name(slug):
-    return gr.GPUS[slug]["name"].replace(" GB", "GB")
 
 # Same field mapping parity.test.py uses — duplicated rather than imported,
 # consistent with every test file here being runnable and readable on its own.
@@ -250,7 +253,7 @@ JS_FIELDS = [
 js_dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
 
 print("\nJS engine as oracle (index.html's own MODEL_PRESETS + computeInference)")
-req_for_js = dict(REQ, bpp=BPP, gpuName=display_name(REQ["gpu"]))
+req_for_js = dict(REQ, bpp=BPP)
 proc = subprocess.run(
     ["node", "-e", JS_ORACLE_RUNNER, os.path.join(ROOT, "index.html"), json.dumps(req_for_js)],
     capture_output=True, text=True)
