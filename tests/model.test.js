@@ -657,6 +657,26 @@ test('every row carries the structural fields the engines read', () => {
   }
 });
 
+console.log('\nThe analytics notice and the beacon travel together');
+test('both regions are marked exactly once, so setup.sh can remove them as a pair', () => {
+  for (const tag of ['ANALYTICS-BEACON', 'ANALYTICS-NOTICE']) {
+    for (const end of ['BEGIN', 'END']) {
+      const n = (html.match(new RegExp(`${tag}:${end}`, 'g')) || []).length;
+      assert.strictEqual(n, 1, `${tag}:${end} appears ${n} times, expected 1`);
+    }
+  }
+});
+test('the page never counts views without saying so, or says so without counting', () => {
+  // A fork that deletes the beacon and keeps the footer line would claim
+  // telemetry it does not have; keeping the beacon without the line is the
+  // undisclosed-tracking case this notice exists to end. Neither may happen.
+  const beacon = /<script data-goatcounter=/.test(html);
+  const notice = /counts views with/.test(html);
+  assert.strictEqual(beacon, notice,
+    beacon ? 'the beacon is present but the footer notice is not'
+           : 'the footer notice describes a beacon that is not there');
+});
+
 console.log('\nCONTRIBUTING.md describes the tool that exists');
 const contributing = fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8');
 test('the documented parameter buckets are the ones the lookup can select', () => {
