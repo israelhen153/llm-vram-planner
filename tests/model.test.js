@@ -60,7 +60,7 @@ const gpuForKey = (key) => {
   assert.ok(m, `benchmark key "${key}" is not <params>b-<gpu slug>`);
   const g = GPU_TABLE[m[2]];
   assert.ok(g, `benchmark key "${key}" names GPU "${m[2]}", which is not in GPU_TABLE`);
-  return { params: Number(m[1]), gpu: displayName(g), gb: g.gb };
+  return { params: Number(m[1]), slug: m[2], gpu: displayName(g), gb: g.gb };
 };
 
 const state = (o = {}) => {
@@ -417,13 +417,13 @@ const findBenchmark = new Function(
 
 test('buckets match the table documented in CONTRIBUTING.md', () => {
   // 7b covers 5-7B, 8b covers 8-10B. These were inverted.
-  const a = findBenchmark(7, 'A100 80GB', 80), b = findBenchmark(8, 'A100 80GB', 80);
+  const a = findBenchmark(7, 'a100-80'), b = findBenchmark(8, 'a100-80');
   assert.ok(a.exact && b.exact, 'both should be exact matches');
   assert.strictEqual(a.data.tokS, benchmarks.data['7b-a100-80'].tokS);
   assert.strictEqual(b.data.tokS, benchmarks.data['8b-a100-80'].tokS);
 });
 test('an unmatched size degrades to the nearest entry on the SAME GPU', () => {
-  const hit = findBenchmark(26, 'A100 40GB', 40);
+  const hit = findBenchmark(26, 'a100-40');
   assert.ok(hit, 'should fall back rather than return nothing');
   assert.strictEqual(hit.exact, false, 'must be flagged as inexact');
   assert.strictEqual(hit.requestedParams, 26);
@@ -432,10 +432,10 @@ test('an unmatched size degrades to the nearest entry on the SAME GPU', () => {
 });
 test('the fallback picks the closest bucket, not just any', () => {
   // H100 has 8b/14b/27b/70b. 30B lands in the 27b bucket, which exists.
-  assert.ok(findBenchmark(30, 'H100 80GB', 80).exact, '30B is covered by the 27b bucket');
+  assert.ok(findBenchmark(30, 'h100-80').exact, '30B is covered by the 27b bucket');
   // 35B lands in the 32b bucket, which has no H100 entry — a genuine gap.
   // Candidates are 27 (dist 8) and 70 (dist 35), so it must choose 27.
-  const gap = findBenchmark(35, 'H100 80GB', 80);
+  const gap = findBenchmark(35, 'h100-80');
   assert.strictEqual(gap.exact, false);
   assert.strictEqual(gap.nearestParams, 27, 'must pick 27B over 70B on distance');
   assert.strictEqual(gap.slower, true, 'a 35B model is slower than a 27B measurement');
@@ -443,22 +443,49 @@ test('the fallback picks the closest bucket, not just any', () => {
 test('the fallback reports direction correctly in both directions', () => {
   // 4B on B200: only a 27b entry exists, so the nearest match is larger and
   // the user's model is the faster one.
-  const smaller = findBenchmark(4, 'B200 192GB', 192);
+  const smaller = findBenchmark(4, 'b200-192');
   assert.strictEqual(smaller.slower, false, '4B is faster than the 27B match');
 });
 test('fallback never crosses to a different GPU', () => {
-  const hit = findBenchmark(4, 'B200 192GB', 192);
+  const hit = findBenchmark(4, 'b200-192');
   assert.ok(hit, 'B200 has a 27b entry to fall back to');
   assert.strictEqual(hit.exact, false);
   assert.strictEqual(hit.data.tokS, benchmarks.data['27b-b200-192'].tokS,
     'must stay on the B200, not borrow an A100 number');
 });
 test('a GPU with no data at all returns nothing', () => {
-  assert.strictEqual(findBenchmark(8, 'T4 16GB', 16), null);
-  assert.strictEqual(findBenchmark(8, 'L40S 48GB', 48), null);
+  assert.strictEqual(findBenchmark(8, 't4-16'), null);
+  assert.strictEqual(findBenchmark(8, 'l40s-48'), null);
+});
+test('the cards the old name map could never reach now answer from the data', () => {
+  /* T4, RTX 6000 Ada and RTX PRO 6000 matched no branch of the display-name
+     chain findBenchmark() used to open with, so they returned null before a
+     single key was examined — contributed measurements for them would not have
+     rendered. They have no data today, so the answer is still "nothing", but it
+     is now the data saying so: adding a key for one of them is enough to make it
+     appear, which is what CONTRIBUTING.md promises. */
+  for (const slug of ['t4-16', 'rtx6000ada-48', 'rtxpro-96']) {
+    assert.ok(GPU_TABLE[slug], `${slug} missing from GPU_TABLE`);
+    const keys = Object.keys(benchmarks.data).filter(k => k.endsWith(`-${slug}`));
+    assert.strictEqual(keys.length, 0, `${slug} now has data — this test needs updating`);
+    assert.strictEqual(findBenchmark(8, slug), null, `${slug} should report no benchmark`);
+  }
+});
+test('a card only reachable by slug resolves once data exists for it', () => {
+  /* The point of the change: the lookup is decided by the data, not by whether
+     someone remembered to add a branch. Probe with a synthetic table so the
+     assertion does not depend on what benchmarks/data.json happens to hold. */
+  const withData = new Function(
+    `const BENCHMARK_DATA = ${JSON.stringify({ '8b-rtxpro-96': { tokS: 4242, src: 'synthetic', note: 'test', prec: 'bf16' } })};
+     ${bucketDecl[0]}
+     ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
+  )();
+  const hit = withData(8, 'rtxpro-96');
+  assert.ok(hit && hit.exact, 'RTX PRO 6000 should match its own entry');
+  assert.strictEqual(hit.data.tokS, 4242);
 });
 test('sizes beyond every bucket still fall back rather than throwing', () => {
-  const hit = findBenchmark(400, 'H100 80GB', 80);
+  const hit = findBenchmark(400, 'h100-80');
   assert.ok(hit && hit.exact === false, '400B has no bucket but should degrade');
   assert.strictEqual(hit.nearestParams, 70);
 });
@@ -467,10 +494,10 @@ test('every benchmark key is reachable as an exact match', () => {
   // data file have drifted apart.
   const PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
   for (const key of Object.keys(benchmarks.data)) {
-    const { gpu: name, gb } = gpuForKey(key);
+    const { slug, gpu: name } = gpuForKey(key);
     const size = key.match(/^(\d+b)-/)[1];
     assert.ok(PROBE[size], `${key} has size bucket "${size}" with no probe value`);
-    const hit = findBenchmark(PROBE[size], name, gb);
+    const hit = findBenchmark(PROBE[size], slug);
     assert.ok(hit && hit.exact && hit.data.tokS === benchmarks.data[key].tokS,
       `${key} is unreachable: probing ${PROBE[size]}B on ${name} did not return it exactly`);
   }

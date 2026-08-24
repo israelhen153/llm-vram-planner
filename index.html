@@ -606,7 +606,7 @@ function getGpuSpec() {
   // in a separate hand-authored data-n attribute. Keep producing that exact string
   // here — by deriving it instead of hand-maintaining a second copy — so this
   // refactor doesn't quietly reflow text in already-published screenshots and reports.
-  return { gb: g.gb, bw: g.bw, hyper: g.hyper, spec: g.spec, spot: g.spot,
+  return { key: el.value, gb: g.gb, bw: g.bw, hyper: g.hyper, spec: g.spec, spot: g.spot,
            tflops: g.tflops, name: g.name.replace(/ GB$/, 'GB'),
            // Structural fields, carried through so the callers below read the
            // catalog rather than re-deriving a card's nature from its name.
@@ -807,7 +807,7 @@ function handleFileDrop(e) {
    bucket boundaries below and with the table in CONTRIBUTING.md. */
 const BUCKET_PARAMS = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
 
-function findBenchmark(paramCount, gpuName, gpuGB) {
+function findBenchmark(paramCount, gpuKey) {
   // Map param count to size bucket
   // Buckets follow the table in CONTRIBUTING.md. These were previously inverted
   // (<=8 mapped to "8b", <=10 to "7b"), so 7B models scored against 8B data.
@@ -821,18 +821,14 @@ function findBenchmark(paramCount, gpuName, gpuGB) {
   else if (paramCount <= 80) sizeBucket = '70b';
   else sizeBucket = null;
 
-  // Map GPU to key
-  let gpuKey = '';
-  if (gpuName.includes('A100') && gpuGB >= 80) gpuKey = 'a100-80';
-  else if (gpuName.includes('A100') && gpuGB < 80) gpuKey = 'a100-40';
-  else if (gpuName.includes('H100')) gpuKey = 'h100-80';
-  else if (gpuName.includes('H200')) gpuKey = 'h200-141';
-  else if (gpuName.includes('B200')) gpuKey = 'b200-192';
-  else if (gpuName.includes('5090')) gpuKey = 'rtx5090-32';
-  else if (gpuName.includes('4090')) gpuKey = 'rtx4090-24';
-  else if (gpuName.includes('L40S')) gpuKey = 'l40s-48';
-  else if (gpuName.includes('L4 ')) gpuKey = 'l4-24';
-  else return null;
+  /* The GPU half of a benchmark key is a catalog slug, and the caller already
+   * has one — this used to reverse the display name back into a slug with a
+   * ninth hand-maintained name map, three GPU refactors after the other four
+   * were retired. That map, not the data, decided which cards could ever show
+   * a benchmark: T4, RTX 6000 Ada and RTX PRO 6000 matched no branch and fell
+   * out of the chain as a bare `return null`, so contributing measurements for
+   * them would have changed nothing on screen. Reading the slug means a card
+   * shows whatever data exists for it, and cards with none say so. */
 
   const exact = sizeBucket && BENCHMARK_DATA[`${sizeBucket}-${gpuKey}`];
   if (exact) return { data: exact, exact: true, bucket: sizeBucket };
@@ -887,6 +883,9 @@ function readInputState() {
     gpuSpecCost: gpu.spec,
     gpuSpotCost: gpu.spot,
     gpuName: gpu.name,
+    // The catalog slug, carried through so nothing downstream has to reverse
+    // the display name back into one.
+    gpuKey: gpu.key,
     /* computeInference() has looked this up in PERF since the constants were
        hoisted, and nothing set it — every card silently took the nvidia
        fallback. It is the card's own vendor, never a user input: constants that
@@ -1364,7 +1363,7 @@ function renderThroughput(state, computed) {
    * else is shown as a reference point for the GPU and explicitly not scored —
    * a ratio between our 27B estimate and someone's 8B measurement is a number
    * with no meaning, and printing one is how the old fallback misled people. */
-  const benchmark = findBenchmark(state.params, state.gpuName, state.gpuGB);
+  const benchmark = findBenchmark(state.params, state.gpuKey);
   if (benchmark) {
     const b = benchmark.data;
     const mode = b.mode || 'batch';

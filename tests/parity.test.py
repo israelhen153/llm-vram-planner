@@ -126,17 +126,24 @@ const ci=new Function(`${gib}\n${perf}\n${html.slice(s,e+2)}; return computeInfe
 const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
 if(!gt) throw new Error('GPU_TABLE not found in index.html');
 const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
+/* Keyed by catalog slug, which is what a case names. Keying by display name
+   meant reproducing getGpuSpec()'s " GB" -> "GB" rewrite here, and this copy
+   was unanchored where the source anchors on /$/ — the two agree on all twelve
+   current names and disagree on the first name with " GB" in the middle of it,
+   as a card carrying a parenthesised suffix would have. */
 const G={};
-for(const g of Object.values(GPU_TABLE)){
-  G[g.name.replace(/ GB$/,'GB')]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops};
+for(const [k,g] of Object.entries(GPU_TABLE)){
+  G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
+        name:g.name.replace(/ GB$/,'GB')};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
-  const g=G[c.gpuName];
+  const g=G[c.gpu];
+  if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
   return ci({params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
-    gpuSpotCost:g.st,gpuName:c.gpuName,
+    gpuSpotCost:g.st,gpuName:g.name,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
@@ -145,13 +152,7 @@ const out=JSON.parse(process.argv[2]).map(c=>{
 console.log(JSON.stringify(out));
 """
 
-# Derived from the table both engines are generated from, not hand-maintained.
-# getGpuSpec() in index.html strips the space out of "H100 80 GB" before handing
-# the name to computeInference(); mirror that so the JS runner keys match.
-def display_name(slug):
-    return GPUS[slug]["name"].replace(" GB", "GB")
-
-js_in = [dict(c, gpuName=display_name(c["gpu"]), max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
+js_in = [dict(c, max_ctx=c.get("max_ctx", 1048576)) for c in CASES]
 proc = subprocess.run(
     ["node", "-e", js_runner, os.path.join(ROOT, "index.html"), json.dumps(js_in)],
     capture_output=True, text=True)
