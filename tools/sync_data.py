@@ -43,16 +43,88 @@ def load_gpus():
         return json.load(f)["data"]
 
 
-def js_num(v):
-    # JSON and JS share number syntax, so json.dumps already renders a Python
-    # int/float the way a JS numeric literal needs (16, 0.76, 12.3, ...).
-    return json.dumps(v)
+# Field order for both generated blocks, and the contract each renderer emits.
+# Optional fields are written only on the rows that carry them: `default` marks
+# exactly one card, and a `default: false` on the other eleven would be a value
+# nobody wrote in data/gpus.json.
+FIELDS = ("gb", "bw", "hyper", "spec", "spot", "tflops", "name",
+          "vendor", "devices", "form", "caps")
+OPTIONAL_FIELDS = ("default",)
+
+# A JS identifier, i.e. an object key that needs no quotes.
+IDENT_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
 
 def js_str(v):
     # Single-quoted, matching MODEL_PRESETS/WORKLOAD_PROFILES style elsewhere
     # in index.html's inline script.
     return "'" + v.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def js_key(k):
+    return k if IDENT_RE.match(k) else js_str(k)
+
+
+def js_value(v):
+    """Render a JSON value as a JavaScript literal.
+
+    Per-type rather than json.dumps because the generated block follows the
+    surrounding file's style — single-quoted strings, unquoted keys — and
+    because the row schema now nests (caps: { fp8: true }) and is expected to
+    hold arrays (aliases) before v1.1 is done. bool is tested before int on
+    purpose: bool is an int subclass in Python, so the other order renders
+    true as 1.
+    """
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        # JSON and JS share number syntax, so json.dumps already renders a
+        # Python int/float the way a JS numeric literal needs.
+        return json.dumps(v)
+    if isinstance(v, str):
+        return js_str(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(js_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{js_key(k)}: {js_value(x)}" for k, x in v.items()) + " }"
+    raise SystemExit(f"data/gpus.json: no JS rendering for {type(v).__name__}: {v!r}")
+
+
+def py_value(v):
+    """Render a JSON value as a Python literal.
+
+    json.dumps is not usable here as-is: it emits true/false, which are not
+    Python. Everything else it gets right, but a dict of JSON values needs
+    the same recursion the JS side has, so both sides are written the same way
+    and stay easy to compare.
+    """
+    if isinstance(v, bool):
+        return "True" if v else "False"
+    if isinstance(v, (int, float, str)):
+        return json.dumps(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(py_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{json.dumps(k)}: {py_value(x)}" for k, x in v.items()) + "}"
+    raise SystemExit(f"data/gpus.json: no Python rendering for {type(v).__name__}: {v!r}")
+
+
+def row_fields(gpu_key, gpu, value, key, sep):
+    """The one field list both renderers walk, so they cannot diverge.
+
+    value/key render a single value and a single field name in the target
+    language; sep joins the pairs. Everything else about a row — which fields,
+    in what order, and which may be absent — is decided here, once.
+    """
+    missing = [f for f in FIELDS if f not in gpu]
+    if missing:
+        raise SystemExit(
+            f"data/gpus.json: row {gpu_key!r} is missing required field(s) {missing}. "
+            "Every row carries every field in FIELDS; only "
+            f"{list(OPTIONAL_FIELDS)} may be absent."
+        )
+    names = list(FIELDS) + [f for f in OPTIONAL_FIELDS if f in gpu]
+    return sep.join(f"{key(f)}{value(gpu[f])}" for f in names)
 
 
 def render_js_block(gpus):
@@ -62,12 +134,7 @@ def render_js_block(gpus):
         "const GPU_TABLE = {",
     ]
     for key, g in gpus.items():
-        row = ", ".join([
-            f"gb:{js_num(g['gb'])}", f"bw:{js_num(g['bw'])}",
-            f"hyper:{js_num(g['hyper'])}", f"spec:{js_num(g['spec'])}",
-            f"spot:{js_num(g['spot'])}", f"tflops:{js_num(g['tflops'])}",
-            f"name:{js_str(g['name'])}",
-        ])
+        row = row_fields(key, g, js_value, lambda f: f"{f}:", ", ")
         lines.append(f"  {js_str(key)}: {{ {row} }},")
     lines.append("};")
     lines.append(f"/* {END_TAG} */")
@@ -81,12 +148,7 @@ def render_py_block(gpus):
         "GPUS = {",
     ]
     for key, g in gpus.items():
-        row = ", ".join([
-            f'"gb":{json.dumps(g["gb"])}', f'"bw":{json.dumps(g["bw"])}',
-            f'"hyper":{json.dumps(g["hyper"])}', f'"spec":{json.dumps(g["spec"])}',
-            f'"spot":{json.dumps(g["spot"])}', f'"tflops":{json.dumps(g["tflops"])}',
-            f'"name":{json.dumps(g["name"])}',
-        ])
+        row = row_fields(key, g, py_value, lambda f: f'"{f}":', ",")
         lines.append(f'    "{key}": {{{row}}},')
     lines.append("}")
     lines.append(f"# {END_TAG}")

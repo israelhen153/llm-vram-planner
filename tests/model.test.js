@@ -522,5 +522,56 @@ test('links shared before the token format resolve as they always did', () => {
   }
 });
 
+console.log('\nNVLink is a property of the card');
+/* The interconnect dropdown defaults to "NVLink / NVSwitch" and seven of the
+   twelve catalogued cards have no NVLink at all, so that default silently
+   applied a 0.85 multi-GPU scaling factor to consumer and PCIe boards. The gate
+   is a one-line function over the catalog's `form`, extracted here from source
+   for the same reason PERF and GIB are: a change to the real rule must not be
+   able to pass a test that carries its own copy. */
+const nvDecl = html.match(/^function supportsNVLink\(gpu\) \{.*\}$/m);
+assert.ok(nvDecl, 'supportsNVLink() not found in index.html');
+const supportsNVLink = new Function(`${nvDecl[0]}; return supportsNVLink;`)();
+
+test('NVLink follows the catalog form, not the card name', () => {
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    assert.strictEqual(supportsNVLink(gpu), gpu.form === 'sxm',
+      `${key} (form=${gpu.form}) answered ${supportsNVLink(gpu)}`);
+  }
+});
+test('the consumer and PCIe boards are refused NVLink', () => {
+  // Named explicitly: this is the live bug, and a catalog edit that quietly
+  // relabels one of these as sxm should have to change this list too.
+  for (const key of ['t4-16', 'l4-24', 'rtx4090-24', 'rtx5090-32',
+                     'rtx6000ada-48', 'l40s-48', 'rtxpro-96']) {
+    assert.ok(GPU_TABLE[key], `${key} missing from GPU_TABLE`);
+    assert.strictEqual(supportsNVLink(GPU_TABLE[key]), false, `${key} was granted NVLink`);
+  }
+});
+test('the SXM boards still have it', () => {
+  for (const key of ['a100-40', 'a100-80', 'h100-80', 'h200-141', 'b200-192']) {
+    assert.ok(GPU_TABLE[key], `${key} missing from GPU_TABLE`);
+    assert.strictEqual(supportsNVLink(GPU_TABLE[key]), true, `${key} lost NVLink`);
+  }
+});
+
+console.log('\nThe catalog names its own default card');
+test('exactly one row carries default:true, and DEFAULT_GPU_KEY is derived from it', () => {
+  const flagged = Object.keys(GPU_TABLE).filter(k => GPU_TABLE[k].default);
+  assert.strictEqual(flagged.length, 1, `rows flagged default: ${flagged.join(', ') || 'none'}`);
+  const decl = html.match(/^const DEFAULT_GPU_KEY = .+;$/m);
+  assert.ok(decl, 'DEFAULT_GPU_KEY not found in index.html');
+  const key = new Function(`const GPU_TABLE = ${JSON.stringify(GPU_TABLE)}; ${decl[0]}; return DEFAULT_GPU_KEY;`)();
+  assert.strictEqual(key, flagged[0], `DEFAULT_GPU_KEY=${key} but the catalog flags ${flagged[0]}`);
+});
+test('every row carries the structural fields the engines read', () => {
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    assert.strictEqual(typeof gpu.vendor, 'string', `${key}.vendor`);
+    assert.strictEqual(typeof gpu.devices, 'number', `${key}.devices`);
+    assert.ok(['sxm', 'pcie', 'consumer'].includes(gpu.form), `${key}.form=${gpu.form}`);
+    assert.strictEqual(typeof gpu.caps?.fp8, 'boolean', `${key}.caps.fp8`);
+  }
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

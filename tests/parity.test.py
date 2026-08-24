@@ -37,7 +37,7 @@ wanted = {"GIB", "GPUS", "PERF"}
 # cfg/comp as plain dicts and gpu_count as a plain int), so wanted stays as-is —
 # they just need to ride along in the same exec() so build_vllm_cmd can call
 # split_parallelism, plus shlex in ns below since build_vllm_cmd shells out to it.
-wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism"}
+wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -51,6 +51,7 @@ exec(compile(ast.Module(body=nodes, type_ignores=[]), "<gr>", "exec"), ns)
 for name in sorted(wanted):
     assert name in ns, f"{name} not extracted from generate_report.py — is it still a top-level assignment?"
 compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
+supports_nvlink = ns["supports_nvlink"]
 build_vllm_cmd = ns["build_vllm_cmd"]
 
 # ---- run the JS model on the same inputs ----------------------------------
@@ -215,14 +216,21 @@ for case, js in zip(CASES, js_results):
 
 # The GPU tables are maintained twice. Drift there is silent and produces
 # confidently wrong numbers, so compare them field by field.
-js_gpus = json.loads(subprocess.run(
+js_side = json.loads(subprocess.run(
     ["node", "-e", """
 const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');
 const gt=h.match(/^const GPU_TABLE = \\{[\\s\\S]*?\\n\\};$/m);
 if(!gt) throw new Error('GPU_TABLE not found in index.html');
-console.log(JSON.stringify(new Function(`${gt[0]}; return GPU_TABLE;`)()));""",
+const T=new Function(`${gt[0]}; return GPU_TABLE;`)();
+const fn=h.match(/^function supportsNVLink\\(gpu\\) \\{.*\\}$/m);
+if(!fn) throw new Error('supportsNVLink() not found in index.html');
+const supportsNVLink=new Function(`${fn[0]}; return supportsNVLink;`)();
+const nvlink={};
+for(const [k,g] of Object.entries(T)) nvlink[k]=supportsNVLink(g);
+console.log(JSON.stringify({table:T, nvlink}));""",
      os.path.join(ROOT, "index.html")],
     capture_output=True, text=True).stdout)
+js_gpus = js_side["table"]
 
 # Both engines now key on the slug, so compare on that and treat `name` as an
 # ordinary field. Joining on the display name (as this did while the names were
@@ -236,9 +244,15 @@ if set(GPUS) != set(js_gpus):
 else:
     drift = []
     for key in sorted(GPUS):
-        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "name"):
-            a, b = GPUS[key][f], js_gpus[key][f]
-            differs = (a != b) if f == "name" else (abs(a - b) > 1e-9)
+        # Numeric fields compare with a tolerance; everything else — names,
+        # vendor, form, the caps object, the optional default flag — is an
+        # exact match, and .get() rather than [] so a field present on one
+        # side only reads as drift instead of raising.
+        for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
+                  "name", "vendor", "devices", "form", "caps", "default"):
+            a, b = GPUS[key].get(f), js_gpus[key].get(f)
+            numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
+            differs = (abs(a - b) > 1e-9) if numeric else (a != b)
             if differs:
                 drift.append(f"{key}.{f}: py={a!r} js={b!r}")
     if drift:
@@ -278,6 +292,40 @@ for label, inline in (("generate_report.py", GPUS), ("index.html", js_gpus)):
     else:
         print(f"  ok   {label}'s GPU_TABLE block matches data/gpus.json")
         passed += 1
+
+# ---- the NVLink gate, card by card ---------------------------------------
+# Both engines decide whether a card can have NVLink at all, and both decide it
+# from the catalog's `form`. If they ever disagree, the web tool and the PDF
+# apply different interconnect scaling to the same hardware — a 0.85 factor on
+# one side and a PCIe curve on the other — with nothing else to catch it: the
+# compute() diff above is driven by cases that state nvlink explicitly.
+nv_drift = [f"{k}: py={supports_nvlink(GPUS[k])} js={js_side['nvlink'].get(k)}"
+            for k in sorted(GPUS)
+            if supports_nvlink(GPUS[k]) != js_side["nvlink"].get(k)]
+if nv_drift:
+    print("  FAIL the two engines disagree about which cards have NVLink")
+    for d in nv_drift:
+        print(f"       {d}")
+    failed += 1
+else:
+    print(f"  ok   both engines gate NVLink on the same cards ({len(GPUS)} cards)")
+    passed += 1
+
+# Two-sided on purpose: a gate that answers the same way for every card would
+# pass the agreement check above while being useless. The catalog must contain
+# both kinds, and every answer must follow `form` rather than the card's name.
+with_nv = sorted(k for k in GPUS if supports_nvlink(GPUS[k]))
+without_nv = sorted(k for k in GPUS if not supports_nvlink(GPUS[k]))
+by_form = sorted(k for k, g in GPUS.items() if g["form"] == "sxm")
+if not with_nv or not without_nv:
+    print(f"  FAIL the NVLink gate is not discriminating: with={with_nv} without={without_nv}")
+    failed += 1
+elif with_nv != by_form:
+    print(f"  FAIL NVLink support does not track `form`: gate={with_nv} sxm={by_form}")
+    failed += 1
+else:
+    print(f"  ok   NVLink tracks `form`: {len(with_nv)} cards have it, {len(without_nv)} do not")
+    passed += 1
 
 # The same guard is owed to BENCHMARK_DATA, which has had this hole since v1.0:
 # tests/model.test.js substitutes benchmarks/data.json in place of the inline copy

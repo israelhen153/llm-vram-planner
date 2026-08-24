@@ -680,5 +680,170 @@ test("a PRESETS field compute() has never heard of still reaches cfg through eve
      check_unrecognised_field_reaches_every_builder)
 
 
+# ---- NVLink is a property of the card, not a default -----------------------
+# Every builder here defaulted nvlink to True. Seven of the twelve catalogued
+# cards have no NVLink at all, so a 2x RTX 4090 report claimed an interconnect
+# that does not exist and took the 0.85 multi-GPU scaling that goes with it.
+# The gate is the catalog's `form`, and index.html gates on the same field —
+# parity.test.py compares the two answers card by card.
+print("\nNVLink is gated on the card, in every builder")
+
+NO_NVLINK_GPU = "rtx4090-24"   # consumer board, no NVLink
+NVLINK_GPU = "a100-80"         # SXM board, has it
+
+def check_cli_gates_nvlink():
+    for key, gpu in gr.GPUS.items():
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.ngpu, args.no_nvlink = key, 2, False
+        cfg = gr.from_cli_args(args)
+        want = gr.supports_nvlink(gpu)
+        assert cfg["nvlink"] == want, (
+            f"{key}: --no-nvlink absent gave nvlink={cfg['nvlink']!r}, "
+            f"but form={gpu['form']!r} means {want}")
+
+test("from_cli_args grants NVLink to exactly the cards that have it", check_cli_gates_nvlink)
+
+
+def check_json_cannot_assert_nvlink():
+    path = write_json({"preset": "llama31-8b", "gpu": NO_NVLINK_GPU, "n_gpu": 2, "nvlink": True})
+    try:
+        cfg = gr.from_json(path)
+    finally:
+        os.remove(path)
+    assert cfg["nvlink"] is False, (
+        f'a JSON config asking for NVLink on {NO_NVLINK_GPU} got {cfg["nvlink"]!r}')
+
+test("from_json: an explicit nvlink:true on a card without NVLink is refused, not honoured",
+     check_json_cannot_assert_nvlink)
+
+
+def check_raw_json_cannot_assert_nvlink():
+    path = write_json({"params": 8, "layers": 32, "kv_heads": 8,
+                       "gpu": NO_NVLINK_GPU, "n_gpu": 2, "nvlink": True})
+    try:
+        cfg = gr.from_json(path)
+    finally:
+        os.remove(path)
+    assert cfg["nvlink"] is False, (
+        f'the raw (non-preset) branch honoured nvlink:true on {NO_NVLINK_GPU}: {cfg["nvlink"]!r}')
+
+test("from_json raw branch: nvlink:true on a card without NVLink is refused too",
+     check_raw_json_cannot_assert_nvlink)
+
+
+def run_interactive_on(gpu_key, n_gpu, nvlink_answer=None):
+    """interactive_mode() against one card, with the NVLink prompt supplied only
+    when the card is expected to be asked about it. If that expectation is
+    wrong the mocked input runs out of answers (or consumes the wrong one) and
+    the test fails — which is the point: the prompt should not appear for a
+    board that cannot do it."""
+    answers = [
+        str(list(gr.PRESETS.keys()).index("llama31-8b") + 1),
+        str(list(gr.GPUS.keys()).index(gpu_key) + 1),
+        str(n_gpu),
+    ]
+    if nvlink_answer is not None:
+        answers.append(nvlink_answer)
+    answers += ["3", "n", str(REQ["ctx"]), str(REQ["conc"])]
+    with unittest.mock.patch("builtins.input", side_effect=answers), \
+         contextlib.redirect_stdout(io.StringIO()):
+        return gr.interactive_mode()
+
+
+def check_interactive_skips_the_prompt():
+    cfg = run_interactive_on(NO_NVLINK_GPU, 2)
+    assert cfg["nvlink"] is False, f'{NO_NVLINK_GPU} came back with nvlink={cfg["nvlink"]!r}'
+
+test("interactive_mode does not ask about NVLink on a card that has none",
+     check_interactive_skips_the_prompt)
+
+
+def check_interactive_still_asks_where_it_matters():
+    cfg = run_interactive_on(NVLINK_GPU, 2, nvlink_answer="y")
+    assert cfg["nvlink"] is True, f'{NVLINK_GPU} came back with nvlink={cfg["nvlink"]!r}'
+    cfg = run_interactive_on(NVLINK_GPU, 2, nvlink_answer="n")
+    assert cfg["nvlink"] is False, "answering n must still mean PCIe"
+
+test("interactive_mode still asks — and honours the answer — on a card that has NVLink",
+     check_interactive_still_asks_where_it_matters)
+
+
+# ---- the vendor the PERF lookup has been reading all along ------------------
+# compute() has looked up PERF[cfg["vendor"]] since the constants were hoisted,
+# and no builder ever set the key, so every report silently took the nvidia
+# fallback. That is harmless while nvidia is the only vendor in the table and
+# actively wrong the moment it is not.
+print("\nEvery builder sets the vendor its constants are chosen by")
+
+def check_every_builder_sets_vendor():
+    want = gr.GPUS[REQ["gpu"]]["vendor"]
+    cli_cfg = gr.from_cli_args(cli_args_for("llama31-8b"))
+    assert cli_cfg.get("vendor") == want, f"from_cli_args: {cli_cfg.get('vendor')!r}"
+
+    path = write_json({"preset": "llama31-8b", "gpu": REQ["gpu"]})
+    try:
+        json_cfg = gr.from_json(path)
+    finally:
+        os.remove(path)
+    assert json_cfg.get("vendor") == want, f"from_json: {json_cfg.get('vendor')!r}"
+
+    path = write_json({"params": 8, "layers": 32, "kv_heads": 8, "gpu": REQ["gpu"]})
+    try:
+        raw_cfg = gr.from_json(path)
+    finally:
+        os.remove(path)
+    assert raw_cfg.get("vendor") == want, f"from_json raw branch: {raw_cfg.get('vendor')!r}"
+
+    interactive_cfg = run_interactive_on(REQ["gpu"], 1)
+    assert interactive_cfg.get("vendor") == want, f"interactive_mode: {interactive_cfg.get('vendor')!r}"
+
+test("from_cli_args / from_json / raw JSON / interactive_mode all set cfg['vendor']",
+     check_every_builder_sets_vendor)
+
+
+def check_vendor_tracks_the_card_not_the_json():
+    path = write_json({"preset": "llama31-8b", "gpu": REQ["gpu"], "vendor": "amd"})
+    try:
+        cfg = gr.from_json(path)
+    finally:
+        os.remove(path)
+    assert cfg["vendor"] == gr.GPUS[REQ["gpu"]]["vendor"], (
+        "a JSON-supplied vendor overrode the card's own — that would run NVIDIA "
+        f"hardware on another vendor's constants: {cfg['vendor']!r}")
+
+test("a vendor in the JSON cannot override the selected card's own",
+     check_vendor_tracks_the_card_not_the_json)
+
+
+def check_perf_lookup_actually_resolves():
+    cfg = gr.from_cli_args(cli_args_for("llama31-8b"))
+    assert cfg["vendor"] in gr.PERF, (
+        f"cfg['vendor']={cfg['vendor']!r} is not a key in PERF, so compute() is "
+        "still taking the fallback branch this commit exists to retire")
+    comp = gr.compute(cfg)
+    assert comp["perf_mbu"] == gr.PERF[cfg["vendor"]]["mbu"], (
+        "compute() did not use the constants belonging to cfg['vendor']")
+
+test("the vendor a builder sets is a real PERF key, and compute() uses its constants",
+     check_perf_lookup_actually_resolves)
+
+
+# ---- the default card is the catalog's, not a slug written in four places ---
+def check_default_gpu_key_comes_from_the_catalog():
+    flagged = [k for k, g in gr.GPUS.items() if g.get("default")]
+    assert flagged == [gr.DEFAULT_GPU_KEY], (
+        f"the catalog flags {flagged} as default but DEFAULT_GPU_KEY is {gr.DEFAULT_GPU_KEY!r}")
+    path = write_json({"preset": "llama31-8b"})
+    try:
+        cfg = gr.from_json(path)
+    finally:
+        os.remove(path)
+    assert cfg["gpu"] is gr.GPUS[gr.DEFAULT_GPU_KEY], (
+        f'a config naming no GPU resolved to {cfg["gpu"]["name"]!r}')
+
+test("a config that names no GPU gets the one the catalog marks default",
+     check_default_gpu_key_comes_from_the_catalog)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)
