@@ -164,8 +164,8 @@ asserts every key resolves to a catalog row.
 - **Code changes**: open an issue first to discuss before submitting a PR
 - **Model presets**: add to `MODEL_PRESETS` in `index.html` **and** `PRESETS` in
   `generate_report.py` — the model is implemented twice on purpose and
-  `tests/parity.test.py` compares the two, so a preset added to one engine fails
-  the suite. Include every architecture parameter: layers, KV heads, head dim,
+  `tests/report.test.py` runs `index.html`'s own `MODEL_PRESETS` against Python's
+  `compute()` as an oracle, so a preset added to one engine fails the suite. Include every architecture parameter: layers, KV heads, head dim,
   and the attention regime with the field that gives it meaning (`swa_win` +
   `swa_local`, or `mla_dim`).
 
