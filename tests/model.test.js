@@ -759,11 +759,76 @@ test('the current format resolves without going near the legacy path', () => {
 });
 test('an unresolvable link is reported to the user, not absorbed', () => {
   // The decoder returning null is only half the fix; loadURLHash has to say so.
-  assert.ok(/else warnUnresolvedGpu\(raw\)/.test(html),
-    'loadURLHash does not call warnUnresolvedGpu() when the gpu param resolves to nothing');
-  assert.ok(/id="gpu-url-warning"/.test(html), 'the warning has nowhere to render');
-  assert.ok(/el\.textContent = /.test(html.slice(html.indexOf('function warnUnresolvedGpu'))),
-    'the warning must be set as text, never as HTML — raw comes from the URL');
+  assert.ok(/urlRestoreLost\.push\(\{ id: 'gpu-model'/.test(html),
+    'loadURLHash does not record the GPU when the gpu param resolves to nothing');
+  assert.ok(/id="url-restore-warning"/.test(html), 'the notice has nowhere to render');
+  assert.ok(/el\.textContent = /.test(html.slice(html.indexOf('function renderRestoreNotice'))),
+    'the notice must be set as text, never as HTML — every raw value came from the URL');
+});
+test('every parameter loadURLHash sets is checked, not assumed', () => {
+  // The GPU used to be the only one that reported failure. A precision or a
+  // preset that a link names and this version does not have lands on a default
+  // just as silently, and the number on screen is then nobody's configuration.
+  const body = html.slice(html.indexOf('function loadURLHash'), html.indexOf('function copyURL'));
+  const setters = body.match(/setVal\(/g) || [];
+  assert.strictEqual(setters.length, 0,
+    `loadURLHash still assigns ${setters.length} parameter(s) without checking they took`);
+  for (const label of ['the weight precision', 'the KV cache precision', 'the model preset',
+                       'the interconnect', 'the GPU']) {
+    assert.ok(body.includes(label) || html.includes(`label: '${label}'`),
+      `no failure path reports ${label}`);
+  }
+});
+test('the notice names what was lost, and stops naming it once it is fixed', () => {
+  /* Runs the real renderRestoreNotice() against a stub DOM rather than
+     asserting on its source, so the retraction is exercised rather than
+     described. The stub is three fields and a notice element — everything the
+     function touches. */
+  const decl = html.slice(html.indexOf('let urlRestoreLost'), html.indexOf('function loadURLHash'));
+  const el = (v) => ({ value: v, style: { display: 'none' }, textContent: '' });
+  const dom = {
+    'url-restore-warning': el(''),
+    'gpu-model': el('a100-40'),
+    'weight-precision': el('2'),
+  };
+  const run = new Function('document', `${decl}
+    return {
+      set: (l) => { urlRestoreLost = l; },
+      render: () => renderRestoreNotice(),
+    };`)({ getElementById: (id) => dom[id] });
+
+  run.set([
+    { id: 'gpu-model', label: 'the GPU', raw: 'h100-999', fallback: 'a100-40' },
+    { id: 'weight-precision', label: 'the weight precision', raw: 'q9', fallback: '2' },
+  ]);
+  run.render();
+  const notice = dom['url-restore-warning'];
+  assert.strictEqual(notice.style.display, '', 'the notice should be visible');
+  assert.ok(notice.textContent.includes('h100-999') && notice.textContent.includes('q9'),
+    `both lost values should be named: ${notice.textContent}`);
+
+  // The user picks a real card. That entry must drop; the other must remain.
+  dom['gpu-model'].value = 'h100-80';
+  run.render();
+  assert.ok(!notice.textContent.includes('h100-999'),
+    `the fixed field is still named: ${notice.textContent}`);
+  assert.ok(notice.textContent.includes('q9'), 'the unfixed field should still be named');
+  assert.strictEqual(notice.style.display, '', 'the notice should still be visible');
+
+  // And once everything is dealt with, it goes away entirely.
+  dom['weight-precision'].value = '1';
+  run.render();
+  assert.strictEqual(notice.style.display, 'none', 'the notice should have retracted');
+});
+test('the notice retracts itself once the user fixes the field', () => {
+  // It described the link at load. After the user picks a different card it is
+  // describing a configuration nobody is looking at, which is its own false
+  // claim — so entries are filtered against the field's current value.
+  const fn = html.slice(html.indexOf('function renderRestoreNotice'));
+  assert.ok(/filter\(e => document\.getElementById\(e\.id\)\.value === e\.fallback\)/.test(fn),
+    'renderRestoreNotice does not drop entries whose field has since changed');
+  assert.ok(/renderRestoreNotice\(\);/.test(html.slice(html.indexOf('function recalculate'))),
+    'renderRestoreNotice is never re-run, so the notice cannot retract');
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
