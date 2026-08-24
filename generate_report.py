@@ -390,6 +390,11 @@ def compute(cfg):
         "ttft_ms": ttft_ms, "ttft_cold_ms": ttft_cold_ms, "ttft_warm_ms": ttft_warm_ms,
         "kv_saved_by_prefix_gb": kv_saved_by_prefix_gb, "eff_prefix": eff_prefix, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
         "is_moe": is_moe, "total_tokens": total_tokens,
+        "device_count": device_count, "device_gb": device_gb,
+        # The device view, so a renderer never has to re-derive it and get
+        # it wrong: per-device figures must be read against per-device
+        # capacity, not against the board they share.
+        "device_count": device_count, "device_gb": device_gb,
         "fits": fits, "comfortable": comfortable,
     }
 
@@ -463,7 +468,9 @@ def build_vllm_cmd(cfg, comp):
     # setting, independent of anything to do with TP/DP.
     if not cfg.get("prefix_caching", True):
         parts.append("    --no-enable-prefix-caching \\")
-    if comp["is_moe"] and device_count_for(cfg) > 1:
+    # tp * dp is the device count by construction — same expression as
+    # index.html, so the two cannot drift on this flag.
+    if comp["is_moe"] and tp * dp > 1:
         parts.append("    --enable-expert-parallel \\")
     parts.append("    --gpu-memory-utilization 0.90 \\")
     parts.append(f"    --max-model-len {min(comp['max_ctx_1'], cfg['ctx'])}")
@@ -653,16 +660,23 @@ class ReportCard:
         if c["comfortable"]:
             style_name = "VerdictOK"
             icon = "FITS"
-            msg = f"{fmt_gb(c['per_total'])} per GPU of {gpu['gb']} GiB ({round(c['per_total']/gpu['gb']*100)}%). Headroom available."
+            msg = (f"{fmt_gb(c['per_total'])} per device of {fmt_gb(c['device_gb'])} "
+                   f"({round(c['per_total'] / c['device_gb'] * 100)}%). Headroom available.")
         elif c["fits"]:
             style_name = "VerdictWarn"
             icon = "TIGHT"
-            msg = f"{fmt_gb(c['per_total'])} per GPU of {gpu['gb']} GiB ({round(c['per_total']/gpu['gb']*100)}%). Risk of OOM under load."
+            msg = (f"{fmt_gb(c['per_total'])} per device of {fmt_gb(c['device_gb'])} "
+                   f"({round(c['per_total'] / c['device_gb'] * 100)}%). Risk of OOM under load.")
         else:
             style_name = "VerdictErr"
             icon = "DOES NOT FIT"
-            need = math.ceil(c["total_gb"] / (gpu["gb"] * 0.9))
-            msg = f"Over by {fmt_gb(c['per_total'] - gpu['gb'])} per GPU. Need {need}+ GPUs or lower precision."
+            # Against device capacity, and against a board count the reader
+            # can act on. Measured per board while dividing per device, this
+            # printed "Over by 0 GiB" on a configuration that does not fit.
+            need = math.ceil(c["total_gb"] / (c["device_gb"] * 0.9))
+            per_board = c["device_count"] // cfg["n_gpu"] if cfg["n_gpu"] else 1
+            msg = (f"Over by {fmt_gb(c['per_total'] - c['device_gb'])} per device. "
+                   f"Need {math.ceil(need / max(per_board, 1))}+ boards or lower precision.")
         story.append(Paragraph(f"[{icon}] {msg}", self.styles[style_name]))
         story.append(Spacer(1, 4*mm))
 
@@ -692,8 +706,8 @@ class ReportCard:
         # same PDF, emitted --tensor-parallel-size 4 --data-parallel-size 3 —
         # one document contradicting itself.
         tp, dp = split_parallelism(device_count_for(cfg))
-        parallelism_label = "Single GPU"
-        if cfg["n_gpu"] > 1:
+        parallelism_label = "Single device"
+        if device_count_for(cfg) > 1:
             parallelism_label = f"Tensor parallel (TP={tp})" + (f" + data parallel (DP={dp})" if dp > 1 else "")
         gpu_data = [
             ["GPU model", gpu["name"]],
@@ -803,8 +817,8 @@ class ReportCard:
         notes = []
         notes.append(f"KV cache uses {'FP8 (1 byte/value)' if cfg.get('kv_bpp', 2) < 2 else 'BF16 (2 bytes/value)'} "
                       f"{'— enabled via --kv-cache-dtype fp8' if cfg.get('kv_bpp', 2) < 2 else '— default vLLM behavior'}.")
-        notes.append("VRAM estimates include ~1.5 GB CUDA context overhead per GPU.")
-        if cfg["n_gpu"] > 1:
+        notes.append("VRAM estimates include ~1.5 GB CUDA context overhead per device.")
+        if device_count_for(cfg) > 1:
             notes.append(f"{'NVLink' if cfg.get('nvlink') else 'PCIe'} interconnect assumed. "
                          f"{'NVLink provides 600-900 GB/s bidirectional.' if cfg.get('nvlink') else 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.'}")
             notes.append(f"NCCL buffers add ~0.3 GB per GPU peer connection.")
@@ -905,7 +919,7 @@ def interactive_mode():
     gpu = GPUS[gpu_key]
 
     n_gpu = int(input("GPU count [1]: ").strip() or "1")
-    if n_gpu > 1 and supports_nvlink(gpu):
+    if n_gpu * (gpu.get("devices", 1) or 1) > 1 and supports_nvlink(gpu):
         nvlink = input("NVLink? [y/n, default y]: ").strip().lower() != "n"
     else:
         nvlink = False

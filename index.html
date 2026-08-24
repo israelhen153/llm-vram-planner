@@ -1261,8 +1261,8 @@ function renderStrategyBadges(state, computed) {
   // --enable-expert-parallel flag from disagreeing about the same config.
   const { tp, dp } = parallelismFor(state);
   let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
-  html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${state.gpuCount > 1 ? 'TP=' + tp + (dp > 1 ? ' × DP=' + dp : '') : 'Single GPU'}</span>`;
-  if (state.gpuCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more GPUs</span>';
+  html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${computed.deviceCount > 1 ? 'TP=' + tp + (dp > 1 ? ' × DP=' + dp : '') : 'Single device'}</span>`;
+  if (computed.deviceCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more GPUs</span>';
   if (computed.isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
   if (state.kvBytesPerValue < 2) html += '<span class="badge" style="background:var(--success-bg);color:var(--success-text)">FP8 KV cache</span>';
   html += '</div>';
@@ -1275,14 +1275,14 @@ function renderGPUCards(state, computed) {
   // branch below, because the NVLink/PCIe sharding line at the bottom of
   // this function applies to every gpuCount > 1, individual cards included.
   const { tp, dp } = parallelismFor(state);
-  const maxBarValue = Math.max(perGPU.total, state.gpuGB) * 1.05;
+  const maxBarValue = Math.max(perGPU.total, computed.deviceGB) * 1.05;
   const weightsPct = Math.max(perGPU.weights / maxBarValue * 100, 0.5);
   const kvPct = Math.max(perGPU.kvCache / maxBarValue * 100, 0.5);
   const actPct = Math.max(perGPU.activations / maxBarValue * 100, 0.5);
   const ohPct = Math.max(perGPU.overhead / maxBarValue * 100, 0.5);
-  const freeGB = state.gpuGB - perGPU.total;
+  const freeGB = computed.deviceGB - perGPU.total;
   const freePct = freeGB > 0 ? freeGB / maxBarValue * 100 : 0;
-  const usagePct = Math.round(perGPU.total / state.gpuGB * 100);
+  const usagePct = Math.round(perGPU.total / computed.deviceGB * 100);
   let html = '';
 
   // Build the VRAM bar segments (reused for both individual and condensed views)
@@ -1297,32 +1297,32 @@ function renderGPUCards(state, computed) {
     return bar;
   }
 
-  if (state.gpuCount <= 4) {
+  if (computed.deviceCount <= 4) {
     // Individual GPU cards
-    html += `<div class="gpu-grid" style="grid-template-columns:repeat(${state.gpuCount},1fr)">`;
-    for (let i = 0; i < state.gpuCount; i++) {
-      const layerStart = Math.floor(state.layers / state.gpuCount * i);
-      const layerEnd = Math.floor(state.layers / state.gpuCount * (i + 1)) - 1;
+    html += `<div class="gpu-grid" style="grid-template-columns:repeat(${computed.deviceCount},1fr)">`;
+    for (let i = 0; i < computed.deviceCount; i++) {
+      const layerStart = Math.floor(state.layers / computed.deviceCount * i);
+      const layerEnd = Math.floor(state.layers / computed.deviceCount * (i + 1)) - 1;
       html += '<div class="gpu-card">';
       html += `<p class="gpu-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-device-desktop"></use></svg>GPU ${i}`;
-      if (state.gpuCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
+      if (computed.deviceCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
       html += '</p>';
       html += buildBar(14);
-      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${state.gpuGB} GiB (${Math.min(usagePct, 999)}%)${state.gpuCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
+      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.min(usagePct, 999)}%)${computed.deviceCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
     }
     html += '</div>';
   } else {
     // Condensed view for 5+ GPUs
-    const layersPerGPU = Math.ceil(state.layers / state.gpuCount);
+    const layersPerGPU = Math.ceil(state.layers / computed.deviceCount);
 
     html += '<div class="gpu-card" style="margin:10px 0">';
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
     if (state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
     html += '</p>';
-    html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each GPU — ${formatGB(perGPU.total)} / ${state.gpuGB} GiB (${Math.min(usagePct, 999)}%)</div>`;
+    html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each device — ${formatGB(perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.min(usagePct, 999)}%)</div>`;
     html += buildBar(10);
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0">';
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(state.gpuGB * state.gpuCount)}</b></div>`;
+    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(computed.totalVRAM)}</b></div>`;
     // dp > 1 (only possible above 8 GPUs — see splitParallelism) means the
     // command shards tp-way, not gpuCount-way, but this tile's own number is
     // still weights_gb / gpuCount (compute() isn't changed here — that's a
@@ -1357,7 +1357,7 @@ function renderGPUCards(state, computed) {
   // tile above is already the one place that states the real split, so this
   // line just drops the factor there instead of picking a number to repeat.
   // Below 9 GPUs (dp === 1) nothing here was wrong, so it is unchanged.
-  if (state.gpuCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
+  if (computed.deviceCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
     ? (state.hasNVLink ? 'NVLink — all-reduce across GPUs' : 'PCIe — 5-12x slower all-reduce')
     : (state.hasNVLink ? 'NVLink — sharded ' + state.gpuCount + '-way, each GPU holds 1/' + state.gpuCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
   setHTML('gpu-cards', html);
@@ -1369,9 +1369,9 @@ function renderMetrics(computed) {
 
 function renderVerdict(state, computed) {
   let html;
-  if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%).</div>`;
-  else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB. May OOM under load.</div>`;
-  else { const needed = Math.ceil(computed.totalGB / (state.gpuGB * 0.9)); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - state.gpuGB)} per GPU. Need ${needed}+ GPUs or lower precision.</div>`; }
+  if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%).</div>`;
+  else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)}. May OOM under load.</div>`;
+  else { const needed = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9)); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - state.gpuGB)} per GPU. Need ${needed}+ GPUs or lower precision.</div>`; }
   setHTML('verdict-output', html);
 }
 
@@ -1483,7 +1483,9 @@ function buildVllmCommand(state, computed, modelPath) {
   // isMoE read from computed (compute()'s own output), not re-derived from a
   // preset lookup — one source, so this can never disagree with the badges
   // or verdict, which already read it from the same place.
-  if (computed.isMoE && state.gpuCount > 1) cmd += '    --enable-expert-parallel \\\n';
+  // tp * dp is the device count by construction, so this needs nothing from
+  // outside the split it already computed — and cannot drift from it.
+  if (computed.isMoE && tp * dp > 1) cmd += '    --enable-expert-parallel \\\n';
   cmd += '    --gpu-memory-utilization 0.90 \\\n';
   cmd += `    --max-model-len ${Math.min(computed.maxContextSingleUser, state.contextLength)}`;
   return cmd;
@@ -1717,7 +1719,7 @@ function renderExecutiveSummary(state, computed) {
 
   // Key metrics in clean rows
   html += `<div class="exec-row"><span class="exec-label">Hardware</span><span class="exec-value">${state.gpuCount}× ${state.gpuName}</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB per GPU (${Math.round(computed.perGPU.total / state.gpuGB * 100)}%)</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} per device (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%)</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Max concurrent users (8K context)</span><span class="exec-value">${Math.max(computed.maxConcurrentAt8K, 0)}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec</span></div>`;
@@ -1725,7 +1727,7 @@ function renderExecutiveSummary(state, computed) {
   html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
 
   if (!computed.fits) {
-    const needed = Math.ceil(computed.totalGB / (state.gpuGB * 0.9));
+    const needed = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9));
     html += `<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);background:var(--danger-bg);color:var(--danger-text);font-size:13px"><svg class="ti-ico" style="margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg><b>Action needed:</b> This model requires ${needed}+ GPUs of this type, or a lower precision (e.g. INT4), or a smaller model. Current configuration cannot serve this model.</div>`;
   }
 
@@ -1764,7 +1766,7 @@ function exportSummary() {
   report += `- Layers: ${state.layers}, KV heads: ${state.kvHeads}, head dim: ${state.headDim}\n`;
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
   report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${state.gpuCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
-  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-GPU: ${formatGB(computed.perGPU.total)} / ${state.gpuGB} GiB (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
+  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-device: ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
   // Same caveat as the on-screen warning banner (renderGPUCards), repeated
   // here because this copy-pasted summary is exactly the artifact that
   // leaves the screen it was computed on — a reader downstream of the clip

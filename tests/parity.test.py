@@ -503,9 +503,23 @@ for n in GPU_COUNTS:
             "kv_bpp": KV_BPP_VALUES[(g // 2) % len(KV_BPP_VALUES)],
             "ctx": CTX_VALUES[g % len(CTX_VALUES)],
             "hf_model": HF_MODEL_VALUES[g % len(HF_MODEL_VALUES)],
+            "devices": 1,
             "skip_reason": None,
         })
         i += 1
+
+# Every scenario above is a board that is one device, which is every card in
+# today's catalog — so the whole command path was compared with the device
+# derivation switched off. A dual-GCD board changes both flags that depend on
+# it: a single module needs --tensor-parallel-size 2, and an MoE on it needs
+# --enable-expert-parallel, neither of which a board count implies.
+for n in (1, 2, 4, 9):
+    for moe in (True, False):
+        MATRIX.append({
+            "n_gpu": n, "devices": 2, "prefix_caching": True, "fits": True,
+            "quant": None, "is_moe": moe, "kv_bpp": 2, "ctx": 8192,
+            "hf_model": "/opt/models/YourModel", "skip_reason": None,
+        })
 
 EXTRA_CASES = [
     # is_moe=True paired with n_gpu=1: the grid above never produces this —
@@ -542,6 +556,7 @@ for unsafe in UNSAFE_HF_MODELS:
 py_cmds = [
     build_vllm_cmd(
         {"hf_model": m["hf_model"], "ctx": m["ctx"], "n_gpu": m["n_gpu"],
+         "gpu": {"devices": m.get("devices", 1)},
          "quant": m["quant"], "prefix_caching": m["prefix_caching"],
          "kv_bpp": m["kv_bpp"]},
         {"fits": m["fits"], "is_moe": m["is_moe"], "max_ctx_1": MAX_CTX_1},
