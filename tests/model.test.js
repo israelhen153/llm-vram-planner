@@ -639,6 +639,95 @@ test('the SXM boards still have it', () => {
   }
 });
 
+/* Running the real readInputState() against a stub DOM. The predicate tests
+   above pin supportsNVLink(); they do not pin the two places that call it, and
+   a review demonstrated that removing BOTH — the gate in readInputState and the
+   clamp in syncInterconnect — reintroduces the original bug with the whole
+   suite still green. This drives the actual state builder instead. */
+const domStub = (gpuKey, interconnect) => {
+  const el = (v, extra = {}) => ({ value: v, style: {}, options: [], ...extra });
+  const fields = {
+    'gpu-model': el(gpuKey),
+    'interconnect': el(interconnect),
+    'param-count': el('8'), 'active-percent': el('100'), 'layer-count': el('32'),
+    'kv-head-count': el('8'), 'head-dim': el('128'), 'shared-experts': el('0'),
+    'context-length': el('8192'), 'concurrency': el('1'), 'gpu-count': el('2'),
+    'shared-prefix': el('0'), 'prefix-caching': el('1'),
+    'kv-precision': el('2'), 'preset': el(''),
+    'weight-precision': el('2', { selectedOptions: [{ dataset: { q: '' } }] }),
+  };
+  return { getElementById: (id) => fields[id], fields };
+};
+const readInputStateFor = (gpuKey, interconnect) => {
+  const dom = domStub(gpuKey, interconnect);
+  const src = html.slice(html.indexOf('function getVal(id)'), html.indexOf('/* Vendor-keyed performance constants'));
+  const fn = new Function('document', 'GPU_TABLE', `
+    let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
+    let currentModelMaxCtx = 131072, importedModelId = null;
+    ${src}
+    return readInputState;`)(dom, GPU_TABLE);
+  return fn();
+};
+
+console.log('\nThe NVLink gate as the state builder actually applies it');
+test('a card without NVLink cannot report NVLink, whatever the control says', () => {
+  for (const key of ['t4-16', 'l4-24', 'rtx4090-24', 'rtx5090-32',
+                     'rtx6000ada-48', 'l40s-48', 'rtxpro-96']) {
+    const state = readInputStateFor(key, '1');   // the control asking for NVLink
+    assert.strictEqual(state.hasNVLink, false,
+      `${key} reported hasNVLink=true with the interconnect set to NVLink`);
+  }
+});
+test('an SXM card still honours the control in both positions', () => {
+  for (const key of ['a100-40', 'a100-80', 'h100-80', 'h200-141', 'b200-192']) {
+    assert.strictEqual(readInputStateFor(key, '1').hasNVLink, true, `${key} lost NVLink`);
+    assert.strictEqual(readInputStateFor(key, '0').hasNVLink, false, `${key} ignored PCIe`);
+  }
+});
+test('the state carries the vendor its constants are chosen by', () => {
+  const state = readInputStateFor('h100-80', '1');
+  assert.strictEqual(state.vendor, GPU_TABLE['h100-80'].vendor);
+  assert.ok(state.vendor, 'vendor must not be empty — PERF[vendor] would fall back silently');
+});
+
+console.log('\nThe interconnect control follows the card');
+const syncFor = (gpuKey, interconnect) => {
+  const dom = domStub(gpuKey, interconnect);
+  dom.fields['interconnect'].options = [{ value: '1', disabled: false, textContent: 'NVLink / NVSwitch' },
+                                        { value: '0', disabled: false, textContent: 'PCIe only' }];
+  const src = html.slice(html.indexOf('let interconnectForcedToPCIe'), html.indexOf('function recalculate'));
+  const fn = new Function('document', 'GPU_TABLE', `${nvDecl[0]}\n${src}; return syncInterconnect;`)(dom, GPU_TABLE);
+  fn();
+  return dom.fields['interconnect'];
+};
+test('selecting a card without NVLink disables the option and falls back to PCIe', () => {
+  const sel = syncFor('rtx4090-24', '1');
+  assert.strictEqual(sel.value, '0', 'should have fallen back to PCIe');
+  assert.strictEqual(sel.options[0].disabled, true, 'the NVLink option should be disabled');
+});
+test('switching back to an SXM card restores the NVLink it took away', () => {
+  // Reported by review: the clamp was one-way, so a reader who touched a 4090
+  // was left on PCIe on every card afterwards, quietly losing 0.85 scaling they
+  // never chose to give up.
+  const dom = domStub('rtx4090-24', '1');
+  dom.fields['interconnect'].options = [{ value: '1', disabled: false, textContent: '' },
+                                        { value: '0', disabled: false, textContent: '' }];
+  const src = html.slice(html.indexOf('let interconnectForcedToPCIe'), html.indexOf('function recalculate'));
+  const sync = new Function('document', 'GPU_TABLE', `${nvDecl[0]}\n${src}; return syncInterconnect;`)(dom, GPU_TABLE);
+  sync();
+  assert.strictEqual(dom.fields['interconnect'].value, '0', 'forced to PCIe on the 4090');
+  dom.fields['gpu-model'].value = 'h100-80';
+  sync();
+  assert.strictEqual(dom.fields['interconnect'].value, '1',
+    'switching to an SXM card should give back the NVLink the clamp removed');
+  assert.strictEqual(dom.fields['interconnect'].options[0].disabled, false);
+});
+test('a deliberate PCIe choice on an SXM card is not overridden', () => {
+  const sel = syncFor('h100-80', '0');
+  assert.strictEqual(sel.value, '0', 'the reader chose PCIe; leave it alone');
+  assert.strictEqual(sel.options[0].disabled, false);
+});
+
 console.log('\nThe catalog names its own default card');
 test('exactly one row carries default:true, and DEFAULT_GPU_KEY is derived from it', () => {
   const flagged = Object.keys(GPU_TABLE).filter(k => GPU_TABLE[k].default);
