@@ -33,14 +33,24 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TAGS = ("GPU_TABLE", "BENCHMARK_DATA")
 
 
+# A marker line opens with a comment: /* for index.html, # for the Python.
+# Requiring that is what stops a *value* inside the block from being mistaken
+# for its own end marker — a benchmark note discussing this tool by name is
+# ordinary contributor prose, and a row is always indented data, never a
+# comment. Without it the non-greedy match below ends at the poisoned row and
+# the replacement splices a new block into the middle of the old one, leaving
+# an orphaned `};` that stops the whole inline script from parsing.
+COMMENT_OPEN = r"^[ \t]*(?:/\*|#)[^\n]*"
+
+
 def block_re(tag):
-    """Match from the line carrying <tag>:BEGIN through the one carrying
-    <tag>:END, whatever comment syntax wraps them — so one replacement path
-    serves index.html's /* ... */ and generate_report.py's # ... alike. Not
+    """Match from the comment line carrying <tag>:BEGIN through the comment line
+    carrying <tag>:END, whatever comment syntax wraps them — so one replacement
+    path serves index.html's /* ... */ and generate_report.py's # ... alike. Not
     greedy: two tagged blocks in one file must not swallow each other."""
     return re.compile(
-        r"^.*" + re.escape(tag + ":BEGIN") + r".*$\n(?:.*\n)*?^.*"
-        + re.escape(tag + ":END") + r".*$",
+        COMMENT_OPEN + re.escape(tag + ":BEGIN") + r".*$\n(?:.*\n)*?"
+        + COMMENT_OPEN + re.escape(tag + ":END") + r".*$",
         re.MULTILINE,
     )
 
@@ -78,6 +88,12 @@ BENCH_OPTIONAL = ("estimated",)
 # A JS identifier, i.e. an object key that needs no quotes.
 IDENT_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
+# Belt as well as braces. The comment-line requirement above means a marker
+# inside a value can no longer break the replacement, but a value containing
+# one is still confusing to read and a hostage to the next change in this file,
+# so it is refused outright, naming the row and field that carry it.
+MARKER_RE = re.compile("(?:" + "|".join(re.escape(t) for t in TAGS) + "):(?:BEGIN|END)")
+
 
 def js_str(v):
     """Single-quoted, matching MODEL_PRESETS/WORKLOAD_PROFILES style elsewhere
@@ -93,10 +109,16 @@ def js_str(v):
     reason: a raw newline is a syntax error inside a single-quoted literal, and
     U+2028/9 are line terminators to JS but not to Python.
     """
-    return ("'" + v.replace("\\", "\\\\").replace("'", "\\'")
-            .replace("</", "<\\/")
-            .replace("\n", "\\n").replace("\r", "\\r")
-            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029") + "'")
+    out = v.replace("\\", "\\\\").replace("'", "\\'").replace("</", "<\\/")
+    # Every C0 control, not just the line terminators. A raw NUL is the one that
+    # bites without any of them: the HTML tokenizer rewrites it to U+FFFD before
+    # JavaScript ever sees the literal, so the note a contributor wrote is not
+    # the note the page shows — silently, and invisibly to a Node-based test,
+    # which never tokenises HTML. U+2028/9 end a line to JS but not to Python.
+    return "'" + "".join(
+        ch if (ch >= " " and ch not in "\u2028\u2029") else "\\u%04x" % ord(ch)
+        for ch in out
+    ) + "'"
 
 
 def js_key(k):
@@ -162,6 +184,15 @@ def row_fields(source, row_key, row, fields, optional, value, key, sep):
             f"Every row carries {list(fields)}; only {list(optional)} may be absent."
         )
     names = list(fields) + [f for f in optional if f in row]
+    for f in names:
+        found = MARKER_RE.search(str(row[f]))
+        if found:
+            raise SystemExit(
+                f"{source}: row {row_key!r} field {f!r} contains {found.group(0)!r}, "
+                "which is the text this tool uses to find the block it generates. "
+                "Reword it — the generated file would be ambiguous about where "
+                "its own data ends."
+            )
     return sep.join(f"{key(f)}{value(row[f])}" for f in names)
 
 
