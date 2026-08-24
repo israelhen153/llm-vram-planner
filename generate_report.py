@@ -852,7 +852,7 @@ class ReportCard:
                          f"across each of {dp} data-parallel groups, so the fit verdict on page 1 is optimistic. "
                          f"Reconciling this VRAM math with the real split is planned but not done yet.")
         notes.append("Parameter estimates from presets are approximate. Verify against the model's config.json.")
-        notes.append("GPU prices are mid-2026 per-GPU/hr estimates across 3 tiers: hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave/RunPod), spot/marketplace (Vast.ai). Reserved instances typically 30-60% off.")
+        notes.append("GPU prices are mid-2026 per-board/hr estimates across 3 tiers: hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave/RunPod), spot/marketplace (Vast.ai). Reserved instances typically 30-60% off.")
         for n in notes:
             story.append(Paragraph(f"• {n}", self.styles["Small"]))
             story.append(Spacer(1, 1*mm))
@@ -939,7 +939,7 @@ def interactive_mode():
         nvlink = input("NVLink? [y/n, default y]: ").strip().lower() != "n"
     else:
         nvlink = False
-        if n_gpu > 1:
+        if n_gpu * (gpu.get("devices", 1) or 1) > 1:
             print(f"{gpu['name']} has no NVLink — assuming PCIe.")
 
     print("\nPrecision options:")

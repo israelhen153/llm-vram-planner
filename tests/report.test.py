@@ -1024,5 +1024,30 @@ test("an integer capacity renders without a decimal in the PDF too",
      check_capacity_label_keeps_integers_integral)
 
 
+def check_interactive_gates_nvlink_on_devices():
+    """interactive_mode() decides whether to ask about NVLink at all.
+
+    Every card the existing harness can select is one device per board, so
+    n_gpu and the device count are always equal there and the gate could be
+    reverted to the board count with the suite green. This puts a dual-GCD
+    board in the catalog for the length of the test.
+    """
+    key = "__dual_probe"
+    gr.GPUS[key] = dict(DUAL, name="Dual probe")
+    try:
+        # One board, two devices: the prompt must be asked, and answering "n"
+        # must be honoured — a board-scoped gate would skip it and force PCIe.
+        cfg = run_interactive_on(key, 1, nvlink_answer="y")
+        assert cfg["nvlink"] is True, (
+            "interactive_mode did not ask about NVLink on a single board that is "
+            f"two devices: {cfg['nvlink']!r}")
+        assert run_interactive_on(key, 1, nvlink_answer="n")["nvlink"] is False
+    finally:
+        del gr.GPUS[key]
+
+test("interactive_mode asks about NVLink when one board is several devices",
+     check_interactive_gates_nvlink_on_devices)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

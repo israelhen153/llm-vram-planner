@@ -391,7 +391,7 @@ body.exec-mode .exec-summary { display: block; }
       <div class="field"><label>Gradient checkpointing <span class="info-tip" tabindex="0" role="img" aria-label="Recomputes activations during the backward pass to save VRAM, at the cost of roughly 20-30% slower training." data-tip="Recomputes activations during the backward pass to save VRAM, at the cost of roughly 20-30% slower training."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><select id="train-grad-ckpt" onchange="recalculate()"><option value="1" selected>Enabled (saves VRAM)</option><option value="0">Disabled (faster)</option></select></div>
     </div>
     <div class="grid-3" style="margin-top:8px">
-      <div class="field"><label>Batch size (per device) <span class="info-tip" tabindex="0" role="img" aria-label="Sequences processed per step on each GPU. Activation memory scales with this." data-tip="Sequences processed per step on each GPU. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="32" value="1" step="1" id="train-batch-size" oninput="recalculate()"><span class="slider-value" id="train-batch-size-display">1</span></div></div>
+      <div class="field"><label>Batch size (per device) <span class="info-tip" tabindex="0" role="img" aria-label="Sequences processed per step on each device. Activation memory scales with this." data-tip="Sequences processed per step on each device. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="32" value="1" step="1" id="train-batch-size" oninput="recalculate()"><span class="slider-value" id="train-batch-size-display">1</span></div></div>
       <div class="field"><label>Sequence length <span class="info-tip" tabindex="0" role="img" aria-label="Training sequence length in tokens. Activation memory scales with this." data-tip="Training sequence length in tokens. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="256" max="32768" value="2048" step="256" id="train-seq-len" oninput="recalculate()"><span class="slider-value" id="train-seq-len-display">2K</span></div></div>
       <div class="field"><label>LoRA rank <span class="info-tip" tabindex="0" role="img" aria-label="Rank of the LoRA adapter matrices. Higher rank means more trainable parameters and a bit more VRAM." data-tip="Rank of the LoRA adapter matrices. Higher rank means more trainable parameters and a bit more VRAM."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="4" max="256" value="16" step="4" id="train-lora-rank" oninput="recalculate()"><span class="slider-value" id="train-lora-rank-display">16</span></div></div>
     </div>
@@ -1274,7 +1274,7 @@ function renderStrategyBadges(state, computed) {
   const { tp, dp } = parallelismFor(state);
   let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
   html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${computed.deviceCount > 1 ? 'TP=' + tp + (dp > 1 ? ' × DP=' + dp : '') : 'Single device'}</span>`;
-  if (computed.deviceCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more GPUs</span>';
+  if (computed.deviceCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more devices</span>';
   if (computed.isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
   if (state.kvBytesPerValue < 2) html += '<span class="badge" style="background:var(--success-bg);color:var(--success-text)">FP8 KV cache</span>';
   html += '</div>';
@@ -1316,7 +1316,7 @@ function renderGPUCards(state, computed) {
       const layerStart = Math.floor(state.layers / computed.deviceCount * i);
       const layerEnd = Math.floor(state.layers / computed.deviceCount * (i + 1)) - 1;
       html += '<div class="gpu-card">';
-      html += `<p class="gpu-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-device-desktop"></use></svg>GPU ${i}`;
+      html += `<p class="gpu-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-device-desktop"></use></svg>Device ${i}`;
       if (computed.deviceCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
       html += '</p>';
       html += buildBar(14);
@@ -1344,7 +1344,7 @@ function renderGPUCards(state, computed) {
        way. */
     html += dp > 1
       ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per device</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${computed.deviceCount}</span></div>`
-      : `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.deviceCount}-way</b> (${formatGB(perGPU.weights)}/GPU)</div>`;
+      : `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.deviceCount}-way</b> (${formatGB(perGPU.weights)}/device)</div>`;
     // layersPerGPU = ceil(layers / deviceCount) has the same all-device assumption
     // baked in; same gating, so 1-8 is unchanged and only >8 gets the caveat.
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per device</span><br><b>~${layersPerGPU}</b> of ${state.layers}${dp > 1 ? '<br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ' + computed.deviceCount + '</span>' : ''}</div>`;
@@ -1372,7 +1372,7 @@ function renderGPUCards(state, computed) {
   // line just drops the factor there instead of picking a number to repeat.
   // Below 9 GPUs (dp === 1) nothing here was wrong, so it is unchanged.
   if (computed.deviceCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
-    ? (state.hasNVLink ? 'NVLink — all-reduce across GPUs' : 'PCIe — 5-12x slower all-reduce')
+    ? (state.hasNVLink ? 'NVLink — all-reduce across devices' : 'PCIe — 5-12x slower all-reduce')
     : (state.hasNVLink ? 'NVLink — sharded ' + computed.deviceCount + '-way, each device holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
   setHTML('gpu-cards', html);
 }
@@ -1665,9 +1665,9 @@ function renderNotes(state) {
   notes += state.kvBytesPerValue < 2 ? 'KV cache uses FP8 (1 byte/value) — enabled via --kv-cache-dtype fp8. ' : 'KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. ';
   notes += 'Throughput is a memory-bandwidth-bound decode estimate. ';
   if (state.sharedExperts > 0) notes += `Shared experts (${state.sharedExperts}) always active, included in activation memory. `;
-  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : 'PCIe 64-128 GB/s — 45-60% decode loss, growing with GPU count. ') + 'NCCL buffers ~0.3 GB/peer. ';
+  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ') + 'NCCL buffers ~0.3 GB/peer. ';
   notes += 'Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. ';
-  notes += 'GPU prices are mid-2026 per-GPU/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. ';
+  notes += 'GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. ';
   if (trainingEnabled) notes += 'Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation. ';
   setHTML('notes-output', notes);
 }

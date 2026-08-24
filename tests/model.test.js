@@ -1012,6 +1012,16 @@ test('an integer capacity renders without a decimal, stated absolutely', () => {
   assert.strictEqual(capacityLabelLike(141), '141 GiB');
   assert.strictEqual(capacityLabelLike(64), '64 GiB');
   assert.strictEqual(capacityLabelLike(128 / 3), '42.7 GiB');
+
+  /* Its sibling, which prints the bare number for the two places that carry
+     their own unit. It had no test at all, and it is the same regression
+     class: a snapshot card read "32.6 GiB / 16" on master and must still. */
+  const capacityNumberDecl = html.match(/^function capacityNumber\(gb\) .+$/m);
+  assert.ok(capacityNumberDecl, 'capacityNumber() not found in index.html');
+  const capacityNumber = new Function(`${capacityNumberDecl[0]}; return capacityNumber;`)();
+  assert.strictEqual(capacityNumber(16), '16');
+  assert.strictEqual(capacityNumber(80), '80');
+  assert.strictEqual(capacityNumber(128 / 3), '42.7');
 });
 test('the same bandwidth reads the same in the page and in the PDF', () => {
   // The page interpolated the raw quotient — 1092.2666666666667 GB/s — while
