@@ -228,7 +228,10 @@ if(!fn) throw new Error('supportsNVLink() not found in index.html');
 const supportsNVLink=new Function(`${fn[0]}; return supportsNVLink;`)();
 const nvlink={};
 for(const [k,g] of Object.entries(T)) nvlink[k]=supportsNVLink(g);
-console.log(JSON.stringify({table:T, nvlink}));""",
+const bd=h.match(/^const BENCHMARK_DATA = \\{[\\s\\S]*?\\n\\};$/m);
+if(!bd) throw new Error('BENCHMARK_DATA not found in index.html');
+const benchmarks=new Function(`${bd[0]}; return BENCHMARK_DATA;`)();
+console.log(JSON.stringify({table:T, nvlink, benchmarks}));""",
      os.path.join(ROOT, "index.html")],
     capture_output=True, text=True).stdout)
 js_gpus = js_side["table"]
@@ -328,11 +331,67 @@ else:
     print(f"  ok   NVLink tracks `form`: {len(with_nv)} cards have it, {len(without_nv)} do not")
     passed += 1
 
-# The same guard is owed to BENCHMARK_DATA, which has had this hole since v1.0:
-# tests/model.test.js substitutes benchmarks/data.json in place of the inline copy
-# when testing findBenchmark(), so the suite validates the JSON while the browser
-# runs the inline block, with nothing comparing them. It lands in the commit that
-# fixes the drift it finds, so this one stays green on its own terms.
+# ---- the same guard, for the benchmark table ------------------------------
+# BENCHMARK_DATA had this hole from v1.0 until the block became generated:
+# tests/model.test.js substituted benchmarks/data.json in place of the inline
+# copy when testing findBenchmark(), so the suite validated the JSON while the
+# browser ran the inline block and nothing compared them. They had drifted by
+# 16 fields across 13 rows — every `mode`, every `estimated`, every date and
+# url, plus six softened `src` strings — which is how two entries measured
+# single-stream were scored against an aggregate estimate on screen.
+bench_json = json.load(open(os.path.join(ROOT, "benchmarks", "data.json")))["data"]
+js_bench = js_side["benchmarks"]
+
+if js_bench != bench_json:
+    only_src = sorted(set(bench_json) - set(js_bench))
+    only_gen = sorted(set(js_bench) - set(bench_json))
+    diffs = [f"{k}.{f}: json={bench_json[k].get(f)!r} index.html={js_bench[k].get(f)!r}"
+             for k in sorted(set(bench_json) & set(js_bench))
+             for f in sorted(set(bench_json[k]) | set(js_bench[k]))
+             if bench_json[k].get(f) != js_bench[k].get(f)]
+    print("  FAIL index.html's BENCHMARK_DATA block is out of sync with benchmarks/data.json")
+    if only_src:
+        print(f"       missing from index.html: {only_src}")
+    if only_gen:
+        print(f"       not in the JSON: {only_gen}")
+    for d in diffs[:10]:
+        print(f"       {d}")
+    if len(diffs) > 10:
+        print(f"       ... and {len(diffs) - 10} more")
+    print("       run: python3 tools/sync_data.py")
+    failed += 1
+else:
+    print(f"  ok   index.html's BENCHMARK_DATA block matches benchmarks/data.json "
+          f"({len(bench_json)} entries)")
+    passed += 1
+
+# The fields that decide how an entry is *presented* rather than what it says.
+# Their absence is what made the drift invisible: a missing `mode` reads as
+# 'batch' at the call site and a missing `estimated` reads as "measured", so
+# both failure modes are silent and confident.
+presentation = [f"{k}: {f}" for k, e in sorted(bench_json.items())
+                for f in ("mode",) if f not in js_bench.get(k, {})]
+if presentation:
+    print("  FAIL entries in index.html are missing the fields that decide how they render")
+    for m in presentation[:10]:
+        print(f"       {m}")
+    failed += 1
+else:
+    est_json = {k for k, e in bench_json.items() if e.get("estimated")}
+    est_js = {k for k, e in js_bench.items() if e.get("estimated")}
+    single_js = {k for k, e in js_bench.items() if e.get("mode") == "single"}
+    if est_json != est_js:
+        print(f"  FAIL estimated entries differ: json={sorted(est_json)} index.html={sorted(est_js)}")
+        failed += 1
+    elif not est_js or not single_js:
+        print(f"  FAIL the presentation fields are not discriminating: "
+              f"estimated={sorted(est_js)} single={sorted(single_js)}")
+        failed += 1
+    else:
+        print(f"  ok   index.html carries mode on every entry, {len(est_js)} estimated "
+              f"and {len(single_js)} single-stream, same as the JSON")
+        passed += 1
+
 
 # ---- emitted vllm command, across a widened matrix -------------------------
 # Everything above compares compute() output — VRAM, throughput, verdicts —

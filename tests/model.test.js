@@ -403,17 +403,36 @@ test('the band scales the aggregate ceiling and nothing else', () => {
   assert.ok(c.aggregateObservedHiTokS < c.aggregateTokS, 'the band must sit below the ceiling');
 });
 
+/* One parameter count per bucket that lands squarely inside it — used to probe
+   the lookup from the data side. Mirrors BUCKET_PARAMS in index.html except for
+   '8b' and '32b', where the bucket's representative value sits on a boundary. */
+const BUCKET_PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
+
 console.log('\nBenchmark lookup');
 const fbStart = html.indexOf('function findBenchmark(');
 assert.notStrictEqual(fbStart, -1, 'findBenchmark() not found');
 const fbEnd = html.indexOf('\n}\n', fbStart);
 const bucketDecl = html.match(/^const BUCKET_PARAMS = .+;$/m);
 assert.ok(bucketDecl, 'BUCKET_PARAMS not found in index.html');
+/* The inline block, not benchmarks/data.json. This test file used to substitute
+   the JSON in place of the inline copy here, which meant the suite validated a
+   table the browser never runs — and the two had drifted by 16 fields, including
+   every `mode`, so the panel scored single-stream measurements against an
+   aggregate estimate with nothing to catch it. The block is generated from the
+   JSON now and tests/parity.test.py compares them; this reads what ships. */
+const benchDecl = html.match(/^const BENCHMARK_DATA = \{[\s\S]*?\n\};$/m);
+assert.ok(benchDecl, 'BENCHMARK_DATA constant not found in index.html');
+const INLINE_BENCHMARKS = new Function(`${benchDecl[0]}; return BENCHMARK_DATA;`)();
 const findBenchmark = new Function(
-  `const BENCHMARK_DATA = ${JSON.stringify(benchmarks.data)};
+  `${benchDecl[0]}
    ${bucketDecl[0]}
    ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
 )();
+
+test('the inline benchmark table is the one in benchmarks/data.json', () => {
+  assert.deepStrictEqual(INLINE_BENCHMARKS, benchmarks.data,
+    'index.html and benchmarks/data.json disagree — run: python3 tools/sync_data.py');
+});
 
 test('buckets match the table documented in CONTRIBUTING.md', () => {
   // 7b covers 5-7B, 8b covers 8-10B. These were inverted.
@@ -476,7 +495,7 @@ test('a card only reachable by slug resolves once data exists for it', () => {
      someone remembered to add a branch. Probe with a synthetic table so the
      assertion does not depend on what benchmarks/data.json happens to hold. */
   const withData = new Function(
-    `const BENCHMARK_DATA = ${JSON.stringify({ '8b-rtxpro-96': { tokS: 4242, src: 'synthetic', note: 'test', prec: 'bf16' } })};
+    `const BENCHMARK_DATA = ${JSON.stringify({ '8b-rtxpro-96': { tokS: 4242, mode: 'batch', src: 'synthetic', note: 'test', prec: 'bf16' } })};
      ${bucketDecl[0]}
      ${html.slice(fbStart, fbEnd + 2)}; return findBenchmark;`
   )();
@@ -492,7 +511,7 @@ test('sizes beyond every bucket still fall back rather than throwing', () => {
 test('every benchmark key is reachable as an exact match', () => {
   // A key nothing can select exactly is dead data — the bucket table and the
   // data file have drifted apart.
-  const PROBE = { '4b': 4, '7b': 7, '8b': 9, '14b': 13, '27b': 27, '32b': 35, '70b': 70 };
+  const PROBE = BUCKET_PROBE;
   for (const key of Object.keys(benchmarks.data)) {
     const { slug, gpu: name } = gpuForKey(key);
     const size = key.match(/^(\d+b)-/)[1];
@@ -500,6 +519,44 @@ test('every benchmark key is reachable as an exact match', () => {
     const hit = findBenchmark(PROBE[size], slug);
     assert.ok(hit && hit.exact && hit.data.tokS === benchmarks.data[key].tokS,
       `${key} is unreachable: probing ${PROBE[size]}B on ${name} did not return it exactly`);
+  }
+});
+
+console.log('\nThe benchmark panel compares like with like');
+/* The drift repro, kept as a test rather than a scratch script.
+   8b-rtx4090-24 is a single-stream llama.cpp measurement: 104 tok/s for one
+   user. The inline table carried no `mode`, the panel reads `b.mode || 'batch'`,
+   so it scored that measurement against the *aggregate at full batch* estimate
+   and reported 159% — a tool that says it is beating a published benchmark by
+   60% when it is actually 61% short of it. The comparison the panel makes is
+   reproduced here from the same inputs. */
+test('an 8B on an RTX 4090 is scored single-stream at ~39%, not batch at ~159%', () => {
+  const b = INLINE_BENCHMARKS['8b-rtx4090-24'];
+  assert.strictEqual(b.mode, 'single', 'this entry is a single-user llama.cpp figure');
+  const c = computeInference(state({ gpu: 'RTX 4090 24GB', params: 8, layers: 32 }));
+
+  // The panel's own rule: mode picks which of our two numbers is comparable.
+  const ours = b.mode === 'single' ? c.singleStreamTokS : c.saturatedTokS;
+  const shown = Math.round(ours / b.tokS * 100);
+  assert.strictEqual(ours, c.singleStreamTokS, 'must score against the single-stream estimate');
+  assert.ok(shown >= 35 && shown <= 45, `single-stream comparison showed ${shown}%, expected ~39%`);
+
+  // And what the missing field used to produce, so the flip is pinned in both
+  // directions: if this ever matches the line above, the fix has come undone.
+  const wasShown = Math.round(c.saturatedTokS / b.tokS * 100);
+  assert.ok(wasShown > 140, `the pre-fix batch comparison should be ~159%, got ${wasShown}%`);
+  assert.notStrictEqual(shown, wasShown, 'the two modes must not produce the same number');
+});
+test('every entry that says it is estimated arrives at the panel saying so', () => {
+  // `estimated` is what renders "estimated, not measured" next to the figure.
+  // It was absent from all 13 inline entries, so six extrapolated numbers were
+  // presented exactly like measured ones.
+  const flagged = Object.keys(INLINE_BENCHMARKS).filter(k => INLINE_BENCHMARKS[k].estimated);
+  assert.strictEqual(flagged.length, 6, `expected 6 estimated entries, got ${flagged.length}`);
+  for (const key of flagged) {
+    const hit = findBenchmark(BUCKET_PROBE[key.match(/^(\d+b)-/)[1]], key.replace(/^\d+b-/, ''));
+    assert.ok(hit, `${key} did not resolve`);
+    assert.strictEqual(hit.data.estimated, true, `${key} lost its estimated flag on the way out`);
   }
 });
 
