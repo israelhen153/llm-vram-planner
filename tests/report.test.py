@@ -928,7 +928,9 @@ def check_packaging_is_invisible_to_the_report():
             if "$" in t:
                 continue
             # Board counts: the GPU-count row and the cost table's multiplier.
-            if re.fullmatch(r"\d+", t) or t.startswith("Total/hr ("):
+            # The GPU-count row (boards, annotated with devices where they differ)
+            # and the cost table's multiplier are both counted in boards.
+            if re.fullmatch(r"\d+( \(\d+ devices\))?", t) or t.startswith("Total/hr ("):
                 continue
             t = re.sub(r"(Need|requires) \d+\+ boards", r"\1 N+ boards", t)
             out.append(re.sub(r"\b\d+x X", "Nx X", t))

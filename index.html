@@ -1551,7 +1551,7 @@ function renderTraining(state, computed) {
      PDF generator has no training model, so the parity suite cannot catch a
      drift here and the derivation is spelled out rather than borrowed. */
   const devicesPerBoard = state.gpuDevices || 1;
-  const gpuCount = state.gpuCount * devicesPerBoard;
+  const deviceCount = state.gpuCount * devicesPerBoard;   // not boards; the shard count
   const deviceGB = state.gpuGB / devicesPerBoard;
 
   let weightsGB, gradientsGB, optimizerGB, activationsGB, adapterGB = 0;
@@ -1560,24 +1560,24 @@ function renderTraining(state, computed) {
   if (method === 'full') {
     methodLabel = 'Full fine-tune';
     const weightBytes = Math.max(state.bytesPerParam, 2); // training needs BF16 minimum
-    weightsGB = (state.params * 1e9 * weightBytes) / GIB / gpuCount;
+    weightsGB = (state.params * 1e9 * weightBytes) / GIB / deviceCount;
     trainableParams = state.params * 1e9;
-    gradientsGB = (state.params * 1e9 * weightBytes) / GIB / gpuCount;
-    optimizerGB = (state.params * 1e9 * optimizerBytesPerParam) / GIB / gpuCount;
-    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / GIB / gpuCount;
+    gradientsGB = (state.params * 1e9 * weightBytes) / GIB / deviceCount;
+    optimizerGB = (state.params * 1e9 * optimizerBytesPerParam) / GIB / deviceCount;
+    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / GIB / deviceCount;
   } else {
     methodLabel = method === 'qlora' ? 'QLoRA' : 'LoRA';
     const baseBytes = method === 'qlora' ? 0.5 : Math.max(state.bytesPerParam, 2);
-    weightsGB = (state.params * 1e9 * baseBytes) / GIB / gpuCount;
+    weightsGB = (state.params * 1e9 * baseBytes) / GIB / deviceCount;
     const adapterParams = loraTargets * state.layers * 2 * loraRank * hiddenSize;
     trainableParams = adapterParams;
-    adapterGB = (adapterParams * 2) / GIB / gpuCount;
-    gradientsGB = (adapterParams * 2) / GIB / gpuCount;
-    optimizerGB = (adapterParams * optimizerBytesPerParam) / GIB / gpuCount;
-    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / GIB / gpuCount;
+    adapterGB = (adapterParams * 2) / GIB / deviceCount;
+    gradientsGB = (adapterParams * 2) / GIB / deviceCount;
+    optimizerGB = (adapterParams * optimizerBytesPerParam) / GIB / deviceCount;
+    activationsGB = (batchSize * seqLen * hiddenSize * state.layers * (gradCheckpoint ? 2 : 10)) / GIB / deviceCount;
   }
 
-  const overheadGB = 1.5 + (gpuCount > 1 ? 0.3 : 0);
+  const overheadGB = 1.5 + (deviceCount > 1 ? 0.3 : 0);
   const totalPerGPU = weightsGB + gradientsGB + optimizerGB + activationsGB + adapterGB + overheadGB;
   const fits = totalPerGPU <= deviceGB;
   const comfortable = totalPerGPU <= deviceGB * 0.9;
@@ -1589,7 +1589,7 @@ function renderTraining(state, computed) {
   // Verdict
   if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${capacityLabel(deviceGB)} per device (${usagePct}%).</div>`;
   else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${capacityLabel(deviceGB)} (${usagePct}%). Reduce batch size or seq length.</div>`;
-  else { const needed = Math.ceil(Math.ceil((totalPerGPU * gpuCount) / (deviceGB * 0.9)) / devicesPerBoard); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - deviceGB)} per GPU. Need ${needed}+ boards or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
+  else { const needed = Math.ceil(Math.ceil((totalPerGPU * deviceCount) / (deviceGB * 0.9)) / devicesPerBoard); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - deviceGB)} per GPU. Need ${needed}+ boards or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
 
   // Bar
   const maxBar = Math.max(totalPerGPU, deviceGB) * 1.05;
@@ -1624,7 +1624,7 @@ function renderTraining(state, computed) {
   html += `<div class="note-box" style="margin-top:8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-info-circle"></use></svg> Training uses ${formatGB(totalPerGPU)}/GPU vs inference at ${formatGB(computed.perGPU.total)}/GPU (${Math.round(totalPerGPU / Math.max(computed.perGPU.total, 0.01))}x more). `;
   if (method === 'full') html += `Full fine-tune stores gradients + optimizer for all ${state.params}B params. Switch to LoRA to train only ${trainableLabel}. `;
   if (method === 'lora') html += `LoRA trains ${trainableLabel} adapter params (rank ${loraRank} × ${loraTargets} modules × ${state.layers} layers). Base weights frozen but in VRAM. `;
-  if (method === 'qlora') html += `QLoRA: base at INT4 (${formatGB(weightsGB)}), adapters in BF16. Saves ~${formatGB((state.params * 1e9 * 2 / GIB / gpuCount) - weightsGB)} vs LoRA with BF16 base. `;
+  if (method === 'qlora') html += `QLoRA: base at INT4 (${formatGB(weightsGB)}), adapters in BF16. Saves ~${formatGB((state.params * 1e9 * 2 / GIB / deviceCount) - weightsGB)} vs LoRA with BF16 base. `;
   if (gradCheckpoint) html += 'Gradient checkpointing: ~30% slower, ~60-70% less activation memory. ';
   html += 'Reduce batch size first if it doesn\'t fit.</div></div>';
   setHTML('training-results', html);

@@ -725,7 +725,9 @@ class ReportCard:
             parallelism_label = f"Tensor parallel (TP={tp})" + (f" + data parallel (DP={dp})" if dp > 1 else "")
         gpu_data = [
             ["GPU model", gpu["name"]],
-            ["GPU count", str(cfg["n_gpu"])],
+            ["GPU count", str(cfg["n_gpu"])
+             + (f" ({device_count_for(cfg)} devices)"
+                if device_count_for(cfg) != cfg["n_gpu"] else "")],
             ["Total VRAM", f"{c['total_vram']} GB"],
             ["Interconnect", "NVLink" if cfg.get("nvlink") else "PCIe"],
             ["Memory bandwidth", f"{c['device_bw']:g} GB/s per device"],
