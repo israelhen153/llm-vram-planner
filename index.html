@@ -1367,11 +1367,20 @@ function renderMetrics(computed) {
   setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">Weights</p><p class="metric-value">${formatGB(computed.weightsGB)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(computed.activationsGB + computed.totalOverhead)}</p></div><div class="metric-card"><p class="metric-label">Total</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GiB</p></div><div class="metric-card"><p class="metric-label">Per-GPU</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
 }
 
+/* How many boards would hold this, given that a board may be several devices.
+   Both the "does not fit" banners and the PDF's compute it the same way: size
+   the shortfall in devices, then convert to the unit the reader actually buys. */
+function boardsNeeded(state, computed) {
+  const devices = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9));
+  const perBoard = state.gpuCount > 0 ? computed.deviceCount / state.gpuCount : 1;
+  return Math.ceil(devices / Math.max(perBoard, 1));
+}
+
 function renderVerdict(state, computed) {
   let html;
   if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)} (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%).</div>`;
   else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${formatGB(computed.deviceGB)}. May OOM under load.</div>`;
-  else { const needed = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9)); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - state.gpuGB)} per GPU. Need ${needed}+ GPUs or lower precision.</div>`; }
+  else { const needed = boardsNeeded(state, computed); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - computed.deviceGB)} per device. Need ${needed}+ boards or lower precision.</div>`; }
   setHTML('verdict-output', html);
 }
 
@@ -1522,7 +1531,14 @@ function renderTraining(state, computed) {
   const loraTargets = getVal('train-lora-targets');
   const hiddenSize = getVal('train-hidden-size');
   const optimizerBytesPerParam = optimizer === 'adam' ? 8 : 4;
-  const gpuCount = state.gpuCount;
+  /* Training shards across devices exactly as inference does, and a dual-GCD
+     board is two of them — so the shard is checked against the device's
+     capacity, not the board's. This calculator lives only in the browser: the
+     PDF generator has no training model, so the parity suite cannot catch a
+     drift here and the derivation is spelled out rather than borrowed. */
+  const devicesPerBoard = state.gpuDevices || 1;
+  const gpuCount = state.gpuCount * devicesPerBoard;
+  const deviceGB = deviceGB / devicesPerBoard;
 
   let weightsGB, gradientsGB, optimizerGB, activationsGB, adapterGB = 0;
   let trainableParams, methodLabel;
@@ -1549,20 +1565,20 @@ function renderTraining(state, computed) {
 
   const overheadGB = 1.5 + (gpuCount > 1 ? 0.3 : 0);
   const totalPerGPU = weightsGB + gradientsGB + optimizerGB + activationsGB + adapterGB + overheadGB;
-  const fits = totalPerGPU <= state.gpuGB;
-  const comfortable = totalPerGPU <= state.gpuGB * 0.9;
-  const usagePct = Math.round(totalPerGPU / state.gpuGB * 100);
+  const fits = totalPerGPU <= deviceGB;
+  const comfortable = totalPerGPU <= deviceGB * 0.9;
+  const usagePct = Math.round(totalPerGPU / deviceGB * 100);
   const trainableLabel = trainableParams >= 1e9 ? (trainableParams / 1e9).toFixed(1) + 'B' : (trainableParams / 1e6).toFixed(0) + 'M';
 
   let html = '<div style="margin-top:12px">';
 
   // Verdict
-  if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${state.gpuGB} GiB per GPU (${usagePct}%).</div>`;
-  else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${state.gpuGB} GiB (${usagePct}%). Reduce batch size or seq length.</div>`;
-  else { const needed = Math.ceil((totalPerGPU * gpuCount) / (state.gpuGB * 0.9)); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - state.gpuGB)} per GPU. Need ${needed}+ GPUs or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
+  if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${deviceGB} GiB per GPU (${usagePct}%).</div>`;
+  else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${deviceGB} GiB (${usagePct}%). Reduce batch size or seq length.</div>`;
+  else { const needed = Math.ceil((totalPerGPU * gpuCount) / (deviceGB * 0.9)); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - deviceGB)} per GPU. Need ${needed}+ devices or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
 
   // Bar
-  const maxBar = Math.max(totalPerGPU, state.gpuGB) * 1.05;
+  const maxBar = Math.max(totalPerGPU, deviceGB) * 1.05;
   const segments = [
     { gb: weightsGB, color: '#7F77DD', label: 'Weights' },
     ...(adapterGB > 0 ? [{ gb: adapterGB, color: '#9F8FEE', label: 'Adapters' }] : []),
@@ -1575,7 +1591,7 @@ function renderTraining(state, computed) {
   segments.forEach(s => { html += `<span><i style="background:${s.color}"></i>${s.label}</span>`; });
   html += '</div><div class="vram-bar" style="margin-top:4px">';
   segments.forEach(s => { const pct = Math.max(s.gb / maxBar * 100, 0.5); html += `<div style="width:${pct.toFixed(1)}%;background:${s.color};color:#fff">${pct > 10 ? formatGB(s.gb) : ''}</div>`; });
-  const trainFree = state.gpuGB - totalPerGPU;
+  const trainFree = deviceGB - totalPerGPU;
   if (trainFree > 0) html += `<div style="width:${(trainFree / maxBar * 100).toFixed(1)}%;background:var(--bg-primary);color:var(--text-muted);border-left:.5px solid var(--border)">${trainFree / maxBar * 100 > 8 ? formatGB(trainFree) : ''}</div>`;
   html += '</div>';
 
@@ -1727,8 +1743,8 @@ function renderExecutiveSummary(state, computed) {
   html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
 
   if (!computed.fits) {
-    const needed = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9));
-    html += `<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);background:var(--danger-bg);color:var(--danger-text);font-size:13px"><svg class="ti-ico" style="margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg><b>Action needed:</b> This model requires ${needed}+ GPUs of this type, or a lower precision (e.g. INT4), or a smaller model. Current configuration cannot serve this model.</div>`;
+    const needed = boardsNeeded(state, computed);
+    html += `<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);background:var(--danger-bg);color:var(--danger-text);font-size:13px"><svg class="ti-ico" style="margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg><b>Action needed:</b> This model requires ${needed}+ boards of this type, or a lower precision (e.g. INT4), or a smaller model. Current configuration cannot serve this model.</div>`;
   }
 
   setHTML('exec-summary', html);

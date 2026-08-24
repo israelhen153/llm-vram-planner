@@ -748,6 +748,30 @@ test('a single dual-GCD module still asks vLLM for tensor parallel 2', () => {
   assert.deepStrictEqual(parallelismFor({ gpuCount: 8, gpuDevices: 1 }), { tp: 8, dp: 1 });
 });
 
+console.log('\nA verdict reads per-device numbers against per-device capacity');
+test('an over-capacity dual-GCD board reports a real overage, not zero', () => {
+  /* The symptom review found: per-device shares measured against the board's
+     capacity. 87.6 GiB on a 64 GiB device printed "Over by 0 GiB", because the
+     overage was taken against the 128 GiB board and clamped at zero. */
+  const c = computeInference(asState(dualGCD, 1));
+  assert.strictEqual(c.fits, false, 'the probe config must not fit');
+  const overage = c.perGPU.total - c.deviceGB;
+  assert.ok(overage > 1, `overage against device capacity should be real, got ${overage}`);
+  assert.ok(c.perGPU.total - dualGCD.gb < 0,
+    'and measuring against the board is what produced the clamped zero');
+});
+test('the boards-needed figure is in boards, not devices', () => {
+  const src = html.slice(html.indexOf('function boardsNeeded'), html.indexOf('function renderVerdict'));
+  const boardsNeeded = new Function(`${src}; return boardsNeeded;`)();
+  const c = computeInference(asState(dualGCD, 1));
+  const devices = Math.ceil(c.totalGB / (c.deviceGB * 0.9));
+  assert.strictEqual(boardsNeeded({ gpuCount: 1 }, c), Math.ceil(devices / 2),
+    'a dual-GCD board holds two devices, so it takes half as many boards');
+  const single = computeInference(asState({ ...dualGCD, devices: 1 }, 1));
+  assert.strictEqual(boardsNeeded({ gpuCount: 1 }, single),
+    Math.ceil(single.totalGB / (single.deviceGB * 0.9)), 'one device per board is unchanged');
+});
+
 console.log('\nThe NVLink gate as the state builder actually applies it');
 test('a card without NVLink cannot report NVLink, whatever the control says', () => {
   for (const key of ['t4-16', 'l4-24', 'rtx4090-24', 'rtx5090-32',
