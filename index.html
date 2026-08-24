@@ -391,7 +391,7 @@ body.exec-mode .exec-summary { display: block; }
       <div class="field"><label>Gradient checkpointing <span class="info-tip" tabindex="0" role="img" aria-label="Recomputes activations during the backward pass to save VRAM, at the cost of roughly 20-30% slower training." data-tip="Recomputes activations during the backward pass to save VRAM, at the cost of roughly 20-30% slower training."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><select id="train-grad-ckpt" onchange="recalculate()"><option value="1" selected>Enabled (saves VRAM)</option><option value="0">Disabled (faster)</option></select></div>
     </div>
     <div class="grid-3" style="margin-top:8px">
-      <div class="field"><label>Batch size (per GPU) <span class="info-tip" tabindex="0" role="img" aria-label="Sequences processed per step on each GPU. Activation memory scales with this." data-tip="Sequences processed per step on each GPU. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="32" value="1" step="1" id="train-batch-size" oninput="recalculate()"><span class="slider-value" id="train-batch-size-display">1</span></div></div>
+      <div class="field"><label>Batch size (per device) <span class="info-tip" tabindex="0" role="img" aria-label="Sequences processed per step on each GPU. Activation memory scales with this." data-tip="Sequences processed per step on each GPU. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="32" value="1" step="1" id="train-batch-size" oninput="recalculate()"><span class="slider-value" id="train-batch-size-display">1</span></div></div>
       <div class="field"><label>Sequence length <span class="info-tip" tabindex="0" role="img" aria-label="Training sequence length in tokens. Activation memory scales with this." data-tip="Training sequence length in tokens. Activation memory scales with this."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="256" max="32768" value="2048" step="256" id="train-seq-len" oninput="recalculate()"><span class="slider-value" id="train-seq-len-display">2K</span></div></div>
       <div class="field"><label>LoRA rank <span class="info-tip" tabindex="0" role="img" aria-label="Rank of the LoRA adapter matrices. Higher rank means more trainable parameters and a bit more VRAM." data-tip="Rank of the LoRA adapter matrices. Higher rank means more trainable parameters and a bit more VRAM."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="4" max="256" value="16" step="4" id="train-lora-rank" oninput="recalculate()"><span class="slider-value" id="train-lora-rank-display">16</span></div></div>
     </div>
@@ -407,7 +407,7 @@ body.exec-mode .exec-summary { display: block; }
      Results sections (populated by JS)
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-chart-bar"></use></svg> VRAM breakdown <span class="info-tip" tabindex="0" role="img" aria-label="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per GPU." data-tip="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per GPU."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
+  <div class="section-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-chart-bar"></use></svg> VRAM breakdown <span class="info-tip" tabindex="0" role="img" aria-label="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per device." data-tip="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per device."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div id="strategy-badges" class="engineer-only"></div>
   <div class="legend engineer-only">
     <span><i style="background:#7F77DD"></i>Weights</span>
@@ -603,6 +603,13 @@ function formatGB(gb) { return gb < 0.01 ? '0 GiB' : gb >= 100 ? Math.round(gb)+
    decimal point in every screenshot and shared report. Halving a board yields a
    fraction only when the board is odd, and that case does want the decimal. */
 function capacityLabel(gb) { return Number.isInteger(gb) ? gb + ' GiB' : formatGB(gb); }
+/* The capacity as a bare number, for the two places that print their own unit.
+   Integers render as integers, so a card whose capacity divides cleanly reads
+   exactly as it always has. */
+function capacityNumber(gb) { return Number.isInteger(gb) ? String(gb) : gb.toFixed(1); }
+/* Mirrors Python's "%g" so the same board reports the same bandwidth in the
+   page and in the PDF: six significant digits, trailing zeros dropped. */
+function bandwidthLabel(gbs) { return String(Number(gbs.toPrecision(6))); }
 function formatContext(v) { return v >= 1024 ? Math.round(v / 1024) + 'K' : v + ''; }
 function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math.round(t) + ''; }
 
@@ -1034,7 +1041,7 @@ function computeInference(state) {
   const totalOverhead = overheadPerGPU * deviceCount + ncclOverhead;
   const totalGB = weightsGB + kvCacheGB + activationsGB + totalOverhead;
 
-  // Per-GPU breakdown (tensor parallel sharding)
+  // Per-device breakdown (tensor parallel sharding)
   const perGPU = {
     weights: weightsGB / deviceCount,
     kvCache: kvCacheGB / deviceCount,
@@ -1330,13 +1337,13 @@ function renderGPUCards(state, computed) {
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(computed.totalVRAM)}</b></div>`;
     /* dp > 1 (only above 8 devices — see splitParallelism) means the command
        shards tp-way while this tile's own number is still weights / deviceCount,
-       which compute() has not been changed to reflect: that is the next commit.
+       which compute() has not been changed to reflect: that is planned, not done.
        At dp === 1, tp === deviceCount and the "N-way" caption is exactly true.
        Everything here counts devices, never boards — a dual-GCD module is two
        of them, and the figures beside these captions are already divided that
        way. */
     html += dp > 1
-      ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per GPU</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${computed.deviceCount}</span></div>`
+      ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per device</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${computed.deviceCount}</span></div>`
       : `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.deviceCount}-way</b> (${formatGB(perGPU.weights)}/GPU)</div>`;
     // layersPerGPU = ceil(layers / deviceCount) has the same all-device assumption
     // baked in; same gating, so 1-8 is unchanged and only >8 gets the caveat.
@@ -1371,7 +1378,7 @@ function renderGPUCards(state, computed) {
 }
 
 function renderMetrics(computed) {
-  setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">Weights</p><p class="metric-value">${formatGB(computed.weightsGB)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(computed.activationsGB + computed.totalOverhead)}</p></div><div class="metric-card"><p class="metric-label">Total</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GiB</p></div><div class="metric-card"><p class="metric-label">Per-GPU</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
+  setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">Weights</p><p class="metric-value">${formatGB(computed.weightsGB)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(computed.activationsGB + computed.totalOverhead)}</p></div><div class="metric-card"><p class="metric-label">Total</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GiB</p></div><div class="metric-card"><p class="metric-label">Per-device</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
 }
 
 /* How many boards would hold this, given that a board may be several devices.
@@ -1418,7 +1425,7 @@ function renderThroughput(state, computed) {
 
   // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
   // aggregate is what the server delivers across the whole batch. Never compare them.
-  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${computed.deviceBandwidth} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
+  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${bandwidthLabel(computed.deviceBandwidth)} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
   html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
   if (computed.batchLimitedByKV) {
@@ -1464,12 +1471,12 @@ function renderThroughput(state, computed) {
 function renderCost(state, computed) {
   const monthlyH = computed.hourlyHyper * 730, monthlyS = computed.hourlySpec * 730, monthlySp = computed.hourlySpot * 730;
   let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">';
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px;color:var(--text-secondary);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Per GPU/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Total/hr (${state.gpuCount}×)</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Monthly (730h)</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px;color:var(--text-secondary);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Per board/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Total/hr (${state.gpuCount}×)</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Monthly (730h)</td></tr>`;
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">AWS, GCP, Azure on-demand</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuHyperCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlyHyper.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${Math.round(monthlyH).toLocaleString()}</td></tr>`;
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">Lambda, CoreWeave, RunPod</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuSpecCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlySpec.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${Math.round(monthlyS).toLocaleString()}</td></tr>`;
   html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">Vast.ai, spot instances</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuSpotCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlySpot.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500;color:var(--success)">$${Math.round(monthlySp).toLocaleString()}</td></tr>`;
   html += '</table></div>';
-  html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px">Prices per GPU/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand.</div>';
+  html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px">Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand.</div>';
   setHTML('cost-output', html);
 }
 
@@ -1589,7 +1596,7 @@ function renderTraining(state, computed) {
   // Verdict
   if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${capacityLabel(deviceGB)} per device (${usagePct}%).</div>`;
   else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${capacityLabel(deviceGB)} (${usagePct}%). Reduce batch size or seq length.</div>`;
-  else { const needed = Math.ceil(Math.ceil((totalPerGPU * deviceCount) / (deviceGB * 0.9)) / devicesPerBoard); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - deviceGB)} per GPU. Need ${needed}+ boards or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
+  else { const needed = Math.ceil(Math.ceil((totalPerGPU * deviceCount) / (deviceGB * 0.9)) / devicesPerBoard); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - deviceGB)} per device. Need ${needed}+ boards or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
 
   // Bar
   const maxBar = Math.max(totalPerGPU, deviceGB) * 1.05;
@@ -1618,10 +1625,10 @@ function renderTraining(state, computed) {
   html += `<div class="metric-card"><p class="metric-label">Gradients</p><p class="metric-value">${formatGB(gradientsGB)}</p></div>`;
   html += `<div class="metric-card"><p class="metric-label">Optimizer states</p><p class="metric-value">${formatGB(optimizerGB)}</p></div>`;
   html += `<div class="metric-card"><p class="metric-label">Activations${gradCheckpoint ? ' (ckpt)' : ''}</p><p class="metric-value">${formatGB(activationsGB)}</p></div>`;
-  html += `<div class="metric-card"><p class="metric-label">Total per GPU</p><p class="metric-value">${formatGB(totalPerGPU)}</p></div></div>`;
+  html += `<div class="metric-card"><p class="metric-label">Total per device</p><p class="metric-value">${formatGB(totalPerGPU)}</p></div></div>`;
 
   // Context note
-  html += `<div class="note-box" style="margin-top:8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-info-circle"></use></svg> Training uses ${formatGB(totalPerGPU)}/GPU vs inference at ${formatGB(computed.perGPU.total)}/GPU (${Math.round(totalPerGPU / Math.max(computed.perGPU.total, 0.01))}x more). `;
+  html += `<div class="note-box" style="margin-top:8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-info-circle"></use></svg> Training uses ${formatGB(totalPerGPU)}/device vs inference at ${formatGB(computed.perGPU.total)}/device (${Math.round(totalPerGPU / Math.max(computed.perGPU.total, 0.01))}x more). `;
   if (method === 'full') html += `Full fine-tune stores gradients + optimizer for all ${state.params}B params. Switch to LoRA to train only ${trainableLabel}. `;
   if (method === 'lora') html += `LoRA trains ${trainableLabel} adapter params (rank ${loraRank} × ${loraTargets} modules × ${state.layers} layers). Base weights frozen but in VRAM. `;
   if (method === 'qlora') html += `QLoRA: base at INT4 (${formatGB(weightsGB)}), adapters in BF16. Saves ~${formatGB((state.params * 1e9 * 2 / GIB / deviceCount) - weightsGB)} vs LoRA with BF16 base. `;
@@ -1642,7 +1649,7 @@ function renderComparisons() {
     html += `<div class="row"><span class="label">Precision</span><span class="val">${s.bytesPerParam} B/param</span></div>`;
     html += `<div class="row"><span class="label">KV dtype</span><span class="val">${s.kvBytesPerValue < 2 ? 'FP8' : 'BF16'}</span></div>`;
     html += `<div class="row"><span class="label">Weights</span><span class="val">${formatGB(c.weightsGB)}</span></div>`;
-    html += `<div class="row"><span class="label">Per-device</span><span class="val" style="color:${c.fits ? 'var(--success-text)' : 'var(--danger-text)'}">${formatGB(c.perGPU.total)} / ${capacityLabel(c.deviceGB)}</span></div>`;
+    html += `<div class="row"><span class="label">Per-device</span><span class="val" style="color:${c.fits ? 'var(--success-text)' : 'var(--danger-text)'}">${formatGB(c.perGPU.total)} / ${capacityNumber(c.deviceGB)}</span></div>`;
     html += `<div class="row"><span class="label">Max ctx (1u)</span><span class="val">${formatContext(c.maxContextSingleUser)}</span></div>`;
     html += `<div class="row"><span class="label">Max users @8K</span><span class="val">${Math.max(c.maxConcurrentAt8K, 0)}</span></div>`;
     html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s</span></div>`;

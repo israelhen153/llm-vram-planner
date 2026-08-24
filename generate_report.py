@@ -745,7 +745,7 @@ class ReportCard:
             ("KV cache", fmt_gb(c["kv_gb"])),
             ("Act + OH", fmt_gb(c["act_gb"] + c["total_oh"])),
             ("Total", fmt_gb(c["total_gb"])),
-            ("Per GPU", fmt_gb(c["per_total"])),
+            ("Per device", fmt_gb(c["per_total"])),
         ]))
         story.append(Spacer(1, 3*mm))
 
@@ -783,7 +783,7 @@ class ReportCard:
         # ---- Cost ----
         story.append(Paragraph("Cost estimate", self.styles["SectionHead"]))
         cost_data = [
-            ["Provider tier", "Per GPU/hr", f"Total/hr ({cfg['n_gpu']}×)", "Monthly (730h)"],
+            ["Provider tier", "Per board/hr", f"Total/hr ({cfg['n_gpu']}×)", "Monthly (730h)"],
             ["Hyperscaler (AWS/GCP/Azure)",
              f"${gpu['hyper']:.2f}",
              f"${c['hourly_hyper']:.2f}",
@@ -815,7 +815,7 @@ class ReportCard:
         ]))
         story.append(cost_table)
         story.append(Paragraph(
-            "Prices per GPU/hr as of mid-2026. Vary by region, commitment, and availability. "
+            "Prices per board/hr as of mid-2026. Vary by region, commitment, and availability. "
             "Reserved instances typically 30-60% off hyperscaler on-demand. Spot can be interrupted.",
             self.styles["Small"]
         ))
@@ -837,7 +837,7 @@ class ReportCard:
         if device_count_for(cfg) > 1:
             notes.append(f"{'NVLink' if cfg.get('nvlink') else 'PCIe'} interconnect assumed. "
                          f"{'NVLink provides 600-900 GB/s bidirectional.' if cfg.get('nvlink') else 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.'}")
-            notes.append(f"NCCL buffers add ~0.3 GB per GPU peer connection.")
+            notes.append(f"NCCL buffers add ~0.3 GB per device peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
         if dp > 1:
@@ -845,9 +845,9 @@ class ReportCard:
             # banner) — repeated here because this PDF, not the screen, is
             # the artifact README.md calls procurement-ready and that gets
             # forwarded. A reader who only sees the PDF must not be able to
-            # read "Per GPU: X GiB" next to --data-parallel-size and conclude
+            # read "Per device: X GiB" next to --data-parallel-size and conclude
             # that's what actually fits.
-            notes.append(f"Per-GPU VRAM above assumes weights sharded across all {device_count_for(cfg)} devices; the "
+            notes.append(f"Per-device VRAM above assumes weights sharded across all {device_count_for(cfg)} devices; the "
                          f"vLLM command below instead shards {tp}-way and replicates a full copy of the model "
                          f"across each of {dp} data-parallel groups, so the fit verdict on page 1 is optimistic. "
                          f"Reconciling this VRAM math with the real split is planned but not done yet.")

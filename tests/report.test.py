@@ -44,6 +44,7 @@ Run:  python3 tests/report.test.py
 import contextlib
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -892,12 +893,8 @@ def report_text(card, boards, preset="llama31-70b", bpp=2, conc=16, **over):
             harvest(child)
 
     real_build = gr.SimpleDocTemplate.build
-    gr.SimpleDocTemplate.build = lambda self, story, **kw: None
-    real_list = gr.Paragraph
     try:
-        import builtins
-        orig = gr.ReportCard.generate
-        # generate() builds `story` locally; run it and capture through the doc.
+        # generate() builds `story` locally; capture it through the doc it hands to.
         captured = {}
 
         def fake_build(self, story, **kw):
@@ -916,25 +913,39 @@ def check_packaging_is_invisible_to_the_report():
     # Three configurations, because the verdict has three branches and only the
     # "does not fit" one was being reached: a 70B at BF16 overflows a 64 GiB
     # device, the same model at INT4 fits, and an 8B is comfortable.
-    cases = [("llama31-70b", 2, 16),     # over a 64 GiB device: DOES NOT FIT
-             ("llama31-70b", 0.5, 16),   # comfortable
-             ("llama31-70b", 1, 20)]     # 60.0 of 64.0: TIGHT
+    cases = [("llama31-70b", 2, 16, 1),     # over a 64 GiB device: DOES NOT FIT
+             ("llama31-70b", 0.5, 16, 1),   # comfortable
+             ("llama31-70b", 1, 20, 1),     # 60.0 of 64.0: TIGHT
+             # 5 dual-GCD modules is 10 devices: TP=2 x DP=5, the only shape
+             # that renders the data-parallel note, and no case reached it.
+             ("llama31-70b", 2, 16, 5)]
     # A price per board is legitimately different — one dual-GCD module costs
     # what two single-GCD ones do — so currency cells are compared as totals
     # below rather than cell by cell.
-    def norm(xs):
+    def norm(xs, boards, devices):
+        """Only what is genuinely counted in boards is excused, and only where it
+        actually is that count — an earlier version skipped every bare integer
+        cell in the document, which hid the max-users figures too."""
+        board_cells = {str(boards), f"{boards} ({boards * devices} devices)"}
         out = []
         for t in xs:
-            if "$" in t:
+            if "$" in t or t in board_cells or t.startswith("Total/hr ("):
                 continue
-            # Board counts: the GPU-count row and the cost table's multiplier.
-            # The GPU-count row (boards, annotated with devices where they differ)
-            # and the cost table's multiplier are both counted in boards.
-            if re.fullmatch(r"\d+( \(\d+ devices\))?", t) or t.startswith("Total/hr ("):
-                continue
+            # The shortfall is checked as a relation just above, so the figure
+            # itself is normalised here rather than left to differ.
             t = re.sub(r"(Need|requires) \d+\+ boards", r"\1 N+ boards", t)
             out.append(re.sub(r"\b\d+x X", "Nx X", t))
         return out
+
+    def boards_needed(xs):
+        """The shortfall, counted in boards, so it differs between the two
+        packagings by exactly the devices-per-board factor — a relation to
+        check, not a value to normalise away."""
+        for t in xs:
+            m = re.search(r"(?:Need|requires) (\d+)\+ boards", t)
+            if m:
+                return int(m.group(1))
+        return None
     verdicts = set()
 
     # and the totals themselves must match, or the exclusion above would hide
@@ -946,15 +957,22 @@ def check_packaging_is_invisible_to_the_report():
         return tuple(round(c[k], 6) for k in ("hourly_hyper", "hourly_spec", "hourly_spot"))
     assert hourly(DUAL, 1) == hourly(SINGLE, 2), (
         f"cost differs by packaging: {hourly(DUAL, 1)} vs {hourly(SINGLE, 2)}")
-    for preset, bpp, conc in cases:
-        a = norm(report_text(DUAL, 1, preset, bpp, conc))
-        b = norm(report_text(SINGLE, 2, preset, bpp, conc))
+    for preset, bpp, conc, boards in cases:
+        raw_a = report_text(DUAL, boards, preset, bpp, conc)
+        raw_b = report_text(SINGLE, boards * 2, preset, bpp, conc)
+        need_a, need_b = boards_needed(raw_a), boards_needed(raw_b)
+        if need_b is not None:
+            assert need_a == math.ceil(need_b / 2), (
+                f"{preset} at {bpp}: the dual-GCD report needs {need_a} boards and the "
+                f"single-GCD one {need_b} — two devices per board makes that "
+                f"{math.ceil(need_b / 2)}")
+        a, b = norm(raw_a, boards, 2), norm(raw_b, boards * 2, 1)
         assert a, "no text captured from the report — the spy is not seeing the story"
         verdicts.update(t.split("]")[0] for t in a if t.startswith("["))
         diffs = [f"{x!r} != {y!r}" for x, y in zip(a, b) if x != y]
         assert not diffs, (
-            f"{preset} at {bpp} B/param, {conc} concurrent, differs between one dual-GCD board and two "
-            "single-GCD boards holding the same silicon:\n       " + "\n       ".join(diffs[:6]))
+            f"{preset} at {bpp} B/param, {conc} concurrent, differs between {boards} dual-GCD board(s) "
+            f"and {boards * 2} single-GCD boards holding the same silicon:\n       " + "\n       ".join(diffs[:6]))
     assert len(verdicts) >= 3, (
         f"only reached the verdict branches {sorted(verdicts)} — the fits and tight "
         "branches carry their own capacity expression and go unchecked otherwise")
@@ -991,6 +1009,19 @@ def check_compute_is_blind_to_packaging():
 
 test("compute() gives the same answer however the silicon is packaged",
      check_compute_is_blind_to_packaging)
+
+
+def check_capacity_label_keeps_integers_integral():
+    """Stated absolutely, because every other assertion about capacity reads the
+    formatter's own output and would follow a regression in it: dropping the
+    integer rule turns "80 GiB" into "80.0 GiB" on all twelve rows."""
+    assert gr.capacity_label(80) == "80 GiB", gr.capacity_label(80)
+    assert gr.capacity_label(16) == "16 GiB", gr.capacity_label(16)
+    assert gr.capacity_label(141) == "141 GiB", gr.capacity_label(141)
+    assert gr.capacity_label(128 / 3) == "42.7 GiB", gr.capacity_label(128 / 3)
+
+test("an integer capacity renders without a decimal in the PDF too",
+     check_capacity_label_keeps_integers_integral)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

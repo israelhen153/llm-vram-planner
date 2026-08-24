@@ -112,7 +112,7 @@ CASES = [
      "shared_prefix": 8192, "prefix_caching": False},
     # A board presenting two devices, with the MI250X's real figures: 128 GB and
     # 3276.8 GB/s per module, 383 dense TFLOPS per module. It is not in the
-    # catalog yet — commit 9 adds it — but the derivation that splits a board
+    # catalog yet — the AMD rows come later — but the derivation that splits a board
     # into devices has to be compared across both engines before then, not after
     # a wrong number ships.
     {"name": "Dual-GCD board, 1 module (device split must be identical in both engines)",
@@ -123,6 +123,14 @@ CASES = [
     {"name": "Dual-GCD board, 4 modules = 8 devices",
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
+              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+    # A multi-device board without NVLink: the PCIe curve is keyed on the count,
+    # and every other dual-GCD case here is NVLink — which is the interconnect a
+    # real AMD OAM row will not have.
+    {"name": "Dual-GCD board, 2 modules, PCIe (penalty curve keyed on devices)",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80", "nvlink": False,
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
               "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
     {"name": "Gemma SWA with shared prefix — only global layers share",
@@ -206,6 +214,9 @@ FIELDS = [
     # web tool stayed right — with the suite green.
     ("device_count", "deviceCount", 0), ("device_gb", "deviceGB", 0.001),
     ("device_bw", "deviceBandwidth", 0.001),
+    # The engines reach this by different routes — device GB x devices here,
+    # board GB x boards there — and nothing compared the results.
+    ("total_vram", "totalVRAM", 0.001),
     # The constants as executed, not as extracted — this is what stops the two
     # engines quietly disagreeing about a value no case happens to exercise.
     ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),

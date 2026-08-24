@@ -784,18 +784,28 @@ const renderHarness = (inputs = {}) => {
   const navigator = { clipboard: { writeText: () => Promise.resolve() } };
   const api = new Function('document', 'navigator', `
     let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
-    let currentModelMaxCtx = 131072, importedModelId = null, urlRestoreLost = [], comparisonSnapshots = [];
+    let currentModelMaxCtx = 131072, importedModelId = null, urlRestoreLost = [];
+    // The real name, declared before this slice begins. It was previously
+    // spelled comparisonSnapshots — a name index.html does not contain — so
+    // renderComparisons() threw on sight and no test could call it.
+    let savedSnapshots = [];
     ${before}
     ${html.slice(start, html.indexOf('function updateURLHash()'))}
     return { renderVerdict, renderGPUCards, renderTraining, renderNotes, renderStrategyBadges,
              renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary, renderCommand,
-             computeInference, buildVllmCommand };`)(document, navigator);
+             renderMetrics, renderComparisons, computeInference, buildVllmCommand,
+             pushSnapshot: (s, c) => savedSnapshots.push({ state: s, computed: c, name: 'snap' }) };`)(document, navigator);
   return { ...api, out };
 };
 
-/* index.html's own formatter, read from source so a change to it cannot make
-   these assertions quietly stop comparing what the page shows. */
+/* index.html's own formatters, read from source so a change to one cannot make
+   these assertions quietly stop comparing what the page shows. Capacity is
+   pinned absolutely elsewhere, since reading it from source would follow a
+   regression in it. */
 const formatGBLike = new Function(`${html.match(/^function formatGB\(gb\) .+$/m)[0]}; return formatGB;`)();
+const bandwidthLabelDecl = html.match(/^function bandwidthLabel\(gbs\) .+$/m);
+assert.ok(bandwidthLabelDecl, 'bandwidthLabel() not found in index.html');
+const bandwidthLabel = new Function(`${bandwidthLabelDecl[0]}; return bandwidthLabel;`)();
 /* Capacity has its own formatter, so an integer catalog value keeps rendering
    without a decimal. Read from source for the same reason as the above. */
 const capacityLabelLike = new Function(
@@ -821,6 +831,20 @@ test('a training shortfall is counted in boards, like every other verdict', () =
   const text = h.out['training-results'] || '';
   assert.ok(!/\+ devices/.test(text),
     `training counts in devices while the other banners count in boards: ${text.match(/Need[^<]*/)}`);
+  // the figure, not only the noun
+  const shown = Number((text.match(/Need (\d+)\+ boards/) || [])[1]);
+  assert.ok(Number.isFinite(shown), `no boards figure in the training verdict: ${text.slice(0, 200)}`);
+  // Derived from the overage the banner states plus the device capacity the
+  // engine reports, so the figure is checked rather than its noun.
+  const computed = h.computeInference(state);
+  const over = Number((text.match(/Over by ([\d.]+) GiB per device/) || [])[1]);
+  assert.ok(Number.isFinite(over), `no overage in the training verdict: ${text.slice(0, 200)}`);
+  const perDevice = over + computed.deviceGB;
+  const devicesNeeded = Math.ceil((perDevice * computed.deviceCount) / (computed.deviceGB * 0.9));
+  const perBoard = computed.deviceCount / state.gpuCount;
+  assert.strictEqual(shown, Math.ceil(devicesNeeded / perBoard),
+    `training says ${shown} boards; ${devicesNeeded} devices at ${perBoard} per board is ` +
+    `${Math.ceil(devicesNeeded / perBoard)}`);
 
   // And the figures themselves must be per device: the same silicon described
   // as one dual-GCD board or as two single-GCD boards has to land identically.
@@ -928,9 +952,9 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
   const single = { ...dual, gb: dual.gb / 2, bw: dual.bw / 2, tflops: dual.tflops / 2,
                    hyper: dual.hyper / 2, spec: dual.spec / 2, spot: dual.spot / 2, devices: 1 };
   const cfg = { params: 70, layers: 80, bytesPerParam: 2, contextLength: 8192, concurrency: 16 };
-  const renderAll = (card, boards) => {
+  const renderAll = (card, boards, extra = {}) => {
     const h = renderHarness();
-    const state = asState(card, boards, cfg);
+    const state = asState(card, boards, { ...cfg, ...extra });
     const computed = h.computeInference(state);
     h.renderVerdict(state, computed);
     h.renderGPUCards(state, computed);
@@ -941,6 +965,11 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
     h.renderThroughput(state, computed);
     h.renderCapacity(state, computed);
     h.renderCommand(state, computed);
+    h.renderMetrics(computed);
+    // A saved snapshot renders a per-device figure against a capacity, and was
+    // the one view no harness could reach.
+    h.pushSnapshot(state, computed);
+    h.renderComparisons();
     h.out['__export'] = h.exportSummary(state, computed);
     return h.out;
   };
@@ -960,13 +989,70 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
   // 8 boards = 16 devices, which is the only pair here that produces a
   // data-parallel split and so the only one that renders the dp>1 captions.
   for (const boards of [1, 2, 4, 8]) {
-    const a = renderAll(dual, boards), b = renderAll(single, boards * 2);
-    for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
-      assert.strictEqual(norm(a[id]), norm(b[id]),
-        `${id} differs between ${boards} dual-GCD board(s) and ${boards * 2} single-GCD boards ` +
-        'holding the same silicon');
+    // Both interconnects: a board that is several devices and has no NVLink is
+    // exactly what an AMD OAM row will be, and every case here was NVLink.
+    for (const link of [true, false]) {
+      const a = renderAll(dual, boards, { hasNVLink: link });
+      const b = renderAll(single, boards * 2, { hasNVLink: link });
+      for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        assert.strictEqual(norm(a[id]), norm(b[id]),
+          `${id} differs between ${boards} dual-GCD board(s) and ${boards * 2} single-GCD ` +
+          `boards holding the same silicon (${link ? 'NVLink' : 'PCIe'})`);
+      }
     }
   }
+});
+test('an integer capacity renders without a decimal, stated absolutely', () => {
+  /* Every other assertion about capacity reads the formatter out of the source,
+     so dropping its integer rule changed "80 GiB" to "80.0 GiB" on all twelve
+     rows with the suite green: the tests followed the regression. These are
+     literals on purpose. */
+  assert.strictEqual(capacityLabelLike(80), '80 GiB');
+  assert.strictEqual(capacityLabelLike(16), '16 GiB');
+  assert.strictEqual(capacityLabelLike(141), '141 GiB');
+  assert.strictEqual(capacityLabelLike(64), '64 GiB');
+  assert.strictEqual(capacityLabelLike(128 / 3), '42.7 GiB');
+});
+test('the same bandwidth reads the same in the page and in the PDF', () => {
+  // The page interpolated the raw quotient — 1092.2666666666667 GB/s — while
+  // the PDF printed 1092.27 for the same board.
+  assert.strictEqual(bandwidthLabel(3276.8 / 3), '1092.27');
+  assert.strictEqual(bandwidthLabel(3276.8), '3276.8');
+  assert.strictEqual(bandwidthLabel(320), '320');
+  assert.strictEqual(bandwidthLabel(1638.4), '1638.4');
+});
+test('a bandwidth that does not divide cleanly is rounded before it is shown', () => {
+  /* Pinning the formatter is not pinning its use: the throughput line
+     interpolated the raw quotient, so a three-device board read
+     "1092.2666666666667 GB/s per device" on the page while the PDF printed
+     1092.27 for the same hardware. */
+  const h = renderHarness();
+  const thirds = { ...dualGCD, devices: 3 };
+  const state = asState(thirds, 1, { params: 8, layers: 32 });
+  const computed = h.computeInference(state);
+  h.renderThroughput(state, computed);
+  const text = h.out['throughput-output'] || '';
+  assert.ok(text.includes(`${bandwidthLabel(computed.deviceBandwidth)} GB/s`),
+    `the line does not show the rounded bandwidth: ${text.slice(0, 240)}`);
+  assert.ok(!/\d\.\d{4,}/.test(text),
+    `a raw quotient reached the page: ${(text.match(/[\d.]{8,}/) || [])[0]}`);
+});
+test('the metrics tiles agree with the engine they are describing', () => {
+  /* Total VRAM is the same in both packagings, so the equivalence test above
+     cannot see it — an absolute assertion is the only thing that can. The two
+     engines also compute it by different routes (deviceGB x deviceCount here,
+     board GB x board count in Python), so it is compared across them too. */
+  const h = renderHarness();
+  const state = asState(dualGCD, 2, { params: 8, layers: 32 });
+  const computed = h.computeInference(state);
+  h.renderMetrics(computed);
+  const text = h.out['metrics-output'] || '';
+  assert.ok(text.includes(formatGBLike(computed.totalVRAM)),
+    `Total VRAM tile does not show ${formatGBLike(computed.totalVRAM)}: ${text.slice(0, 200)}`);
+  assert.strictEqual(computed.totalVRAM, computed.deviceGB * computed.deviceCount,
+    'total VRAM must be every device summed');
+  assert.strictEqual(computed.totalVRAM, state.gpuGB * state.gpuCount,
+    'and equally every board summed — the two routes must agree');
 });
 test('the state builder carries the catalog device count to the page', () => {
   // Deleting this one line disconnects the catalog from every derivation above
