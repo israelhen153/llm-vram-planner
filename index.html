@@ -242,6 +242,11 @@ body.exec-mode .exec-summary { display: block; }
 <!-- Executive summary — only visible in exec mode -->
 <div class="exec-summary" id="exec-summary"></div>
 
+<!-- What a shared link could not restore. Page-level rather than per-field: a
+     link that loses its GPU has usually lost more than that, and one line that
+     names every part is easier to act on than four scattered ones. -->
+<div id="url-restore-warning" style="display:none;font-size:12px;padding:8px 14px;border-radius:var(--radius);background:var(--warning-bg);color:var(--warning-text);margin:0 0 16px"></div>
+
 <!-- ==========================================================================
      Model configuration
      ========================================================================== -->
@@ -335,7 +340,6 @@ body.exec-mode .exec-summary { display: block; }
              inference does not use structured sparsity, so the dense value is half
              that. Full field docs live in data/gpus.json's _meta.schema. -->
       </select>
-      <p id="gpu-url-warning" style="display:none;font-size:11px;color:var(--warning-text);margin:4px 0 0"></p>
     </div>
     <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism." data-tip="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
     <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
@@ -1613,6 +1617,7 @@ function syncInterconnect() {
 
 function recalculate() {
   syncInterconnect();
+  renderRestoreNotice();
   const state = readInputState();
   const computed = computeInference(state);
 
@@ -1776,14 +1781,39 @@ function gpuKeyFromParam(raw) {
   return legacyGpuKeyFromPipeString(raw);
 }
 
-/* textContent, never innerHTML: `raw` is whatever was in the URL. */
-function warnUnresolvedGpu(raw) {
-  const el = document.getElementById('gpu-url-warning');
+/* Every part of a shared link that did not survive being reloaded, with the
+   value each field fell back to. Kept so the notice can retract itself: an
+   entry whose field no longer holds its fallback has been dealt with by the
+   user, and saying "showing the A100 40 GB instead" while they are looking at
+   an H100 is its own false claim. */
+let urlRestoreLost = [];
+
+/* Assign a URL parameter to a control and report it if it did not take.
+   Reading the value back is what makes this general: a select given an option
+   it does not have lands on '', a range given 999 clamps to its max, and a
+   number input given prose lands on ''. All three used to pass silently. */
+function applyParam(id, raw, label) {
+  const el = document.getElementById(id);
+  el.value = raw;
+  const took = el.value === raw
+    || (raw !== '' && el.value !== '' && Number(el.value) === Number(raw));
+  if (!took) urlRestoreLost.push({ id, label, raw, fallback: el.value });
+  return took;
+}
+
+/* textContent, never innerHTML: every `raw` here came out of the URL. */
+function renderRestoreNotice() {
+  const el = document.getElementById('url-restore-warning');
   if (!el) return;
-  const fallback = GPU_TABLE[DEFAULT_GPU_KEY];
-  el.textContent = `This link names a GPU that is not in the catalog (“${raw}”). `
-    + `Showing ${fallback ? fallback.name : 'the default card'} instead — set the GPU `
-    + `yourself before trusting these numbers.`;
+  const live = urlRestoreLost.filter(e => document.getElementById(e.id).value === e.fallback);
+  if (!live.length) { el.style.display = 'none'; return; }
+  const parts = live.map(e => `${e.label} (“${e.raw}”)`);
+  const list = parts.length === 1 ? parts[0]
+    : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  el.textContent = `This link could not be fully restored: ${list} `
+    + `${parts.length === 1 ? 'is' : 'are'} not in this version of the tool. `
+    + `${parts.length === 1 ? 'That field is' : 'Those fields are'} showing a default — `
+    + `set ${parts.length === 1 ? 'it' : 'them'} yourself before trusting these numbers.`;
   el.style.display = '';
 }
 
@@ -1791,34 +1821,39 @@ function loadURLHash() {
   if (!location.hash) return false;
   try {
     const params = new URLSearchParams(location.hash.slice(1));
-    if (params.has('p')) setVal('param-count', params.get('p'));
-    if (params.has('a')) setVal('active-percent', params.get('a'));
-    if (params.has('l')) setVal('layer-count', params.get('l'));
-    if (params.has('kv')) setVal('kv-head-count', params.get('kv'));
-    if (params.has('hd')) setVal('head-dim', params.get('hd'));
-    if (params.has('se')) setVal('shared-experts', params.get('se'));
-    if (params.has('ctx')) setVal('context-length', params.get('ctx'));
-    if (params.has('cc')) setVal('concurrency', params.get('cc'));
-    if (params.has('ng')) setVal('gpu-count', params.get('ng'));
+    urlRestoreLost = [];
+    const FIELDS = [
+      ['p', 'param-count', 'parameter count'], ['a', 'active-percent', 'active parameters'],
+      ['l', 'layer-count', 'layer count'], ['kv', 'kv-head-count', 'KV head count'],
+      ['hd', 'head-dim', 'head dimension'], ['se', 'shared-experts', 'shared experts'],
+      ['ctx', 'context-length', 'context length'], ['cc', 'concurrency', 'concurrency'],
+      ['ng', 'gpu-count', 'GPU count'],
+    ];
+    for (const [key, id, label] of FIELDS) if (params.has(key)) applyParam(id, params.get(key), label);
     if (params.has('gpu')) {
       const raw = params.get('gpu');
       const key = gpuKeyFromParam(raw);
-      if (key) { const sel = document.getElementById('gpu-model'); for (const opt of sel.options) if (opt.value === key) { opt.selected = true; break; } }
+      const sel = document.getElementById('gpu-model');
+      if (key) { for (const opt of sel.options) if (opt.value === key) { opt.selected = true; break; } }
       // A link naming a card this catalog no longer has still renders — on the
       // default GPU, which is not the one the sender was looking at. Say so.
-      else warnUnresolvedGpu(raw);
+      else urlRestoreLost.push({ id: 'gpu-model', label: 'the GPU', raw, fallback: sel.value });
     }
-    if (params.has('nv')) setVal('interconnect', params.get('nv'));
+    // An interconnect the dropdown does not offer, or NVLink on a card without
+    // it: either way the value the link asked for is not what will be used.
+    if (params.has('nv')) applyParam('interconnect', params.get('nv'), 'the interconnect');
     if (params.has('bpp') || params.has('pr')) {
       const val = params.get('pr') || params.get('bpp');
-      const opts = [...document.getElementById('weight-precision').options];
+      const sel = document.getElementById('weight-precision');
+      const opts = [...sel.options];
       // Links shared before the token format carry a bare byte count; resolve
       // those the way they always did, on the first option with that value.
       const match = opts.find(o => precisionToken(o) === val) || opts.find(o => o.value === val);
       if (match) match.selected = true;
+      else urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val, fallback: sel.value });
     }
-    if (params.has('kvp')) { const sel = document.getElementById('kv-precision'); for (const opt of sel.options) if (opt.value === params.get('kvp')) { opt.selected = true; break; } }
-    if (params.has('pre') && params.get('pre')) document.getElementById('preset').value = params.get('pre');
+    if (params.has('kvp')) applyParam('kv-precision', params.get('kvp'), 'the KV cache precision');
+    if (params.has('pre') && params.get('pre')) applyParam('preset', params.get('pre'), 'the model preset');
     return true;
   } catch { return false; }
 }
