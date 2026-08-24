@@ -657,5 +657,69 @@ test('every row carries the structural fields the engines read', () => {
   }
 });
 
+console.log('\nShared links resolve to the card they named');
+const legacyDecl = html.match(/^function legacyGpuKeyFromPipeString\(raw\) \{[\s\S]*?\n\}$/m);
+assert.ok(legacyDecl, 'legacyGpuKeyFromPipeString() not found in index.html');
+const paramDecl = html.match(/^function gpuKeyFromParam\(raw\) \{[\s\S]*?\n\}$/m);
+assert.ok(paramDecl, 'gpuKeyFromParam() not found in index.html');
+const gpuKeyFromParam = new Function(
+  `const GPU_TABLE = ${JSON.stringify(GPU_TABLE)};
+   ${legacyDecl[0]}
+   ${paramDecl[0]}
+   return gpuKeyFromParam;`
+)();
+const legacyString = (g, prices) => [g.gb, g.bw, ...(prices || [g.hyper, g.spec, g.spot]), g.tflops].join('|');
+
+test('capacity, bandwidth and TFLOPS identify a card uniquely', () => {
+  // What the legacy decoder joins on. A new row colliding on all three would
+  // make old links ambiguous, and the decoder would return whichever came first.
+  const seen = new Map();
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    const id = `${g.gb}|${g.bw}|${g.tflops}`;
+    assert.ok(!seen.has(id), `${key} and ${seen.get(id)} share gb/bw/tflops (${id})`);
+    seen.set(id, key);
+  }
+});
+test('a link shared under the old format still resolves to its own card', () => {
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    assert.strictEqual(gpuKeyFromParam(legacyString(g)), key, `${key} did not round-trip`);
+  }
+});
+test('a price revision does not invalidate links shared before it', () => {
+  // The reason for the change: prices are a market snapshot this catalog
+  // revises, so joining on them meant every old link broke on the next update
+  // — silently, landing on the default card.
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    const repriced = legacyString(g, [g.hyper + 1.11, g.spec + 0.5, g.spot * 2]);
+    assert.strictEqual(gpuKeyFromParam(repriced), key, `${key} was lost when its prices changed`);
+  }
+});
+test('an inherited property name is not mistaken for a catalog key', () => {
+  // GPU_TABLE[raw] is truthy for these, so they took the already-a-key branch,
+  // matched no <option>, and left the default card silently selected.
+  for (const raw of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+    assert.strictEqual(gpuKeyFromParam(raw), null, `"${raw}" resolved to a card`);
+  }
+});
+test('a card the catalog no longer has resolves to nothing, not to something else', () => {
+  assert.strictEqual(gpuKeyFromParam('64|1600|2|1|0.5|181'), null, 'unknown numbers matched a row');
+  assert.strictEqual(gpuKeyFromParam('not-a-key'), null);
+  assert.strictEqual(gpuKeyFromParam('16|320|0.76|0.35|0.15'), null, 'a five-field string is malformed');
+  assert.strictEqual(gpuKeyFromParam(''), null);
+});
+test('the current format resolves without going near the legacy path', () => {
+  for (const key of Object.keys(GPU_TABLE)) {
+    assert.strictEqual(gpuKeyFromParam(key), key);
+  }
+});
+test('an unresolvable link is reported to the user, not absorbed', () => {
+  // The decoder returning null is only half the fix; loadURLHash has to say so.
+  assert.ok(/else warnUnresolvedGpu\(raw\)/.test(html),
+    'loadURLHash does not call warnUnresolvedGpu() when the gpu param resolves to nothing');
+  assert.ok(/id="gpu-url-warning"/.test(html), 'the warning has nowhere to render');
+  assert.ok(/el\.textContent = /.test(html.slice(html.indexOf('function warnUnresolvedGpu'))),
+    'the warning must be set as text, never as HTML — raw comes from the URL');
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

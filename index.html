@@ -335,6 +335,7 @@ body.exec-mode .exec-summary { display: block; }
              inference does not use structured sparsity, so the dense value is half
              that. Full field docs live in data/gpus.json's _meta.schema. -->
       </select>
+      <p id="gpu-url-warning" style="display:none;font-size:11px;color:var(--warning-text);margin:4px 0 0"></p>
     </div>
     <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism." data-tip="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
     <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
@@ -1741,19 +1742,46 @@ function updateURLHash() {
 /* Links shared before this refactor carry the raw "gb|bw|hyper|spec|spot|tflops"
    string that used to be the <option> value, instead of a GPU_TABLE key. Decode
    one of those by matching its numbers back to a row, so a link shared under the
-   old scheme still resolves to the right card under the new one. Returns null if
-   nothing matches (malformed hash, or a card whose numbers have since changed). */
+   old scheme still resolves to the right card under the new one.
+
+   Matched on capacity, bandwidth and TFLOPS only. The three price fields are in
+   the string but are not identity: they are a market snapshot this catalog
+   revises, and joining on them meant that the first price update silently
+   invalidated every link shared before it — a shared H100 link would come back
+   as whatever card still matched, or as the default with no warning. The three
+   physical figures are unique across every row, which a test enforces.
+
+   Returns null when nothing matches, and the caller says so rather than
+   quietly rendering someone else's configuration on the default card. */
 function legacyGpuKeyFromPipeString(raw) {
   const parts = raw.split('|').map(Number);
   if (parts.length !== 6 || parts.some(Number.isNaN)) return null;
-  const [gb, bw, hyper, spec, spot, tflops] = parts;
+  const [gb, bw, , , , tflops] = parts;
   for (const [key, gpu] of Object.entries(GPU_TABLE)) {
-    if (gpu.gb === gb && gpu.bw === bw && gpu.hyper === hyper &&
-        gpu.spec === spec && gpu.spot === spot && gpu.tflops === tflops) {
-      return key;
-    }
+    if (gpu.gb === gb && gpu.bw === bw && gpu.tflops === tflops) return key;
   }
   return null;
+}
+
+/* Resolve a hash's gpu= value to a catalog key, new format or old.
+   Object.hasOwn, not GPU_TABLE[raw]: "#gpu=constructor" is truthy on a bare
+   lookup, so it took the already-a-key branch and then matched no <option>,
+   leaving the default card selected. The same pattern is already guarded this
+   way where PERF is read. */
+function gpuKeyFromParam(raw) {
+  if (Object.hasOwn(GPU_TABLE, raw)) return raw;
+  return legacyGpuKeyFromPipeString(raw);
+}
+
+/* textContent, never innerHTML: `raw` is whatever was in the URL. */
+function warnUnresolvedGpu(raw) {
+  const el = document.getElementById('gpu-url-warning');
+  if (!el) return;
+  const fallback = GPU_TABLE[DEFAULT_GPU_KEY];
+  el.textContent = `This link names a GPU that is not in the catalog (“${raw}”). `
+    + `Showing ${fallback ? fallback.name : 'the default card'} instead — set the GPU `
+    + `yourself before trusting these numbers.`;
+  el.style.display = '';
 }
 
 function loadURLHash() {
@@ -1771,8 +1799,11 @@ function loadURLHash() {
     if (params.has('ng')) setVal('gpu-count', params.get('ng'));
     if (params.has('gpu')) {
       const raw = params.get('gpu');
-      const key = GPU_TABLE[raw] ? raw : legacyGpuKeyFromPipeString(raw);
+      const key = gpuKeyFromParam(raw);
       if (key) { const sel = document.getElementById('gpu-model'); for (const opt of sel.options) if (opt.value === key) { opt.selected = true; break; } }
+      // A link naming a card this catalog no longer has still renders — on the
+      // default GPU, which is not the one the sender was looking at. Say so.
+      else warnUnresolvedGpu(raw);
     }
     if (params.has('nv')) setVal('interconnect', params.get('nv'));
     if (params.has('bpp') || params.has('pr')) {
