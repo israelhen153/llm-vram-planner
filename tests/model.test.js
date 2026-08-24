@@ -657,6 +657,31 @@ test('every row carries the structural fields the engines read', () => {
   }
 });
 
+console.log('\nCONTRIBUTING.md describes the tool that exists');
+const contributing = fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8');
+test('the documented parameter buckets are the ones the lookup can select', () => {
+  // A bucket documented but unreachable is an invitation to contribute dead
+  // data: 100b/400b/671b were listed for a year and could never match.
+  const documented = [...contributing.matchAll(/^\| `(\d+b)` \| /gm)].map(m => m[1]);
+  const selectable = Object.keys(new Function(`${bucketDecl[0]}; return BUCKET_PARAMS;`)());
+  assert.deepStrictEqual(documented, selectable,
+    `CONTRIBUTING.md lists [${documented}] but findBenchmark can select [${selectable}]`);
+});
+test('CONTRIBUTING.md carries no second copy of the GPU catalog', () => {
+  // The catalog moved into data/gpus.json; a table here would drift the moment
+  // a row is added, and it is the fifth such copy this refactor removed.
+  const copied = Object.keys(GPU_TABLE).filter(k => contributing.includes(`\`${k}\``));
+  assert.strictEqual(copied.length, 0,
+    `CONTRIBUTING.md hardcodes catalog keys: ${copied.join(', ')}`);
+});
+test('CONTRIBUTING.md names objects that exist in the source', () => {
+  for (const name of ['MODEL_PRESETS', 'BUCKET_PARAMS', 'findBenchmark']) {
+    if (!contributing.includes(name)) continue;
+    assert.ok(html.includes(name), `CONTRIBUTING.md names ${name}, which is not in index.html`);
+  }
+  assert.ok(!/`PR` object/.test(contributing), 'the `PR` object has never existed');
+});
+
 console.log('\nShared links resolve to the card they named');
 const legacyDecl = html.match(/^function legacyGpuKeyFromPipeString\(raw\) \{[\s\S]*?\n\}$/m);
 assert.ok(legacyDecl, 'legacyGpuKeyFromPipeString() not found in index.html');

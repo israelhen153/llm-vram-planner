@@ -10,28 +10,40 @@ Real measured throughput (tokens/sec) from vLLM running on specific hardware. No
 
 ### How to measure
 
+Serve the model, then drive it with vLLM's own benchmark CLI:
+
 ```bash
-# Standard vLLM benchmark command
-python -m vllm.entrypoints.openai.api_server \
-    --model YOUR_MODEL \
+# Terminal 1 — serve
+vllm serve YOUR_MODEL \
     --dtype auto \
     --gpu-memory-utilization 0.90
 
-# Then benchmark with:
-python -m vllm.entrypoints.openai.benchmark \
+# Terminal 2 — measure against the running server (aggregate / "batch")
+vllm bench serve \
+    --backend openai-chat \
     --model YOUR_MODEL \
-    --num-prompts 1000 \
     --request-rate inf
 ```
 
-Or use the ShareGPT benchmark:
+For offline batch throughput, with no server involved:
+
 ```bash
-python benchmarks/benchmark_serving.py \
-    --backend openai-chat \
+vllm bench throughput \
     --model YOUR_MODEL \
     --dataset-name sharegpt \
     --num-prompts 500
 ```
+
+`vllm bench` replaced the standalone scripts that used to live in vLLM's
+`benchmarks/` directory — that directory is now a pointer to the CLI, and there
+has never been a `vllm.entrypoints.openai.benchmark` module. The full flag list
+for each subcommand is in the
+[CLI reference](https://docs.vllm.ai/en/latest/cli/bench/serve.html)
+(`serve`, `throughput` and `latency` are the three you are likely to want).
+
+For a single-user number — `"mode": "single"` below — send one request at a
+time and time it. Any client will do; what matters is that nothing else is
+running on the GPU.
 
 ### Entry format
 
@@ -74,27 +86,37 @@ The key follows the pattern: `{paramBucket}-{gpuKey}`
 | `27b` | 15-30B |
 | `32b` | 31-40B |
 | `70b` | 41-80B |
-| `100b` | 81-130B |
-| `400b` | 131-500B |
-| `671b` | 500B+ |
 
-**GPU keys:**
-| Key | GPU |
-|-----|-----|
-| `t4-16` | T4 16GB |
-| `l4-24` | L4 24GB |
-| `rtx4090-24` | RTX 4090 24GB |
-| `rtx5090-32` | RTX 5090 32GB |
-| `a100-40` | A100 40GB |
-| `rtx6000ada-48` | RTX 6000 Ada 48GB |
-| `l40s-48` | L40S 48GB |
-| `a100-80` | A100 80GB |
-| `h100-80` | H100 80GB |
-| `rtxpro-96` | RTX PRO 6000 96GB |
-| `h200-141` | H200 141GB |
-| `b200-192` | B200 192GB |
+`70b` is the largest bucket the tool can select. A model above 80B is compared
+against the nearest bucket below it, labelled as a different model class and
+deliberately not scored — so an entry keyed `100b-…` or `671b-…` would sit in
+the file unreachable. If you have measurements for a model that size, open an
+issue: the bucket boundaries live in `findBenchmark()` and `BUCKET_PARAMS` in
+`index.html`, and adding one is a two-line change plus a row here.
 
-If your GPU isn't listed, add it and document the specs in your PR description.
+**GPU keys** are whatever `data/gpus.json` currently holds — that file is the
+catalog, and this document deliberately does not keep a second copy of it to go
+stale. To see the list:
+
+```bash
+python3 -c "import json; print(*json.load(open('data/gpus.json'))['data'])"
+```
+
+**If your GPU isn't in the catalog**, add it there rather than in the tool:
+
+1. Add a row to `data/gpus.json`. Every field is documented in that file's
+   `_meta.schema`; cite your source for capacity, bandwidth and dense TFLOPS in
+   the PR description.
+2. Run `python3 tools/sync_data.py`. `index.html` and `generate_report.py` each
+   carry a generated copy of the catalog — the tool has no build step and a
+   browser on `file://` cannot fetch a sibling JSON — and that script is what
+   regenerates them. Never hand-edit the blocks between the `GPU_TABLE:BEGIN` /
+   `GPU_TABLE:END` markers.
+3. Run `./tests/run.sh`. The suite fails if the generated blocks and the JSON
+   disagree, which is what catches a forgotten step 2.
+
+A benchmark entry naming a GPU key that does not exist is dead data: the suite
+asserts every key resolves to a catalog row.
 
 ### Fields
 
@@ -140,8 +162,21 @@ If your GPU isn't listed, add it and document the specs in your PR description.
 - **Bug reports**: [open an issue](https://github.com/israelhen153/llm-vram-planner/issues) with steps to reproduce
 - **Feature requests**: open an issue with the use case, not just the feature
 - **Code changes**: open an issue first to discuss before submitting a PR
-- **Model presets**: add to the `PR` object in `index.html` — include all architecture params
+- **Model presets**: add to `MODEL_PRESETS` in `index.html` **and** `PRESETS` in
+  `generate_report.py` — the model is implemented twice on purpose and
+  `tests/parity.test.py` compares the two, so a preset added to one engine fails
+  the suite. Include every architecture parameter: layers, KV heads, head dim,
+  and the attention regime with the field that gives it meaning (`swa_win` +
+  `swa_local`, or `mla_dim`).
 
 ## Code style
 
 The tool is a single HTML file. Keep it that way. No build step, no npm, no framework. CSS at the top, HTML in the middle, JS at the bottom. If you're adding a feature, it should work offline.
+
+Two blocks in `index.html` and one in `generate_report.py` are generated from
+JSON by `tools/sync_data.py` and marked with `GPU_TABLE:BEGIN` /
+`BENCHMARK_DATA:BEGIN` comments. Edit the JSON and re-run the script; the tests
+compare the two and will tell you if you edited the wrong one.
+
+Run `./tests/run.sh` before opening a PR. It needs `node` and `python3` and
+nothing else.
