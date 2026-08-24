@@ -872,15 +872,24 @@ def report_text(card, boards, preset="llama31-70b", bpp=2, conc=16, **over):
     card_obj = gr.ReportCard(cfg, output_path=os.devnull)
     seen = []
 
-    class Spy(list):
-        def append(self, item):
-            text = getattr(item, "text", None)
-            if text:
-                seen.append(text)
-            elif hasattr(item, "_cellvalues"):        # a table
-                for row in item._cellvalues:
-                    seen.extend(getattr(cell, "text", str(cell)) for cell in row)
-            super().append(item)
+    def harvest(item):
+        """Every string this flowable will put on the page.
+
+        Drawings matter as much as paragraphs: the VRAM bar is a Drawing whose
+        String children carry the component sizes and the "N GiB free" label,
+        and a Spy that only knew about Paragraph and Table never saw them — so
+        the bar could be drawn against the wrong capacity, contradicting the
+        verdict three lines above it, with this test green.
+        """
+        text = getattr(item, "text", None)
+        if text:
+            seen.append(text)
+        for row in getattr(item, "_cellvalues", []):
+            for cell in row:
+                harvest(cell) if hasattr(cell, "text") or hasattr(cell, "contents") \
+                    else seen.append(str(cell))
+        for child in getattr(item, "contents", []):
+            harvest(child)
 
     real_build = gr.SimpleDocTemplate.build
     gr.SimpleDocTemplate.build = lambda self, story, **kw: None
@@ -896,7 +905,7 @@ def report_text(card, boards, preset="llama31-70b", bpp=2, conc=16, **over):
         gr.SimpleDocTemplate.build = fake_build
         card_obj.generate()
         for item in captured.get("story", []):
-            Spy().append(item)
+            harvest(item)
     finally:
         gr.SimpleDocTemplate.build = real_build
     return seen

@@ -457,7 +457,9 @@ def build_vllm_cmd(cfg, comp):
     tp, dp = split_parallelism(device_count_for(cfg))
     parts = [f"vllm serve {hf} \\"]
     parts.append("    --host 0.0.0.0 --port 8000 \\")
-    if tp > 1:
+    # More than one device, which is what the board count used to mean on every
+    # single-device card — so the command is unchanged for every catalogued row.
+    if tp * dp > 1:
         parts.append(f"    --tensor-parallel-size {tp} \\")
     if dp > 1:
         parts.append(f"    --data-parallel-size {dp} \\")
@@ -733,7 +735,7 @@ class ReportCard:
         story.append(Spacer(1, 3*mm))
 
         # ---- VRAM Breakdown ----
-        story.append(Paragraph("VRAM breakdown (per GPU)", self.styles["SectionHead"]))
+        story.append(Paragraph("VRAM breakdown (per device)", self.styles["SectionHead"]))
         story.append(self._vram_bar())
         story.append(Spacer(1, 2*mm))
         story.append(self._make_metric_row([

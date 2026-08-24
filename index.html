@@ -1418,7 +1418,7 @@ function renderThroughput(state, computed) {
 
   // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
   // aggregate is what the server delivers across the whole batch. Never compare them.
-  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${computed.deviceBandwidth} GB/s per device × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
+  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${computed.deviceBandwidth} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
   html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
   if (computed.batchLimitedByKV) {
@@ -1484,7 +1484,14 @@ function buildVllmCommand(state, computed, modelPath) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
   const { tp, dp } = parallelismFor(state);
   let cmd = `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
-  if (tp > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
+  /* Emitted whenever more than one device is in play, which is what the board
+     count used to mean and still means on every single-device card — so the
+     command is unchanged for every catalogued row, including the odd counts
+     above eight where the split is TP=1 and an earlier version of this gate
+     dropped the flag. A single dual-GCD module has two devices and gets it.
+     tp * dp is that device count by construction, so this needs nothing from
+     outside the split it already computed. */
+  if (tp * dp > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
   if (dp > 1) cmd += `    --data-parallel-size ${dp} \\\n`;
   /* --dtype auto reads torch_dtype from the model's config.json. Hardcoding
      float16 was wrong for the bf16-trained families that dominate now (Llama 3,
@@ -1580,8 +1587,8 @@ function renderTraining(state, computed) {
   let html = '<div style="margin-top:12px">';
 
   // Verdict
-  if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${deviceGB} GiB per GPU (${usagePct}%).</div>`;
-  else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${deviceGB} GiB (${usagePct}%). Reduce batch size or seq length.</div>`;
+  if (comfortable) html += `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Training fits. ${formatGB(totalPerGPU)} / ${capacityLabel(deviceGB)} per device (${usagePct}%).</div>`;
+  else if (fits) html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Training tight. ${formatGB(totalPerGPU)} / ${capacityLabel(deviceGB)} (${usagePct}%). Reduce batch size or seq length.</div>`;
   else { const needed = Math.ceil(Math.ceil((totalPerGPU * gpuCount) / (deviceGB * 0.9)) / devicesPerBoard); html += `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Training does not fit. Over by ${formatGB(totalPerGPU - deviceGB)} per GPU. Need ${needed}+ boards or switch to ${method === 'full' ? 'LoRA/QLoRA' : 'QLoRA with smaller rank'}.</div>`; }
 
   // Bar

@@ -788,7 +788,7 @@ const renderHarness = (inputs = {}) => {
     ${before}
     ${html.slice(start, html.indexOf('function updateURLHash()'))}
     return { renderVerdict, renderGPUCards, renderTraining, renderNotes, renderStrategyBadges,
-             renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary,
+             renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary, renderCommand,
              computeInference, buildVllmCommand };`)(document, navigator);
   return { ...api, out };
 };
@@ -940,6 +940,7 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
     h.renderNotes(state);
     h.renderThroughput(state, computed);
     h.renderCapacity(state, computed);
+    h.renderCommand(state, computed);
     h.out['__export'] = h.exportSummary(state, computed);
     return h.out;
   };
@@ -951,7 +952,11 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
      modules and four single-GCD ones are the same silicon but not the same
      shopping list. Everything else must match exactly. */
   const norm = (t) => (t || '').replace(/\d+× X/g, 'N× X').replace(/Need \d+\+ boards/g, 'Need N+ boards')
-    .replace(/requires \d+\+ boards/g, 'requires N+ boards');
+    .replace(/requires \d+\+ boards/g, 'requires N+ boards')
+    // "per device" after a bandwidth is a statement *about* the packaging —
+    // it appears only when a board is more than one device — so of course it
+    // differs between two descriptions of the same silicon.
+    .replace(/ GB\/s per device /g, ' GB/s ');
   // 8 boards = 16 devices, which is the only pair here that produces a
   // data-parallel split and so the only one that renders the dp>1 captions.
   for (const boards of [1, 2, 4, 8]) {
@@ -987,6 +992,22 @@ test('a compute-bound estimate is bound by the devices, not the boards', () => {
   assert.ok(Math.abs(dual.saturatedTokS - two.saturatedTokS) < 1,
     `compute ceiling differs by packaging: ${dual.saturatedTokS} vs ${two.saturatedTokS}`);
 });
+test('a single-device card emits exactly the flags it always did', () => {
+  /* The gate that fixes the dual-GCD case must not disturb the twelve real
+     rows. An earlier version keyed on `tp > 1` and silently dropped
+     --tensor-parallel-size at odd counts above eight, where the split is
+     TP=1 x DP=N — a command-text change on real hardware, disclosed but not
+     licensed by the requirement. */
+  const h = renderHarness();
+  for (const count of [1, 2, 8, 9, 11, 17, 33]) {
+    const state = asState(GPU_TABLE['h100-80'], count, { params: 8, layers: 32 });
+    const cmd = h.buildVllmCommand(state, h.computeInference(state), 'm');
+    const hasTP = /--tensor-parallel-size/.test(cmd);
+    assert.strictEqual(hasTP, count > 1,
+      `${count} single-device GPUs: --tensor-parallel-size ${hasTP ? 'present' : 'absent'}, ` +
+      'which is not what a board count above one has always meant');
+  }
+});
 test('a single dual-GCD board emits the flags its devices require', () => {
   // Reverting the TP and expert-parallel gates in *both* engines at once is
   // invisible to a cross-engine diff. These are absolute.
@@ -1015,16 +1036,25 @@ test('an over-capacity dual-GCD board reports a real overage, not zero', () => {
   assert.ok(c.perGPU.total - dualGCD.gb < 0,
     'and measuring against the board is what produced the clamped zero');
 });
-test('the boards-needed figure is in boards, not devices', () => {
+test('the boards-needed figure is in boards, not devices, at every board count', () => {
+  /* Checked across board counts, not only at one. A plausible typo that reads
+     the per-board divisor only when gpuCount === 1 doubles the purchase
+     recommendation for everyone else, and the equivalence test above cannot
+     see it: a shortfall counted in boards legitimately differs between the two
+     packagings, so that test normalises the figure away. */
   const src = html.slice(html.indexOf('function boardsNeeded'), html.indexOf('function renderVerdict'));
   const boardsNeeded = new Function(`${src}; return boardsNeeded;`)();
-  const c = computeInference(asState(dualGCD, 1));
-  const devices = Math.ceil(c.totalGB / (c.deviceGB * 0.9));
-  assert.strictEqual(boardsNeeded({ gpuCount: 1 }, c), Math.ceil(devices / 2),
-    'a dual-GCD board holds two devices, so it takes half as many boards');
-  const single = computeInference(asState({ ...dualGCD, devices: 1 }, 1));
-  assert.strictEqual(boardsNeeded({ gpuCount: 1 }, single),
-    Math.ceil(single.totalGB / (single.deviceGB * 0.9)), 'one device per board is unchanged');
+  for (const devices of [1, 2, 4]) {
+    for (const boards of [1, 2, 4]) {
+      const card = { ...dualGCD, gb: 128, devices };
+      const state = asState(card, boards, { params: 400, layers: 126, bytesPerParam: 2 });
+      const c = computeInference(state);
+      const needDevices = Math.ceil(c.totalGB / (c.deviceGB * 0.9));
+      assert.strictEqual(boardsNeeded(state, c), Math.ceil(needDevices / devices),
+        `${boards} board(s) of ${devices} device(s): ${needDevices} devices is ` +
+        `${Math.ceil(needDevices / devices)} boards, not ${boardsNeeded(state, c)}`);
+    }
+  }
 });
 
 console.log('\nThe NVLink gate as the state builder actually applies it');
