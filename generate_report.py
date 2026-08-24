@@ -121,6 +121,19 @@ def supports_nvlink(gpu):
     return gpu.get("form") == "sxm"
 
 
+def nvlink_for(gpu, requested):
+    """The interconnect this card will actually have, saying so when that is not
+    what was asked for. The interactive path prints a line when it skips the
+    question; a JSON config or a CLI flag asking for NVLink on a board without
+    it was silently downgraded instead, and the only trace was one row of the
+    finished report.
+    """
+    if requested and not supports_nvlink(gpu):
+        print(f"Note: {gpu['name']} has no NVLink — using PCIe interconnect instead.")
+        return False
+    return bool(requested)
+
+
 PREC_LABELS = {
     2.0:  "BF16",
     1.0:  "FP8",
@@ -1000,7 +1013,7 @@ def from_json(path):
         cfg.update({
             "bpp": raw.get("bpp", 0.5), "ctx": raw.get("ctx", 8192),
             "conc": raw.get("conc", 1), "n_gpu": raw.get("n_gpu", 1),
-            "gpu": gpu, "nvlink": bool(raw.get("nvlink", True)) and supports_nvlink(gpu),
+            "gpu": gpu, "nvlink": nvlink_for(gpu, raw.get("nvlink", True)),
             # Not a request field: the vendor is whatever the chosen card is,
             # and it selects the PERF constants the throughput math runs on.
             # Letting a JSON override it would mean NVIDIA's MBU on an AMD card.
@@ -1034,7 +1047,7 @@ def from_json(path):
     cfg.setdefault("ctx", 8192)
     cfg.setdefault("conc", 1)
     cfg.setdefault("n_gpu", 1)
-    cfg["nvlink"] = bool(cfg.get("nvlink", True)) and supports_nvlink(gpu)
+    cfg["nvlink"] = nvlink_for(gpu, cfg.get("nvlink", True))
     cfg.setdefault("kv_bpp", 2)
     cfg.setdefault("hf_model", "/opt/models/YourModel")
     cfg.setdefault("model_name", f"{cfg['params']}B model")
@@ -1052,7 +1065,7 @@ def from_cli_args(args):
                       "q4km":"gguf","q6k":"gguf","q8":"gguf"}.get(args.prec, "awq"),
             "ctx": args.ctx, "conc": args.conc,
             "n_gpu": args.ngpu, "gpu": gpu,
-            "nvlink": (not args.no_nvlink) and supports_nvlink(gpu),
+            "nvlink": nvlink_for(gpu, not args.no_nvlink),
             "vendor": gpu["vendor"],
             "kv_bpp": 1 if args.fp8_kv else 2,
             "hf_model": preset["hf"], "model_name": preset["name"],

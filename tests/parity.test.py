@@ -256,7 +256,15 @@ else:
                   "name", "vendor", "devices", "form", "caps", "default"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
-            differs = (abs(a - b) > 1e-9) if numeric else (a != b)
+            if a is None or b is None:
+                # A field on one side only. Comparing it numerically would raise
+                # a TypeError from inside the loop and lose the drift report
+                # this block exists to print.
+                differs = a != b
+            elif numeric:
+                differs = abs(a - b) > 1e-9
+            else:
+                differs = a != b
             if differs:
                 drift.append(f"{key}.{f}: py={a!r} js={b!r}")
     if drift:

@@ -1602,6 +1602,13 @@ function renderNotes(state) {
 /* =============================================================================
    Main recalculation — orchestrates all renders
    ============================================================================= */
+/* Whether the clamp below is the reason the control says PCIe. Without it the
+   clamp is one-way: a reader who looks at a 4090 and then switches to an H100
+   stays on PCIe on every card afterwards, quietly losing the 0.85 scaling they
+   never chose to give up. A PCIe setting the reader chose themselves is left
+   alone — this only ever gives back what the clamp took. */
+let interconnectForcedToPCIe = false;
+
 /* Keeps the interconnect control honest about the selected card. Called from
    recalculate() rather than from the dropdown's onchange, because the GPU can
    also change from a shared URL or a restored snapshot, and one call site that
@@ -1612,7 +1619,13 @@ function syncInterconnect() {
   const supported = !gpu || supportsNVLink(gpu);
   sel.options[0].disabled = !supported;
   sel.options[0].textContent = supported ? 'NVLink / NVSwitch' : 'NVLink — not on this card';
-  if (!supported) sel.value = '0';
+  if (!supported) {
+    if (sel.value !== '0') interconnectForcedToPCIe = true;
+    sel.value = '0';
+  } else if (interconnectForcedToPCIe) {
+    sel.value = '1';
+    interconnectForcedToPCIe = false;
+  }
 }
 
 function recalculate() {
