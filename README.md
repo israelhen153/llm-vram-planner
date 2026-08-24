@@ -25,7 +25,7 @@ No single feature here is unique. The combination is what I wanted and couldn't 
 - **Per-user and aggregate throughput, kept separate** — a single user's decode speed and total server throughput differ by 50–100× under continuous batching, so they're reported as two numbers with two rooflines, and benchmarks are only ever compared against the matching one.
 - **Import any model** — paste a HuggingFace ID or drop a `config.json`. Works for models that aren't in any preset list.
 - **Report export** — copy a Markdown summary straight from the tool, or run `generate_report.py` for a procurement-ready PDF.
-- **Works offline** — single HTML file, no backend, no internet required after first load.
+- **Works offline** — single HTML file, no backend, no internet required after first load. The hosted copy counts page views and nothing else — see [Analytics](#analytics).
 
 ---
 
@@ -85,6 +85,22 @@ python generate_report.py --preset gemma4-26b --gpu a100-40 --prec awq --fp8-kv
 
 ### Share a configuration
 Every slider change updates the URL. Copy it, send it to a teammate — they see exactly what you see.
+
+---
+
+## Analytics
+
+The hosted copy at [israelhen153.github.io](https://israelhen153.github.io/llm-vram-planner/) counts page views with [GoatCounter](https://www.goatcounter.com). It is there for one reason: it is how I know whether anyone actually uses this, which is what decides whether it keeps getting worked on. There is no other telemetry, no backend, and no account of any kind.
+
+Per [GoatCounter's privacy policy](https://www.goatcounter.com/help/privacy) (8 June 2025):
+
+- **Stored**, as per-day and per-hour aggregate counts that cannot be linked to each other: page path, referrer, browser, OS, country, language, screen width.
+- **Not stored**: IP addresses, the full User-Agent, any tracker ID. Nothing is written to your browser — no cookies, no localStorage, no cache. Nothing is shared with third parties.
+- **Your configuration is never sent.** This tool keeps its entire state in the URL fragment (`#gpu=h100-80&...`), and `count.js` sends `location.pathname + location.search` only. Fragments are not part of an HTTP request; the model, GPU and workload you type stay in your browser.
+
+**Opting out**, if you'd rather not be counted: load the page once with `#toggle-goatcounter` on the end of the URL. That sets a `skipgc` flag in your browser's localStorage and stops the counting for good on that browser. It replaces whatever is in the fragment, so do it on a fresh load rather than on a configuration you want to keep.
+
+**Self-hosting or forking?** Delete the two-line `<script data-goatcounter=...>` block at the end of `index.html`, or run `./setup.sh <username> <your-goatcounter-code>` to repoint it. Otherwise your deployment reports its traffic to my site, which is not what either of us wants. Opened straight from `file://` it is inert either way: the script has nowhere to load from, and the tool never needed it.
 
 ---
 

@@ -427,7 +427,8 @@ body.exec-mode .exec-summary { display: block; }
 
 <!-- Footer -->
 <div style="margin:24px 0 0;padding:16px 0 0;border-top:.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-  <div style="font-size:12px;color:var(--text-muted)"><b>LLM VRAM Planner</b> v1.0.0 · Free and open source</div>
+  <div style="font-size:12px;color:var(--text-muted);max-width:60ch"><b>LLM VRAM Planner</b> v1.0.0 · Free and open source<br>
+    <span style="font-size:11px">Online, this page counts views with <a href="https://www.goatcounter.com" target="_blank" style="color:var(--accent-text);text-decoration:none">GoatCounter</a> — that is how I know whether anyone uses this. No cookies, no IP addresses, and your configuration is never sent: it lives in the URL fragment, which the counter does not read. <a href="https://github.com/israelhen153/llm-vram-planner#analytics" target="_blank" style="color:var(--accent-text);text-decoration:none">Details and opt-out</a>. Opened offline, nothing is sent at all.</span></div>
   <div style="display:flex;gap:10px;font-size:12px">
     <a href="https://github.com/israelhen153/llm-vram-planner" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><svg class="ti-ico" style="font-size:14px" aria-hidden="true" focusable="false"><use href="#ico-brand-github"></use></svg> Source</a>
     <a href="https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md" target="_blank" style="color:var(--accent-text);text-decoration:none;display:flex;align-items:center;gap:3px"><svg class="ti-ico" style="font-size:14px" aria-hidden="true" focusable="false"><use href="#ico-git-pull-request"></use></svg> Contribute benchmarks</a>
@@ -1836,8 +1837,17 @@ renderGpuOptions();
 if (!loadURLHash()) applyPreset();
 recalculate();
 </script>
-<!-- Analytics — GoatCounter (privacy-friendly, no cookies, GDPR-compliant) -->
-<!-- Sign up at https://www.goatcounter.com → replace YOURSITE below -->
+<!-- Analytics — GoatCounter. It is here for one reason: so the author can tell whether
+     the tool is used at all. Stored, as per-day/per-hour aggregate counts: path,
+     referrer, browser, OS, country, language, screen width. Not stored: IP address,
+     full User-Agent, any tracker ID — and nothing is written to the browser (no
+     cookies, no localStorage, no cache). count.js sends location.pathname +
+     location.search only, so the #-fragment this tool keeps its entire configuration
+     in never leaves the browser. Readers opt out per-browser by loading the page once
+     with #toggle-goatcounter. Sources and detail: README.md § Analytics.
+     Forking or self-hosting? Repoint this at your own site code or delete the two
+     lines below — the tool behaves identically without them, and they are inert from
+     file:// anyway. -->
 <script data-goatcounter="https://israelhen153.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
 </body>

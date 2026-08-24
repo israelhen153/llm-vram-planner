@@ -20,14 +20,17 @@ for f in "${FILES[@]}"; do
     fi
 done
 
-# GoatCounter analytics (optional)
+# GoatCounter analytics — already enabled, pointed at the author's site
+# A fork must not report its traffic there. Repoint it or remove it.
 if [ -n "${2:-}" ]; then
-    sed -i "s/YOURSITE/$2/g" index.html
-    echo "Updated GoatCounter to $2.goatcounter.com"
+    sed -i "s#israelhen153.goatcounter.com#$2.goatcounter.com#g" index.html
+    echo "Pointed GoatCounter at $2.goatcounter.com"
 else
     echo ""
-    echo "TIP: To enable analytics, sign up at https://www.goatcounter.com"
-    echo "Then run: sed -i 's/YOURSITE/your-site-code/g' index.html"
+    echo "NOTE: index.html counts page views via israelhen153.goatcounter.com."
+    echo "      Pass your own site code as the 2nd argument to repoint it, or delete"
+    echo "      the <script data-goatcounter=...> block at the end of index.html."
+    echo "      See the Analytics section of README.md."
 fi
 
 echo ""
