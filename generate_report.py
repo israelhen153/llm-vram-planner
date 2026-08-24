@@ -203,6 +203,16 @@ def compute(cfg):
     conc = cfg["conc"]
     n_gpu = cfg["n_gpu"]
     gpu = cfg["gpu"]
+    # Catalog values are per *board* — the unit you buy, price and rack. The
+    # runtime sees devices: an MI250X is one OAM presenting two GCDs, each with
+    # its own memory and its own share of the fabric. Cost uses n_gpu;
+    # everything else uses the device-scoped values below. Mirrors the same
+    # derivation in index.html, and the parity suite compares the results.
+    devices_per_board = gpu.get("devices", 1) or 1
+    device_count = n_gpu * devices_per_board
+    device_gb = gpu["gb"] / devices_per_board
+    device_bw = gpu["bw"] / devices_per_board
+    device_tflops = gpu["tflops"] / devices_per_board
     nvlink = cfg.get("nvlink", True)
     kv_bpp = cfg.get("kv_bpp", 2)
     is_moe = active_pct < 100
@@ -253,19 +263,20 @@ def compute(cfg):
     total_active_p = active_p + shared_p
     act_gb = max((total_active_p * 1e9 * 2 * 0.01) / GIB, 0.1)
     oh_per_gpu = 1.5
-    nccl_oh = (0.3 if nvlink else 0.2) * (n_gpu - 1) if n_gpu > 1 else 0
-    total_oh = oh_per_gpu * n_gpu + nccl_oh
+    nccl_oh = (0.3 if nvlink else 0.2) * (device_count - 1) if device_count > 1 else 0
+    total_oh = oh_per_gpu * device_count + nccl_oh
     total_gb = weights_gb + kv_gb + act_gb + total_oh
 
-    per_w = weights_gb / n_gpu
-    per_kv = kv_gb / n_gpu
-    per_a = act_gb / n_gpu
-    per_oh = oh_per_gpu + ((0.3 if nvlink else 0.2) if n_gpu > 1 else 0)
+    per_w = weights_gb / device_count
+    per_kv = kv_gb / device_count
+    per_a = act_gb / device_count
+    per_oh = oh_per_gpu + ((0.3 if nvlink else 0.2) if device_count > 1 else 0)
     per_total = per_w + per_kv + per_a + per_oh
-    total_vram = gpu["gb"] * n_gpu
+    total_vram = device_gb * device_count
 
     fixed_pg = per_w + per_a + per_oh
-    free_kv = max((gpu["gb"] * 0.9 - fixed_pg) * n_gpu, 0)
+    # Both operands move together, or free KV silently halves or doubles.
+    free_kv = max((device_gb * 0.9 - fixed_pg) * device_count, 0)
     kv_per_tok_gb = kv_bytes_per_tok / GIB
     free_kv_bytes = free_kv * GIB
 
@@ -302,13 +313,13 @@ def compute(cfg):
     # NVLink is roughly flat within a domain (full bisection); PCIe worsens with GPU
     # count — decode all-reduces are small, so hop latency dominates. Heuristic step,
     # same class as MBU/MFU. Mirrors index.html exactly; the parity suite enforces it.
-    if n_gpu <= 1:
+    if device_count <= 1:
         nv_penalty = 1.0
     elif nvlink:
         nv_penalty = 0.85
     else:
-        nv_penalty = max(0.55 - 0.05 * math.log2(n_gpu / 2), 0.40)
-    achieved_bw = gpu["bw"] * 1e9 * n_gpu * P["mbu"] * nv_penalty
+        nv_penalty = max(0.55 - 0.05 * math.log2(device_count / 2), 0.40)
+    achieved_bw = device_bw * 1e9 * device_count * P["mbu"] * nv_penalty
     active_weight_bytes = total_active_p * 1e9 * bpp
     kv_bytes_per_seq = kv_seq_bytes
 
@@ -321,7 +332,7 @@ def compute(cfg):
                     if kv_bytes_per_seq > 0 else conc)
     eff_batch = max(min(conc, max_batch_kv), 1)
     compute_ceiling = (
-        (P["mfuDecode"] * gpu["tflops"] * 1e12 * n_gpu * nv_penalty) / (2 * total_active_p * 1e9)
+        (P["mfuDecode"] * device_tflops * 1e12 * device_count * nv_penalty) / (2 * total_active_p * 1e9)
         if total_active_p > 0 else 0
     )
     single_tok = round(decode_at(1))
@@ -340,7 +351,7 @@ def compute(cfg):
 
     # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
     # understated TTFT by roughly 10x. MFU_PREFILL, not MFU_DECODE: dense GEMMs.
-    achieved_prefill_flops = P["mfuPrefill"] * gpu["tflops"] * 1e12 * n_gpu * nv_penalty
+    achieved_prefill_flops = P["mfuPrefill"] * device_tflops * 1e12 * device_count * nv_penalty
 
     def ttft_for(tokens):
         flops = 2 * total_active_p * 1e9 * max(tokens, 0)
@@ -351,12 +362,13 @@ def compute(cfg):
     ttft_cold_ms = ttft_for(ctx)
     ttft_warm_ms = ttft_for(ctx - eff_prefix) if prefix_caching else ttft_cold_ms
     ttft_ms = ttft_warm_ms
+    # Boards, not devices: a dual-GCD module is one line item on the invoice.
     hourly_hyper = gpu["hyper"] * n_gpu
     hourly_spec = gpu["spec"] * n_gpu
     hourly_spot = gpu["spot"] * n_gpu
 
-    fits = per_total <= gpu["gb"]
-    comfortable = per_total <= gpu["gb"] * 0.9
+    fits = per_total <= device_gb
+    comfortable = per_total <= device_gb * 0.9
 
     return {
         "weights_gb": weights_gb, "kv_gb": kv_gb, "act_gb": act_gb,
@@ -413,6 +425,13 @@ def split_parallelism(gpu_count):
     return tp, gpu_count // tp
 
 
+def device_count_for(cfg):
+    """Accelerator devices, not boards. A parallelism split is sized in devices:
+    a single dual-GCD module still needs --tensor-parallel-size 2, or half the
+    silicon sits idle. Mirrors parallelismFor() in index.html."""
+    return cfg["n_gpu"] * ((cfg.get("gpu") or {}).get("devices", 1) or 1)
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
@@ -422,10 +441,10 @@ def build_vllm_cmd(cfg, comp):
     # shlex.quote() is a no-op on an ordinary value and neutralizes anything
     # that isn't one, instead of executing it.
     hf = shlex.quote(cfg.get("hf_model", "/opt/models/YourModel"))
-    tp, dp = split_parallelism(cfg["n_gpu"])
+    tp, dp = split_parallelism(device_count_for(cfg))
     parts = [f"vllm serve {hf} \\"]
     parts.append("    --host 0.0.0.0 --port 8000 \\")
-    if cfg["n_gpu"] > 1:
+    if tp > 1:
         parts.append(f"    --tensor-parallel-size {tp} \\")
     if dp > 1:
         parts.append(f"    --data-parallel-size {dp} \\")
@@ -444,7 +463,7 @@ def build_vllm_cmd(cfg, comp):
     # setting, independent of anything to do with TP/DP.
     if not cfg.get("prefix_caching", True):
         parts.append("    --no-enable-prefix-caching \\")
-    if comp["is_moe"] and cfg["n_gpu"] > 1:
+    if comp["is_moe"] and device_count_for(cfg) > 1:
         parts.append("    --enable-expert-parallel \\")
     parts.append("    --gpu-memory-utilization 0.90 \\")
     parts.append(f"    --max-model-len {min(comp['max_ctx_1'], cfg['ctx'])}")
@@ -672,7 +691,7 @@ class ReportCard:
         # "TP=12" while build_vllm_cmd(), printed a few sections later in the
         # same PDF, emitted --tensor-parallel-size 4 --data-parallel-size 3 —
         # one document contradicting itself.
-        tp, dp = split_parallelism(cfg["n_gpu"])
+        tp, dp = split_parallelism(device_count_for(cfg))
         parallelism_label = "Single GPU"
         if cfg["n_gpu"] > 1:
             parallelism_label = f"Tensor parallel (TP={tp})" + (f" + data parallel (DP={dp})" if dp > 1 else "")

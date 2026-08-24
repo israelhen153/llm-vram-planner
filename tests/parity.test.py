@@ -37,7 +37,8 @@ wanted = {"GIB", "GPUS", "PERF"}
 # cfg/comp as plain dicts and gpu_count as a plain int), so wanted stays as-is —
 # they just need to ride along in the same exec() so build_vllm_cmd can call
 # split_parallelism, plus shlex in ns below since build_vllm_cmd shells out to it.
-wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink"}
+wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
+              "device_count_for"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -109,6 +110,21 @@ CASES = [
      "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
      "ctx": 32768, "conc": 64, "n_gpu": 1, "gpu": "h100-80",
      "shared_prefix": 8192, "prefix_caching": False},
+    # A board presenting two devices, with the MI250X's real figures: 128 GB and
+    # 3276.8 GB/s per module, 383 dense TFLOPS per module. It is not in the
+    # catalog yet — commit 9 adds it — but the derivation that splits a board
+    # into devices has to be compared across both engines before then, not after
+    # a wrong number ships.
+    {"name": "Dual-GCD board, 1 module (device split must be identical in both engines)",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
+              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+    {"name": "Dual-GCD board, 4 modules = 8 devices",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
+              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
     {"name": "Gemma SWA with shared prefix — only global layers share",
      "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
      "ctx": 32768, "conc": 32, "n_gpu": 1, "gpu": "h100-80",
@@ -137,13 +153,18 @@ for(const [k,g] of Object.entries(GPU_TABLE)){
         name:g.name.replace(/ GB$/,'GB')};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
-  const g=G[c.gpu];
+  /* c.card lets a case carry a row the catalog does not have yet — the
+     multi-GCD path has to be compared across both engines before the first
+     such board ships, not after. */
+  const g=c.card ? {gb:c.card.gb,bw:c.card.bw,h:c.card.hyper,sp:c.card.spec,
+                    st:c.card.spot,tf:c.card.tflops,name:c.card.name.replace(/ GB$/,'GB'),
+                    devices:c.card.devices} : G[c.gpu];
   if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
   return ci({params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
-    gpuSpotCost:g.st,gpuName:g.name,
+    gpuSpotCost:g.st,gpuName:g.name,gpuDevices:g.devices||1,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
@@ -174,6 +195,12 @@ FIELDS = [
     ("sat_batch", "saturatedBatch", 0), ("sat_tok", "saturatedTokS", 1),
     ("ttft_cold_ms", "ttftColdMs", 1), ("ttft_warm_ms", "ttftWarmMs", 1),
     ("kv_saved_by_prefix_gb", "kvSavedByPrefixGB", 0.01),
+    # Cost has never been compared across the engines, and it is the one family
+    # of numbers that is scoped to *boards* while everything else is scoped to
+    # devices — so a dual-GCD board is exactly where the two would diverge, and
+    # nothing would have said so.
+    ("hourly_hyper", "hourlyHyper", 0.001), ("hourly_spec", "hourlySpec", 0.001),
+    ("hourly_spot", "hourlySpot", 0.001),
     # The constants as executed, not as extracted — this is what stops the two
     # engines quietly disagreeing about a value no case happens to exercise.
     ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),
@@ -184,8 +211,8 @@ dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
 
 passed = failed = 0
 for case, js in zip(CASES, js_results):
-    cfg = {k: v for k, v in case.items() if k != "name"}
-    cfg["gpu"] = GPUS[case["gpu"]]
+    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
+    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
     cfg.setdefault("max_ctx", 1048576)
     py = compute(cfg)
     bad = []
@@ -204,8 +231,8 @@ for case, js in zip(CASES, js_results):
 
 # The verdict flags must agree too — that is the tool's headline answer.
 for case, js in zip(CASES, js_results):
-    cfg = {k: v for k, v in case.items() if k != "name"}
-    cfg["gpu"] = GPUS[case["gpu"]]
+    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
+    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
     cfg.setdefault("max_ctx", 1048576)
     py = compute(cfg)
     if py["fits"] != js["fits"] or py["comfortable"] != js["comfortable"]:
@@ -532,12 +559,14 @@ function extract(sig) {
   return html.slice(s, e + 2);
 }
 const src = extract('function splitParallelism(gpuCount) {')
+          + extract('function parallelismFor(state) {')
           + extract('function buildVllmCommand(state, computed, modelPath) {');
 const buildVllmCommand = new Function(`${src}; return buildVllmCommand;`)();
 const scenarios = JSON.parse(process.argv[2]);
 const MAX_CTX_1 = 8192; // must match Python's MAX_CTX_1 above
 console.log(JSON.stringify(scenarios.map((m) => buildVllmCommand(
-  {gpuCount: m.n_gpu, quantMethod: m.quant || '', kvBytesPerValue: m.kv_bpp,
+  {gpuCount: m.n_gpu, gpuDevices: m.devices || 1,
+   quantMethod: m.quant || '', kvBytesPerValue: m.kv_bpp,
    prefixCaching: m.prefix_caching, contextLength: m.ctx},
   {fits: m.fits, isMoE: m.is_moe, maxContextSingleUser: MAX_CTX_1},
   m.hf_model))));

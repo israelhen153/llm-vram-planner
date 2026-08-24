@@ -669,6 +669,85 @@ const readInputStateFor = (gpuKey, interconnect) => {
   return fn();
 };
 
+console.log('\nA board is not always one device');
+/* The catalog stores per-board figures because that is the unit you buy. A
+   multi-GCD module — one OAM presenting two GCDs — is one row with devices: 2.
+   Everything except cost has to be scoped to devices, and each of the three
+   traps below passes the existing suite while being wrong. */
+const dualGCD = { gb: 128, bw: 3276.8, tflops: 383, hyper: 6.0, spec: 2.5, spot: 1.2,
+                  name: 'Dual-GCD 128 GB', vendor: 'nvidia', devices: 2, form: 'sxm' };
+const asState = (card, count, extra = {}) => ({
+  params: 70, activePercent: 100, bytesPerParam: 2, layers: 80, kvHeads: 8, headDim: 128,
+  sharedExperts: 0, contextLength: 8192, concurrency: 16, gpuCount: count,
+  hasNVLink: true, kvBytesPerValue: 2, modelMaxCtx: 1048576, vendor: card.vendor,
+  gpuGB: card.gb, gpuBandwidth: card.bw, gpuTFLOPS: card.tflops, gpuDevices: card.devices,
+  gpuHyperCost: card.hyper, gpuSpecCost: card.spec, gpuSpotCost: card.spot,
+  gpuName: card.name, ...extra,
+});
+// The same silicon described as one dual-device board, or as two single-device
+// boards. Every number except the per-board cost must agree.
+const single = { ...dualGCD, gb: 64, bw: 3276.8 / 2, tflops: 383 / 2, devices: 1 };
+
+test('a dual-GCD board and two single-GCD boards compute the same everything', () => {
+  const a = computeInference(asState(dualGCD, 1));
+  const b = computeInference(asState(single, 2));
+  for (const k of ['weightsGB', 'kvCacheGB', 'totalGB', 'freeForKVCache',
+                   'maxContextSingleUser', 'singleStreamTokS', 'aggregateTokS', 'ttftMs']) {
+    assert.ok(Math.abs(a[k] - b[k]) < Math.max(1e-6, Math.abs(b[k]) * 1e-9),
+      `${k}: dual-GCD ${a[k]} vs two singles ${b[k]}`);
+  }
+  assert.ok(Math.abs(a.perGPU.total - b.perGPU.total) < 1e-6, 'per-device VRAM must match');
+});
+test('per-device VRAM halves, and the fit check halves with it', () => {
+  // The trap: dividing the shares by deviceCount while still comparing against
+  // the *board* capacity says a model fits when each GCD is over its limit.
+  const dual = computeInference(asState(dualGCD, 1));
+  const asIfOneDevice = computeInference(asState({ ...dualGCD, devices: 1 }, 1));
+  assert.ok(dual.perGPU.total < asIfOneDevice.perGPU.total,
+    'two devices should each hold less than one device would');
+  assert.strictEqual(dual.deviceGB, 64, 'per-device capacity is the board halved');
+  assert.strictEqual(dual.deviceCount, 2, 'one dual-GCD board is two devices');
+});
+test('aggregate bandwidth is unchanged by how the silicon is packaged', () => {
+  // deviceBandwidth * deviceCount === gpuBandwidth * gpuCount, or the roofline
+  // moved when nothing physical did.
+  const a = computeInference(asState(dualGCD, 2));
+  const b = computeInference(asState(single, 4));
+  assert.ok(Math.abs(a.aggregateTokS - b.aggregateTokS) < 1, 'aggregate throughput drifted');
+});
+test('cost is per board, not per device', () => {
+  // The double-count: a dual-GCD module is one line item on the invoice.
+  const dual = computeInference(asState(dualGCD, 1));
+  assert.strictEqual(dual.hourlyHyper, dualGCD.hyper, 'one module must bill as one module');
+  const four = computeInference(asState(dualGCD, 4));
+  assert.strictEqual(four.hourlyHyper, dualGCD.hyper * 4, 'four modules, four line items');
+});
+test('free KV cache moves both operands together', () => {
+  // Halving the per-device capacity while still multiplying by the board count
+  // (or the reverse) silently halves or doubles free KV, and every capacity
+  // number downstream inherits it with no fit check to catch it.
+  // A model that actually fits, so free KV is a live number and not a clamped
+  // zero that would agree by accident.
+  const fits = { params: 13, bytesPerParam: 2, layers: 40 };
+  const dual = computeInference(asState(dualGCD, 1, fits));
+  const twoSingles = computeInference(asState(single, 2, fits));
+  assert.ok(dual.freeForKVCache > 0, 'the probe config must leave room for KV');
+  assert.ok(Math.abs(dual.freeForKVCache - twoSingles.freeForKVCache) < 1e-6,
+    `free KV differs: ${dual.freeForKVCache} vs ${twoSingles.freeForKVCache}`);
+  assert.ok(dual.freeForKVCache < dualGCD.gb,
+    'free KV should be a fraction of the board, not a multiple of it');
+});
+test('a single dual-GCD module still asks vLLM for tensor parallel 2', () => {
+  // The one that leaves half the silicon idle: sized in boards, a single module
+  // emits no --tensor-parallel-size at all.
+  const src = html.slice(html.indexOf('function splitParallelism('), html.indexOf('function renderStrategyBadges'));
+  const parallelismFor = new Function(`${src}; return parallelismFor;`)();
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 1, gpuDevices: 2 }), { tp: 2, dp: 1 });
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 4, gpuDevices: 2 }), { tp: 8, dp: 1 });
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 1, gpuDevices: 1 }), { tp: 1, dp: 1 });
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 8, gpuDevices: 1 }), { tp: 8, dp: 1 });
+});
+
 console.log('\nThe NVLink gate as the state builder actually applies it');
 test('a card without NVLink cannot report NVLink, whatever the control says', () => {
   for (const key of ['t4-16', 'l4-24', 'rtx4090-24', 'rtx5090-32',

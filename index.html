@@ -899,6 +899,10 @@ function readInputState() {
     gpuSpecCost: gpu.spec,
     gpuSpotCost: gpu.spot,
     gpuName: gpu.name,
+    // How many accelerator devices this board presents. 1 for every NVIDIA card
+    // here; a multi-GCD board like the MI250X is one row with devices: 2,
+    // because that is how it is bought, priced and racked.
+    gpuDevices: gpu.devices,
     // The catalog slug, carried through so nothing downstream has to reverse
     // the display name back into one.
     gpuKey: gpu.key,
@@ -933,10 +937,30 @@ const PERF = {
 
 function computeInference(state) {
   const { params, activePercent, bytesPerParam, layers, kvHeads, headDim,
-          sharedExperts, contextLength, concurrency, gpuCount, gpuGB,
+          sharedExperts, contextLength, concurrency, gpuCount, gpuGB, gpuDevices = 1,
           gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue,
           attnMode = 'standard', swaWindow = 0, swaLocalLayers = 0, mlaLatentDim = 0,
           modelMaxCtx = 131072, sharedPrefix = 0, prefixCaching = true } = state;
+
+  /* Catalog values are per *board*, because that is the unit you buy, price and
+     rack. The runtime sees devices: an MI250X is one OAM presenting two GCDs,
+     each with its own memory and its own share of the fabric. Derive both here,
+     once, then use device-scoped values everywhere except cost.
+
+     The rule is one sentence: cost uses gpuCount; everything else uses the
+     device-scoped values. Three traps hide behind it, all silent —
+     freeForKVCache multiplies a per-device term by a count and halves or
+     doubles free KV if only one operand moves; hourly cost billed per device
+     double-counts a dual-GCD board; and tensor parallelism sized in boards
+     emits a command that leaves half the silicon idle.
+
+     With devices: 1 on every NVIDIA row, every derived value below is bit
+     identical to the board value it replaces. */
+  const devicesPerBoard = gpuDevices || 1;
+  const deviceCount = gpuCount * devicesPerBoard;
+  const deviceGB = gpuGB / devicesPerBoard;
+  const deviceBandwidth = gpuBandwidth / devicesPerBoard;
+  const deviceTFLOPS = gpuTFLOPS / devicesPerBoard;
 
   const isMoE = activePercent < 100;
   const weightsGB = (params * 1e9 * bytesPerParam) / GIB;
@@ -1001,22 +1025,23 @@ function computeInference(state) {
 
   // Overhead: CUDA context + NCCL buffers
   const overheadPerGPU = 1.5;
-  const ncclOverhead = gpuCount > 1 ? (hasNVLink ? 0.3 : 0.2) * (gpuCount - 1) : 0;
-  const totalOverhead = overheadPerGPU * gpuCount + ncclOverhead;
+  const ncclOverhead = deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) * (deviceCount - 1) : 0;
+  const totalOverhead = overheadPerGPU * deviceCount + ncclOverhead;
   const totalGB = weightsGB + kvCacheGB + activationsGB + totalOverhead;
 
   // Per-GPU breakdown (tensor parallel sharding)
   const perGPU = {
-    weights: weightsGB / gpuCount,
-    kvCache: kvCacheGB / gpuCount,
-    activations: activationsGB / gpuCount,
-    overhead: overheadPerGPU + (gpuCount > 1 ? (hasNVLink ? 0.3 : 0.2) : 0),
+    weights: weightsGB / deviceCount,
+    kvCache: kvCacheGB / deviceCount,
+    activations: activationsGB / deviceCount,
+    overhead: overheadPerGPU + (deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) : 0),
   };
   perGPU.total = perGPU.weights + perGPU.kvCache + perGPU.activations + perGPU.overhead;
 
   // Reverse calculations — capacity limits
   const fixedPerGPU = perGPU.weights + perGPU.activations + perGPU.overhead;
-  const freeForKVCache = Math.max((gpuGB * 0.9 - fixedPerGPU) * gpuCount, 0);
+  // Both operands move together, or free KV silently halves or doubles.
+  const freeForKVCache = Math.max((deviceGB * 0.9 - fixedPerGPU) * deviceCount, 0);
   const kvPerTokenGB = kvBytesPerToken / GIB;
   const freeKVBytes = freeForKVCache * GIB;
 
@@ -1075,10 +1100,10 @@ function computeInference(state) {
    * a domain. PCIe is not: decode all-reduces are small, so per-hop latency dominates
    * and the cost grows with the ring. -0.05 per doubling is a heuristic, same class
    * as MBU/MFU — flagged in MODEL.md, floor at 0.40. */
-  const interconnectPenalty = gpuCount <= 1 ? 1.0
+  const interconnectPenalty = deviceCount <= 1 ? 1.0
     : hasNVLink ? 0.85
-    : Math.max(0.55 - 0.05 * Math.log2(gpuCount / 2), 0.40);
-  const achievedBandwidth = gpuBandwidth * 1e9 * gpuCount * P.mbu * interconnectPenalty;
+    : Math.max(0.55 - 0.05 * Math.log2(deviceCount / 2), 0.40);
+  const achievedBandwidth = deviceBandwidth * 1e9 * deviceCount * P.mbu * interconnectPenalty;
   const activeWeightBytes = totalActiveParams * 1e9 * bytesPerParam;
   // Exact bytes for one sequence at this context, not per-token x ctx — those
   // differ under SWA, where local layers stop growing past the window.
@@ -1097,7 +1122,7 @@ function computeInference(state) {
     : concurrency;
   const effectiveBatch = Math.max(Math.min(concurrency, maxBatchByKV), 1);
   const computeCeiling = totalActiveParams > 0
-    ? (P.mfuDecode * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty) / (2 * totalActiveParams * 1e9)
+    ? (P.mfuDecode * deviceTFLOPS * 1e12 * deviceCount * interconnectPenalty) / (2 * totalActiveParams * 1e9)
     : 0;
 
   const singleStreamTokS = Math.round(decodeAt(1));
@@ -1126,7 +1151,7 @@ function computeInference(state) {
    * processed in one parallel pass at ~2 FLOPs per active parameter per token.
    * (Decode speed is irrelevant here; using it understates TTFT by ~10x.
    * MFU_PREFILL, not MFU_DECODE: dense GEMMs, not decode's starved ones.) */
-  const achievedPrefillFlops = P.mfuPrefill * gpuTFLOPS * 1e12 * gpuCount * interconnectPenalty;
+  const achievedPrefillFlops = P.mfuPrefill * deviceTFLOPS * 1e12 * deviceCount * interconnectPenalty;
   const prefillFlopsFor = (tokens) => 2 * totalActiveParams * 1e9 * Math.max(tokens, 0);
   const ttftFor = (tokens) => achievedPrefillFlops > 0
     ? Math.round((prefillFlopsFor(tokens) / achievedPrefillFlops) * 1000) : 0;
@@ -1138,13 +1163,15 @@ function computeInference(state) {
   const ttftMs = ttftWarmMs;
 
   // Cost
+  // Boards, not devices: the catalog prices a board and a dual-GCD module is
+  // one line item. Billing per device double-counts it.
   const hourlyHyper = gpuHyperCost * gpuCount;
   const hourlySpec = gpuSpecCost * gpuCount;
   const hourlySpot = gpuSpotCost * gpuCount;
 
   return {
     isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
-    perGPU, totalVRAM: gpuGB * gpuCount,
+    perGPU, totalVRAM: deviceGB * deviceCount, deviceCount, deviceGB,
     freeForKVCache, kvPerTokenGB, kvBytesPerToken,
     maxContextSingleUser, maxConcurrentAt8K, maxConcurrentAt4K,
     singleStreamTokS, aggregateTokS, perUserAtLoadTokS, effectiveBatch,
@@ -1158,8 +1185,8 @@ function computeInference(state) {
     kvSavedByPrefixGB, effectivePrefix, totalTokens,
     saturatedBatch, saturatedTokS,
     hourlyHyper, hourlySpec, hourlySpot,
-    fits: perGPU.total <= gpuGB,
-    comfortable: perGPU.total <= gpuGB * 0.9,
+    fits: perGPU.total <= deviceGB,
+    comfortable: perGPU.total <= deviceGB * 0.9,
   };
 }
 
@@ -1216,6 +1243,13 @@ function splitParallelism(gpuCount) {
   return { tp, dp: gpuCount / tp };
 }
 
+/* A parallelism split is sized in devices, not boards: a single dual-GCD module
+   still needs --tensor-parallel-size 2. Five call sites read this, so it is
+   derived once rather than multiplied at each of them. */
+function parallelismFor(state) {
+  return splitParallelism(state.gpuCount * (state.gpuDevices || 1));
+}
+
 function renderStrategyBadges(state, computed) {
   // isMoE from computed (compute()'s own is_moe/isMoE, driven by
   // activePercent < 100), not a preset lookup — a preset's activePercent
@@ -1225,7 +1259,7 @@ function renderStrategyBadges(state, computed) {
   // computed.isMoE *can* diverge on a loaded link. Reading the same source
   // buildVllmCommand() already reads keeps this badge and the emitted
   // --enable-expert-parallel flag from disagreeing about the same config.
-  const { tp, dp } = splitParallelism(state.gpuCount);
+  const { tp, dp } = parallelismFor(state);
   let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
   html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${state.gpuCount > 1 ? 'TP=' + tp + (dp > 1 ? ' × DP=' + dp : '') : 'Single GPU'}</span>`;
   if (state.gpuCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more GPUs</span>';
@@ -1240,7 +1274,7 @@ function renderGPUCards(state, computed) {
   // Computed once at function scope, not just inside the condensed-view
   // branch below, because the NVLink/PCIe sharding line at the bottom of
   // this function applies to every gpuCount > 1, individual cards included.
-  const { tp, dp } = splitParallelism(state.gpuCount);
+  const { tp, dp } = parallelismFor(state);
   const maxBarValue = Math.max(perGPU.total, state.gpuGB) * 1.05;
   const weightsPct = Math.max(perGPU.weights / maxBarValue * 100, 0.5);
   const kvPct = Math.max(perGPU.kvCache / maxBarValue * 100, 0.5);
@@ -1432,9 +1466,9 @@ function renderCost(state, computed) {
 // result to the page; this function owns only the command text itself.
 function buildVllmCommand(state, computed, modelPath) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
-  const { tp, dp } = splitParallelism(state.gpuCount);
+  const { tp, dp } = parallelismFor(state);
   let cmd = `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
-  if (state.gpuCount > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
+  if (tp > 1) cmd += `    --tensor-parallel-size ${tp} \\\n`;
   if (dp > 1) cmd += `    --data-parallel-size ${dp} \\\n`;
   /* --dtype auto reads torch_dtype from the model's config.json. Hardcoding
      float16 was wrong for the bf16-trained families that dominate now (Llama 3,
@@ -1462,7 +1496,7 @@ function renderCommand(state, computed) {
 
   let warning = '';
   if (computed.fits) {
-    const { tp, dp } = splitParallelism(state.gpuCount);
+    const { tp, dp } = parallelismFor(state);
     if (dp > 1) {
       warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${state.gpuCount} GPUs: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
     }
@@ -1722,7 +1756,7 @@ function exportSummary() {
   const computed = computeInference(state);
   const preset = MODEL_PRESETS[state.presetKey];
   const name = preset ? document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text : (importedModelId || state.params + 'B model');
-  const { tp, dp } = splitParallelism(state.gpuCount);
+  const { tp, dp } = parallelismFor(state);
 
   let report = `# LLM VRAM Plan — ${name}\n\n`;
   report += `## Model\n- Parameters: ${state.params}B${state.activePercent < 100 ? ' (MoE, ' + state.activePercent + '% active)' : ' (dense)'}\n`;
