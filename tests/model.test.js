@@ -746,13 +746,62 @@ test('every row carries the structural fields the engines read', () => {
   }
 });
 
+console.log('\nThe opt-out the disclosure promises');
+test('the page carries its own control, because the documented gesture cannot work here', () => {
+  /* GoatCounter's documented opt-out is loading the page with
+     #toggle-goatcounter, which count.js reads at evaluation time. This page
+     rewrites location.hash during boot — synchronously, in recalculate() ->
+     updateURLHash() — while the counter script is still loading async, so the
+     gesture is destroyed before it can be seen. Verified by inspection of the
+     boot order; the fix is a control that sets the same flag directly. */
+  const boot = html.slice(html.indexOf('renderGpuOptions();'));
+  assert.ok(/recalculate\(\);/.test(boot), 'boot must still call recalculate()');
+  assert.ok(/updateURLHash\(\);/.test(html.slice(html.indexOf('function recalculate'))),
+    'recalculate() no longer rewrites the hash — re-check whether the URL opt-out works now');
+  assert.ok(/id="counting-toggle"/.test(html), 'the footer carries no opt-out control');
+  assert.ok(/renderCountingToggle\(\);/.test(boot), 'the control is never labelled at load');
+});
+test('the opt-out sets the flag count.js actually checks, and survives localStorage throwing', () => {
+  const src = html.slice(html.indexOf('function countingDisabled'), html.indexOf('/* textContent, never innerHTML'));
+  assert.ok(/localStorage\.setItem\('skipgc', 't'\)/.test(src),
+    "count.js refuses to send when localStorage.skipgc === 't'; nothing else disables it");
+  assert.ok(/localStorage\.removeItem\('skipgc'\)/.test(src), 'the control must be reversible');
+
+  // Drive it against a localStorage that throws, as private modes do.
+  const el = { textContent: '' };
+  const api = new Function('document', 'localStorage', `${src}
+    return { toggle: toggleCounting, disabled: countingDisabled };`)(
+      { getElementById: () => el },
+      { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); },
+        removeItem() { throw new Error('denied'); } });
+  assert.strictEqual(api.disabled(), false, 'a throwing localStorage must read as "counted"');
+  api.toggle({ preventDefault() {} });   // must not throw
+  assert.ok(el.textContent.length > 0, 'the control should still label itself');
+});
+test('nothing in the repo still points readers at the URL gesture as a working opt-out', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  // Whole lines: the qualifying words often precede the mention, so matching
+  // from the marker onwards would judge a sentence by its tail.
+  const lines = (readme + '\n' + html).split('\n').filter(l => l.includes('toggle-goatcounter'));
+  assert.ok(lines.length, 'the gesture is not mentioned at all — is the disclosure still complete?');
+  for (const line of lines) {
+    // A mention is fine where it is quoting count.js's own refusal string or
+    // saying the gesture is dead here; what must not survive is an instruction.
+    assert.ok(/does not work|cannot work|refuses with|its own opt-out/.test(line),
+      `still presented as a working opt-out: ${line.slice(0, 120)}`);
+  }
+});
+
 console.log('\nThe analytics notice and the beacon travel together');
-test('both regions are marked exactly once, so setup.sh can remove them as a pair', () => {
+test('every analytics region is marked, and marked once, wherever it survives', () => {
+  /* Not "exactly one" — a fork that ran setup.sh without a site code has
+     removed all of them, and the suite this repo tells that fork to run must
+     stay green. The invariant is that a region is either absent or complete. */
   for (const tag of ['ANALYTICS-BEACON', 'ANALYTICS-NOTICE']) {
-    for (const end of ['BEGIN', 'END']) {
-      const n = (html.match(new RegExp(`${tag}:${end}`, 'g')) || []).length;
-      assert.strictEqual(n, 1, `${tag}:${end} appears ${n} times, expected 1`);
-    }
+    const begins = (html.match(new RegExp(`${tag}:BEGIN`, 'g')) || []).length;
+    const ends = (html.match(new RegExp(`${tag}:END`, 'g')) || []).length;
+    assert.strictEqual(begins, ends, `${tag} has ${begins} BEGIN and ${ends} END markers`);
+    assert.ok(begins <= 1, `${tag} is marked ${begins} times`);
   }
 });
 test('the page never counts views without saying so, or says so without counting', () => {
