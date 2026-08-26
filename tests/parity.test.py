@@ -33,10 +33,11 @@ tree = ast.parse(src)
 # a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
 # gets skipped, and surfaces as a bare NameError from inside compute() much later.
 wanted = {"GIB", "GPUS", "PERF"}
-# build_vllm_cmd/split_parallelism don't close over any of the above (they take
-# cfg/comp as plain dicts and gpu_count as a plain int), so wanted stays as-is —
-# they just need to ride along in the same exec() so build_vllm_cmd can call
-# split_parallelism, plus shlex in ns below since build_vllm_cmd shells out to it.
+# build_vllm_cmd/split_parallelism/device_count_for don't close over any of the
+# above (they take cfg/comp as plain dicts and gpu_count as a plain int), so
+# wanted stays as-is — they just need to ride along in the same exec(), because
+# compute() now calls split_parallelism(device_count_for(cfg)) for the TP/DP
+# split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
               "device_count_for"}
 nodes = [
@@ -54,6 +55,10 @@ for name in sorted(wanted):
 compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
 supports_nvlink = ns["supports_nvlink"]
 build_vllm_cmd = ns["build_vllm_cmd"]
+# build_vllm_cmd() reads the split off comp rather than deriving it, so the
+# command matrix at the bottom has to derive one to hand it — with this engine's
+# own function, so what that section compares is still two derivations.
+split_parallelism, device_count_for = ns["split_parallelism"], ns["device_count_for"]
 
 # ---- run the JS model on the same inputs ----------------------------------
 CASES = [
@@ -75,6 +80,13 @@ CASES = [
     {"name": "70B awq, 8x A100 80, PCIe (penalty scales with count)",
      "params": 70, "active": 100, "bpp": 0.5, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 8, "gpu": "a100-80", "nvlink": False},
+    # Twelve devices split TP=4 x DP=3 — the regime where the split and the
+    # device count are different numbers, which is where the contract literals
+    # below have anything to say. The only other case above eight is the
+    # DeepSeek one at 16, and that is MLA, MoE and fp8 all at once.
+    {"name": "70B bf16, 12x H100 80 (TP=4 x DP=3)",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 16384, "conc": 32, "n_gpu": 12, "gpu": "h100-80"},
     {"name": "26B MoE fp8, B200, fp8 KV",
      "params": 26, "active": 15, "bpp": 1, "layers": 48, "kv_heads": 8, "h_dim": 128,
      "ctx": 32768, "conc": 128, "n_gpu": 1, "gpu": "b200-192", "kv_bpp": 1},
@@ -145,8 +157,17 @@ const fs=require('fs');
 const html=fs.readFileSync(process.argv[1],'utf8');
 const gib=html.match(/^const GIB = .+;$/m)[0];
 const perf=html.match(/^const PERF = \{[\s\S]*?\n\};$/m)[0];
+/* computeInference() derives the TP/DP split it returns through
+   parallelismFor()/splitParallelism(), so those have to come into scope with
+   it — the same way GIB and PERF do, and the same way wanted_fns already pulls
+   split_parallelism() in on the Python side above. Without them this is a bare
+   ReferenceError from inside the function. The two are adjacent in the source,
+   so one slice carries both. */
+const spS=html.indexOf('function splitParallelism('), spE=html.indexOf('function renderStrategyBadges');
+if(spS===-1||spE===-1) throw new Error('splitParallelism()/parallelismFor() not found in index.html');
+const split=html.slice(spS,spE);
 const s=html.indexOf('function computeInference(state) {'), e=html.indexOf('\n}\n',s);
-const ci=new Function(`${gib}\n${perf}\n${html.slice(s,e+2)}; return computeInference;`)();
+const ci=new Function(`${gib}\n${perf}\n${split}\n${html.slice(s,e+2)}; return computeInference;`)();
 const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
 if(!gt) throw new Error('GPU_TABLE not found in index.html');
 const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
@@ -214,6 +235,11 @@ FIELDS = [
     # web tool stayed right — with the suite green.
     ("device_count", "deviceCount", 0), ("device_gb", "deviceGB", 0.001),
     ("device_bw", "deviceBandwidth", 0.001),
+    # The split each engine computed against, not merely the totals it reached.
+    # Every renderer and both command builders now read tp/dp off this result,
+    # so a disagreement here is a disagreement about how the model is sharded —
+    # and the compute fields above cannot see it while nothing divides by tp.
+    ("tp", "tp", 0), ("dp", "dp", 0),
     # The engines reach this by different routes — device GB x devices here,
     # board GB x boards there — and nothing compared the results.
     ("total_vram", "totalVRAM", 0.001),
@@ -223,7 +249,46 @@ FIELDS = [
     ("perf_mfu_prefill", "perfMfuPrefill", 0),
     ("perf_obs_lo", "perfObsLo", 0), ("perf_obs_hi", "perfObsHi", 0),
 ]
-dig = lambda d, p: d["perGPU"]["total"] if p == "perGPU.total" else d[p]
+def dig(d, path):
+    """Walk a dotted path, so a field mapping can name perGPU.weights as easily
+    as perGPU.total — the special case this replaces could name exactly one."""
+    for part in path.split("."):
+        d = d[part]
+    return d
+
+# ---- contract literals: both engines against a number, not each other -----
+# Everything above compares the two engines to each other. That is blind by
+# construction to any change made symmetrically in both — and the change this
+# refactor exists to prepare (weights sharded TP ways instead of across every
+# device) is exactly that shape: applied to both engines it moves every
+# per-device figure in the tool while this file stays green.
+#
+# So these are absolute. Worked out by hand, not as expressions over the same
+# constants the engines use, because an expression follows the divisor wherever
+# it goes and reports nothing:
+#
+#   70B at bf16      = 70e9 * 2       = 1.4e11 bytes of weights
+#   in GiB           = 1.4e11 / 2**30 = 130.385160446167
+#   12 devices split TP=4 x DP=3, and every device holds 1/12 of the model:
+#                      130.385160446167 / 12 = 10.865430037181 GiB
+#
+# Weights are actually sharded TP ways, so the honest figure is
+# 130.385160446167 / 4 = 32.596290111542 GiB, three times this one. The commit
+# that corrects it has to rewrite this literal deliberately and say why. Twelve
+# devices because at eight or fewer TP equals the device count and the two
+# divisors are the same number, so a pin down there proves nothing.
+CONTRACTS = {
+    "70B bf16, 12x H100 80 (TP=4 x DP=3)": [
+        ("weights per device", "per_w", "perGPU.weights", 10.8654, 1e-4),
+        ("tensor-parallel size", "tp", "tp", 4, 0),
+        ("data-parallel size", "dp", "dp", 3, 0),
+        ("devices", "device_count", "deviceCount", 12, 0),
+    ],
+}
+# A renamed case would silently switch the pins off, which is the failure mode
+# a whitelist keyed on a string always has.
+_unmatched = set(CONTRACTS) - {c["name"] for c in CASES}
+assert not _unmatched, f"CONTRACTS names cases that do not exist: {sorted(_unmatched)}"
 
 passed = failed = 0
 for case, js in zip(CASES, js_results):
@@ -257,6 +322,67 @@ for case, js in zip(CASES, js_results):
         failed += 1
     else:
         passed += 1
+
+for case, js in zip(CASES, js_results):
+    if case["name"] not in CONTRACTS:
+        continue
+    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
+    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
+    cfg.setdefault("max_ctx", 1048576)
+    py = compute(cfg)
+    for label, pk, jk, want, tol in CONTRACTS[case["name"]]:
+        for engine, got in (("python", py[pk]), ("js", dig(js, jk))):
+            if abs(got - want) > tol:
+                print(f"  FAIL {label} ({engine}) is {got!r}, the contract says {want!r} "
+                      f"— {case['name']}")
+                failed += 1
+            else:
+                print(f"  ok   {label} ({engine}) is {want!r} — {case['name']}")
+                passed += 1
+
+# The same invariant the literal above is one instance of, swept across the
+# counts where TP and the device count are different numbers. A change that
+# divided by tp at every count except the two the literals happen to name would
+# satisfy both literals and ship TP-sharding everywhere else — that is a
+# demonstrated falsification of the pins, not a hypothetical, so the shape gets
+# stated directly rather than sampled:
+#
+#     per_w * device_count == weights_gb
+#
+# "every device holds an equal share of one copy of the model", which is what
+# the report asserts in prose as well as in arithmetic. Under TP-sharded weights
+# the right-hand side is tp, and this has to be rewritten to say so — once, for
+# every count, instead of at whichever counts a fixture happened to use.
+# index.html's side of the same invariant is in model.test.js.
+PROP_CFG = {"params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8,
+            "h_dim": 128, "ctx": 8192, "conc": 16, "max_ctx": 1048576}
+prop_bad, prop_n, prop_dp = [], 0, 0
+for _n in (1, 2, 4, 5, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128):
+    # devices=2 as well, because the split is sized in devices and a board count
+    # that happened to be the divisor would hide the difference.
+    for _devices in (1, 2):
+        _c = compute(dict(PROP_CFG, n_gpu=_n,
+                          gpu=dict(GPUS["h100-80"], devices=_devices)))
+        prop_n += 1
+        prop_dp += _c["dp"] > 1
+        if abs(_c["per_w"] * _c["device_count"] - _c["weights_gb"]) > _c["weights_gb"] * 1e-12:
+            prop_bad.append(
+                f"{_n} boards x {_devices} devices (TP={_c['tp']} x DP={_c['dp']}): "
+                f"{_c['per_w']} x {_c['device_count']} = {_c['per_w'] * _c['device_count']}, "
+                f"not the {_c['weights_gb']} GiB the model weighs")
+if prop_bad:
+    print("  FAIL per-device weights are not one copy of the model split evenly across devices")
+    for _b in prop_bad[:6]:
+        print(f"       {_b}")
+    failed += 1
+elif prop_dp < 16:
+    print(f"  FAIL only {prop_dp} of {prop_n} swept configs have dp > 1 — the counts where TP "
+          "and the device count differ are the only ones this can speak about")
+    failed += 1
+else:
+    print(f"  ok   per-device weights x device count == the whole model across {prop_n} configs "
+          f"({prop_dp} of them with dp > 1)")
+    passed += 1
 
 # The GPU tables are maintained twice. Drift there is silent and produces
 # confidently wrong numbers, so compare them field by field.
@@ -569,13 +695,25 @@ for unsafe in UNSAFE_HF_MODELS:
         "skip_reason": "known shell-quoting asymmetry (py quotes via shlex, js does not) — tracked separately, not TP/DP",
     })
 
+# Both builders now read tp/dp off the comp/computed they are handed, instead
+# of deriving the split themselves — that is what stops the command disagreeing
+# with the figures printed beside it. So each side of this matrix derives one
+# the way its own engine does, and the comparison below is still a comparison of
+# two independent derivations, not of one shared number.
+def py_comp(m):
+    tp, dp = split_parallelism(device_count_for(
+        {"n_gpu": m["n_gpu"], "gpu": {"devices": m.get("devices", 1)}}))
+    return {"fits": m["fits"], "is_moe": m["is_moe"], "max_ctx_1": MAX_CTX_1,
+            "tp": tp, "dp": dp}
+
+
 py_cmds = [
     build_vllm_cmd(
         {"hf_model": m["hf_model"], "ctx": m["ctx"], "n_gpu": m["n_gpu"],
          "gpu": {"devices": m.get("devices", 1)},
          "quant": m["quant"], "prefix_caching": m["prefix_caching"],
          "kv_bpp": m["kv_bpp"]},
-        {"fits": m["fits"], "is_moe": m["is_moe"], "max_ctx_1": MAX_CTX_1},
+        py_comp(m),
     )
     for m in MATRIX
 ]
@@ -592,15 +730,21 @@ function extract(sig) {
 const src = extract('function splitParallelism(gpuCount) {')
           + extract('function parallelismFor(state) {')
           + extract('function buildVllmCommand(state, computed, modelPath) {');
-const buildVllmCommand = new Function(`${src}; return buildVllmCommand;`)();
+const api = new Function(`${src}; return {buildVllmCommand, parallelismFor};`)();
 const scenarios = JSON.parse(process.argv[2]);
 const MAX_CTX_1 = 8192; // must match Python's MAX_CTX_1 above
-console.log(JSON.stringify(scenarios.map((m) => buildVllmCommand(
-  {gpuCount: m.n_gpu, gpuDevices: m.devices || 1,
+console.log(JSON.stringify(scenarios.map((m) => {
+  const state = {gpuCount: m.n_gpu, gpuDevices: m.devices || 1,
    quantMethod: m.quant || '', kvBytesPerValue: m.kv_bpp,
-   prefixCaching: m.prefix_caching, contextLength: m.ctx},
-  {fits: m.fits, isMoE: m.is_moe, maxContextSingleUser: MAX_CTX_1},
-  m.hf_model))));
+   prefixCaching: m.prefix_caching, contextLength: m.ctx};
+  // The split this engine derives, standing in for the one computeInference()
+  // would have returned — see py_comp() above for why the harness supplies it.
+  const {tp, dp} = api.parallelismFor(state);
+  return api.buildVllmCommand(
+    state,
+    {fits: m.fits, isMoE: m.is_moe, maxContextSingleUser: MAX_CTX_1, tp, dp},
+    m.hf_model);
+})));
 """
 proc = subprocess.run(
     ["node", "-e", js_cmd_runner, os.path.join(ROOT, "index.html"), json.dumps(MATRIX)],

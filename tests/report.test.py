@@ -199,8 +199,14 @@ const html=fs.readFileSync(process.argv[1],'utf8');
 const gib=html.match(/^const GIB = .+;$/m)[0];
 const perf=html.match(/^const PERF = \{[\s\S]*?\n\};$/m)[0];
 const mp=html.match(/^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m)[0];
+/* computeInference() derives the TP/DP split it returns through
+   parallelismFor()/splitParallelism(); they come into scope with it the same
+   way GIB, PERF and MODEL_PRESETS do. Adjacent in the source, so one slice. */
+const spS=html.indexOf('function splitParallelism('), spE=html.indexOf('function renderStrategyBadges');
+if(spS===-1||spE===-1) throw new Error('splitParallelism()/parallelismFor() not found in index.html');
+const split=html.slice(spS,spE);
 const s=html.indexOf('function computeInference(state) {'), e=html.indexOf('\n}\n',s);
-const scope=new Function(`${gib}\n${perf}\n${mp}\n${html.slice(s,e+2)}; return {computeInference, MODEL_PRESETS};`)();
+const scope=new Function(`${gib}\n${perf}\n${mp}\n${split}\n${html.slice(s,e+2)}; return {computeInference, MODEL_PRESETS};`)();
 const gt=html.match(/^const GPU_TABLE = \{[\s\S]*?\n\};$/m);
 if(!gt) throw new Error('GPU_TABLE not found in index.html');
 const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
@@ -1047,6 +1053,212 @@ def check_interactive_gates_nvlink_on_devices():
 
 test("interactive_mode asks about NVLink when one board is several devices",
      check_interactive_gates_nvlink_on_devices)
+
+
+# ---- the parallelism row and the command it sits above --------------------
+# Two gates, written differently, that have to agree for every input: the GPU
+# configuration row branches on `device_count_for(cfg) > 1` and the command on
+# `tp * dp > 1`. Both engines carry the same pair — index.html's badge branches
+# on `computed.deviceCount > 1` beside a command gated on `tp * dp > 1`, and
+# model.test.js checks that side. Now that both read one split off compute()
+# they agree for every valid configuration, but "cannot drift apart" is a
+# property, and until something checks it, it is a claim: this document has
+# contradicted itself across exactly this pair before, which is why the comment
+# above the row names the case.
+print("\nThe parallelism row and the command below it describe the same split")
+
+
+def report_strings(card, boards, **over):
+    """Every string in the story, including the command.
+
+    report_text() above harvests Paragraph.text, table cells and .contents,
+    which is enough for prose but not for the command: it is a Preformatted,
+    and its text lives in .lines. This walks those too, because the command is
+    half of what is being compared here.
+    """
+    cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), ctx=8192, conc=16,
+               n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+               hf_model="m", model_name="M", **over)
+    obj = gr.ReportCard(cfg, output_path=os.devnull)
+    seen = []
+
+    def harvest(item):
+        text = getattr(item, "text", None)
+        if text:
+            seen.append(text)
+        for line in getattr(item, "lines", None) or []:
+            seen.append(line if isinstance(line, str) else str(line))
+        for row in getattr(item, "_cellvalues", []):
+            for cell in row:
+                harvest(cell) if hasattr(cell, "text") or hasattr(cell, "contents") \
+                    else seen.append(str(cell))
+        for child in getattr(item, "contents", []) or []:
+            harvest(child)
+
+    real_build = gr.SimpleDocTemplate.build
+    captured = {}
+    try:
+        gr.SimpleDocTemplate.build = lambda self, story, **kw: captured.__setitem__("story", story)
+        obj.generate()
+        for item in captured.get("story", []):
+            harvest(item)
+    finally:
+        gr.SimpleDocTemplate.build = real_build
+    return cfg, seen
+
+
+def check_parallelism_row_agrees_with_the_command():
+    single_dev, multi_dev, skipped = 0, 0, 0
+    for card in (dict(DUAL, devices=1, gb=80, name="S"), DUAL):
+        for boards in (1, 2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 64, 100, 128):
+            for bpp in (2, 0.5):
+                cfg, seen = report_strings(card, boards, bpp=bpp)
+                # A command that does not fit is not a command: both engines
+                # short-circuit to a comment before any flag is reached, so the
+                # property genuinely does not hold there and asserting it would
+                # only pin the short-circuit.
+                if not gr.compute(cfg)["fits"]:
+                    skipped += 1
+                    continue
+                rows = [t for t in seen if t == "Single device" or t.startswith("Tensor parallel")]
+                assert len(rows) == 1, (
+                    f"{boards}x {card['name']}: expected one parallelism row, found {rows!r}")
+                says_single = rows[0] == "Single device"
+                asks_for_none = not any("parallel-size" in t for t in seen)
+                assert says_single == asks_for_none, (
+                    f"{boards}x {card['name']} ({gr.device_count_for(cfg)} devices) at {bpp} B/param: "
+                    f"the row says {rows[0]!r} while the command "
+                    f"{'asks for no parallelism' if asks_for_none else 'asks for it'}: "
+                    + repr([t for t in seen if "parallel-size" in t]))
+                if says_single:
+                    single_dev += 1
+                else:
+                    multi_dev += 1
+    # Or an iff that only ever saw one of its two sides would pass regardless.
+    assert single_dev and multi_dev, (
+        f"not discriminating: {single_dev} single-device and {multi_dev} multi-device "
+        f"fitting configurations ({skipped} skipped)")
+
+test("the parallelism row says single device exactly when the command asks for none",
+     check_parallelism_row_agrees_with_the_command)
+
+
+# ---- the prose about the divisor, against the divisor ---------------------
+# A number going wrong is caught by the pins in parity.test.py. A *sentence*
+# going wrong is not: "Per-device VRAM above assumes weights sharded across all
+# 12 devices" is a statement about the arithmetic, and under a change that
+# divides by tp it quietly becomes false while every numeric assertion in this
+# suite still passes. This is the report README.md calls procurement-ready, and
+# a document that misdescribes its own divisor is a worse failure than one that
+# prints a wrong number, because the wrong number at least looks like a number.
+print("\nEvery sentence about the divisor states the divisor that was used")
+
+
+def check_divisor_prose_matches_the_arithmetic():
+    import re
+    # Two kinds of claim in one sentence, and conflating them would hide the
+    # thing it exists to disclose: the first says what the per-device figure was
+    # divided by, the second what the emitted command shards by. Today those are
+    # the device count and tp, and they are different numbers on purpose.
+    claims = [
+        ("divisor claim", re.compile(r"assumes weights sharded across all (\d+) devices"), "divisor"),
+        ("command claim", re.compile(r"shards (\d+)-way"), "tp"),
+    ]
+    seen = {name: 0 for name, _, _ in claims}
+    for card, counts in ((dict(DUAL, devices=1, gb=80, name="S"),
+                          (10, 12, 16, 20, 24, 40, 100, 128)),
+                         # Boards that are two devices each: the sentence counts
+                         # devices, and a board count that happened to be the
+                         # divisor would hide the difference.
+                         (DUAL, (5, 6, 8, 12))):
+        for boards in counts:
+            cfg, text = report_strings(card, boards, bpp=0.5)
+            comp = gr.compute(cfg)
+            # Read back out of the result rather than assumed to be the device
+            # count: if the engine stops dividing by the device count this moves,
+            # and the test is comparing the prose against the arithmetic instead
+            # of against the assumption it is meant to be checking.
+            divisor = comp["weights_gb"] / comp["per_w"]
+            blob = "\n".join(text)
+            for name, rx, against in claims:
+                want = comp["tp"] if against == "tp" else divisor
+                for m in rx.finditer(blob):
+                    seen[name] += 1
+                    claimed = int(m.group(1))
+                    assert abs(claimed - want) <= abs(want) * 1e-9, (
+                        f"{boards} boards x {card['devices']} devices "
+                        f"(TP={comp['tp']} x DP={comp['dp']}): the {name} says {claimed}, but the "
+                        + (f"command shards {comp['tp']}-way" if against == "tp"
+                           else f"figure was divided by {divisor}")
+                        + f" — {m.group(0)!r}")
+    # A regex that matches nothing asserts nothing, and rewording the note is
+    # exactly how this test would stop looking with no one the wiser.
+    silent = [n for n, k in seen.items() if not k]
+    assert not silent, f"never found in any generated report: {silent}"
+
+test("the note's divisor is the divisor the per-device figure was computed with",
+     check_divisor_prose_matches_the_arithmetic)
+
+
+# ---- tp/dp in a config are inert, and that is load-bearing ----------------
+print("\ntp and dp in a JSON config are carried through and ignored")
+
+
+def check_tp_dp_json_keys_are_inert():
+    """compute() derives the split and reads nothing from cfg.
+
+    from_json() copies through every key it does not recognise — the
+    default-allow property this file pins elsewhere — and neither REQUEST_KEYS
+    nor ARCH_TYPES mentions tp or dp, so validate_arch() never sees them. An
+    earlier version of the split refactor read them here, and two previously
+    inert keys became live and unvalidated: {"n_gpu": 1, "dp": 3} emitted
+    --data-parallel-size 3 beside a "Single device" row, and {"tp": "4"} raised
+    a TypeError out of `tp * dp`. Nothing but a comment defends that today, and
+    a comment is not a test — the next person reasoning about where a TP/DP
+    control would plug in will find exactly the same seam.
+    """
+    base = {"preset": "llama31-8b", "gpu": "h100-80", "n_gpu": 12,
+            "bpp": 1, "ctx": 8192, "conc": 8}
+    # The other from_json branch: no preset, cfg built straight from the user's
+    # own keys, which is where an unknown key is copied through most directly.
+    raw = {"params": 8, "layers": 32, "kv_heads": 8, "h_dim": 128, "gpu": "h100-80",
+           "n_gpu": 9, "bpp": 1, "ctx": 8192, "conc": 8, "hf_model": "acme/raw-8b"}
+    poisons = [{"tp": 1}, {"dp": 1}, {"tp": 16, "dp": 4}, {"tp": "4"},
+               {"tp": 2.0}, {"tp": 0}, {"dp": -1}, {"tp": None}]
+    for branch, spec in (("preset", base), ("raw", raw)):
+        path = write_json(spec)
+        try:
+            clean_cfg = gr.from_json(path)
+            clean = gr.compute(clean_cfg)
+            clean_cmd = gr.build_vllm_cmd(clean_cfg, clean)
+        finally:
+            os.unlink(path)
+        for poison in poisons:
+            path = write_json(dict(spec, **poison))
+            try:
+                cfg = gr.from_json(path)
+            finally:
+                os.unlink(path)
+            # The keys must actually arrive and be ignored. If from_json ever
+            # started filtering them out this would pass for the wrong reason,
+            # and the seam it is guarding would be open again the moment the
+            # filter moved.
+            missing = [k for k in poison if k not in cfg]
+            assert not missing, (
+                f"{branch} branch: {missing} never reached cfg, so this proves nothing "
+                "about compute() ignoring them")
+            got = gr.compute(cfg)
+            drift = [f"{k}: {clean.get(k)!r} -> {got.get(k)!r}"
+                     for k in set(clean) | set(got) if clean.get(k) != got.get(k)]
+            assert not drift, (
+                f"{branch} branch: {poison} changed compute()'s answer — "
+                + "; ".join(drift[:4]))
+            cmd = gr.build_vllm_cmd(cfg, got)
+            assert cmd == clean_cmd, (
+                f"{branch} branch: {poison} changed the emitted command:\n{cmd}")
+
+test("tp and dp in a JSON config reach cfg and change nothing",
+     check_tp_dp_json_keys_are_inert)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
