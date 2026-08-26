@@ -44,6 +44,7 @@ Run:  python3 tests/report.test.py
 import contextlib
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -846,6 +847,206 @@ def check_default_gpu_key_comes_from_the_catalog():
 
 test("a config that names no GPU gets the one the catalog marks default",
      check_default_gpu_key_comes_from_the_catalog)
+
+
+# ---- the PDF says the same thing however the silicon is packaged -----------
+# Every prose string in generate() is board-scoped or device-scoped, and an
+# independent review reverted six of them one at a time without the suite
+# noticing: the fit verdict, the over-by figure, the parallelism label, the
+# notes gate, the interactive NVLink gate and the exported device view. The
+# same guard the JS suite uses closes all of them at once — one dual-GCD board
+# and two single-GCD boards are the same hardware, so the document must read
+# the same, apart from what is genuinely counted in boards.
+print("\nThe report reads the same however the silicon is packaged")
+
+DUAL = {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2, "tflops": 383,
+        "name": "X", "vendor": "nvidia", "devices": 2, "form": "sxm", "caps": {"fp8": True}}
+SINGLE = dict(DUAL, gb=64, bw=DUAL["bw"] / 2, tflops=DUAL["tflops"] / 2,
+              hyper=DUAL["hyper"] / 2, spec=DUAL["spec"] / 2, spot=DUAL["spot"] / 2, devices=1)
+
+
+def report_text(card, boards, preset="llama31-70b", bpp=2, conc=16, **over):
+    """Every string generate() puts in the document, in order."""
+    cfg = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=bpp, ctx=8192, conc=conc,
+               n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+               hf_model="m", model_name="M", **over)
+    card_obj = gr.ReportCard(cfg, output_path=os.devnull)
+    seen = []
+
+    def harvest(item):
+        """Every string this flowable will put on the page.
+
+        Drawings matter as much as paragraphs: the VRAM bar is a Drawing whose
+        String children carry the component sizes and the "N GiB free" label,
+        and a Spy that only knew about Paragraph and Table never saw them — so
+        the bar could be drawn against the wrong capacity, contradicting the
+        verdict three lines above it, with this test green.
+        """
+        text = getattr(item, "text", None)
+        if text:
+            seen.append(text)
+        for row in getattr(item, "_cellvalues", []):
+            for cell in row:
+                harvest(cell) if hasattr(cell, "text") or hasattr(cell, "contents") \
+                    else seen.append(str(cell))
+        for child in getattr(item, "contents", []):
+            harvest(child)
+
+    real_build = gr.SimpleDocTemplate.build
+    try:
+        # generate() builds `story` locally; capture it through the doc it hands to.
+        captured = {}
+
+        def fake_build(self, story, **kw):
+            captured["story"] = story
+        gr.SimpleDocTemplate.build = fake_build
+        card_obj.generate()
+        for item in captured.get("story", []):
+            harvest(item)
+    finally:
+        gr.SimpleDocTemplate.build = real_build
+    return seen
+
+
+def check_packaging_is_invisible_to_the_report():
+    import re
+    # Three configurations, because the verdict has three branches and only the
+    # "does not fit" one was being reached: a 70B at BF16 overflows a 64 GiB
+    # device, the same model at INT4 fits, and an 8B is comfortable.
+    cases = [("llama31-70b", 2, 16, 1),     # over a 64 GiB device: DOES NOT FIT
+             ("llama31-70b", 0.5, 16, 1),   # comfortable
+             ("llama31-70b", 1, 20, 1),     # 60.0 of 64.0: TIGHT
+             # 5 dual-GCD modules is 10 devices: TP=2 x DP=5, the only shape
+             # that renders the data-parallel note, and no case reached it.
+             ("llama31-70b", 2, 16, 5)]
+    # A price per board is legitimately different — one dual-GCD module costs
+    # what two single-GCD ones do — so currency cells are compared as totals
+    # below rather than cell by cell.
+    def norm(xs, boards, devices):
+        """Only what is genuinely counted in boards is excused, and only where it
+        actually is that count — an earlier version skipped every bare integer
+        cell in the document, which hid the max-users figures too."""
+        board_cells = {str(boards), f"{boards} ({boards * devices} devices)"}
+        out = []
+        for t in xs:
+            if "$" in t or t in board_cells or t.startswith("Total/hr ("):
+                continue
+            # The shortfall is checked as a relation just above, so the figure
+            # itself is normalised here rather than left to differ.
+            t = re.sub(r"(Need|requires) \d+\+ boards", r"\1 N+ boards", t)
+            out.append(re.sub(r"\b\d+x X", "Nx X", t))
+        return out
+
+    def boards_needed(xs):
+        """The shortfall, counted in boards, so it differs between the two
+        packagings by exactly the devices-per-board factor — a relation to
+        check, not a value to normalise away."""
+        for t in xs:
+            m = re.search(r"(?:Need|requires) (\d+)\+ boards", t)
+            if m:
+                return int(m.group(1))
+        return None
+    verdicts = set()
+
+    # and the totals themselves must match, or the exclusion above would hide
+    # exactly the double-count this change exists to prevent
+    def hourly(card, boards):
+        cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
+                   n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"])
+        c = gr.compute(cfg)
+        return tuple(round(c[k], 6) for k in ("hourly_hyper", "hourly_spec", "hourly_spot"))
+    assert hourly(DUAL, 1) == hourly(SINGLE, 2), (
+        f"cost differs by packaging: {hourly(DUAL, 1)} vs {hourly(SINGLE, 2)}")
+    for preset, bpp, conc, boards in cases:
+        raw_a = report_text(DUAL, boards, preset, bpp, conc)
+        raw_b = report_text(SINGLE, boards * 2, preset, bpp, conc)
+        need_a, need_b = boards_needed(raw_a), boards_needed(raw_b)
+        if need_b is not None:
+            assert need_a == math.ceil(need_b / 2), (
+                f"{preset} at {bpp}: the dual-GCD report needs {need_a} boards and the "
+                f"single-GCD one {need_b} — two devices per board makes that "
+                f"{math.ceil(need_b / 2)}")
+        a, b = norm(raw_a, boards, 2), norm(raw_b, boards * 2, 1)
+        assert a, "no text captured from the report — the spy is not seeing the story"
+        verdicts.update(t.split("]")[0] for t in a if t.startswith("["))
+        diffs = [f"{x!r} != {y!r}" for x, y in zip(a, b) if x != y]
+        assert not diffs, (
+            f"{preset} at {bpp} B/param, {conc} concurrent, differs between {boards} dual-GCD board(s) "
+            f"and {boards * 2} single-GCD boards holding the same silicon:\n       " + "\n       ".join(diffs[:6]))
+    assert len(verdicts) >= 3, (
+        f"only reached the verdict branches {sorted(verdicts)} — the fits and tight "
+        "branches carry their own capacity expression and go unchecked otherwise")
+
+test("one dual-GCD board and two single-GCD boards produce the same report",
+     check_packaging_is_invisible_to_the_report)
+
+
+def check_compute_is_blind_to_packaging():
+    """compute() itself, not the prose around it.
+
+    The decode ceiling is the one arithmetic site no case exercised with more
+    than one device per board: every other case is bandwidth-bound there, and
+    the product device_tflops * device_count is unchanged by the sabotage —
+    what moves is the interconnect penalty, 1.0 at one board against 0.85 at
+    two devices. So it has to be compared where those two disagree.
+    """
+    bound = dict(params=30, active=10, layers=48, kv_heads=8, h_dim=128,
+                 ctx=256, conc=256, bpp=2, kv_bpp=2, shared_exp=0, max_ctx=1048576)
+    dual = gr.compute(dict(bound, n_gpu=1, gpu=DUAL, nvlink=True, vendor="nvidia"))
+    single = gr.compute(dict(bound, n_gpu=2, gpu=SINGLE, nvlink=True, vendor="nvidia"))
+    # Python's compute() exports no compute-bound flag (the JS engine does), so
+    # bindingness is established directly: ten times the bandwidth must not move
+    # the saturated figure if the compute ceiling is what is holding it.
+    faster = gr.compute(dict(bound, n_gpu=1, gpu=dict(DUAL, bw=DUAL["bw"] * 10),
+                             nvlink=True, vendor="nvidia"))
+    assert abs(faster["sat_tok"] - dual["sat_tok"]) < 1, (
+        "the probe is bandwidth-bound, so it does not exercise the compute ceiling")
+    skip = {"gpu"}
+    diffs = [f"{k}: {dual[k]!r} != {single[k]!r}" for k in dual
+             if k not in skip and dual[k] != single.get(k)]
+    assert not diffs, ("compute() differs between one dual-GCD board and two single-GCD "
+                       "boards holding the same silicon:\n       " + "\n       ".join(diffs[:6]))
+
+test("compute() gives the same answer however the silicon is packaged",
+     check_compute_is_blind_to_packaging)
+
+
+def check_capacity_label_keeps_integers_integral():
+    """Stated absolutely, because every other assertion about capacity reads the
+    formatter's own output and would follow a regression in it: dropping the
+    integer rule turns "80 GiB" into "80.0 GiB" on all twelve rows."""
+    assert gr.capacity_label(80) == "80 GiB", gr.capacity_label(80)
+    assert gr.capacity_label(16) == "16 GiB", gr.capacity_label(16)
+    assert gr.capacity_label(141) == "141 GiB", gr.capacity_label(141)
+    assert gr.capacity_label(128 / 3) == "42.7 GiB", gr.capacity_label(128 / 3)
+
+test("an integer capacity renders without a decimal in the PDF too",
+     check_capacity_label_keeps_integers_integral)
+
+
+def check_interactive_gates_nvlink_on_devices():
+    """interactive_mode() decides whether to ask about NVLink at all.
+
+    Every card the existing harness can select is one device per board, so
+    n_gpu and the device count are always equal there and the gate could be
+    reverted to the board count with the suite green. This puts a dual-GCD
+    board in the catalog for the length of the test.
+    """
+    key = "__dual_probe"
+    gr.GPUS[key] = dict(DUAL, name="Dual probe")
+    try:
+        # One board, two devices: the prompt must be asked, and answering "n"
+        # must be honoured — a board-scoped gate would skip it and force PCIe.
+        cfg = run_interactive_on(key, 1, nvlink_answer="y")
+        assert cfg["nvlink"] is True, (
+            "interactive_mode did not ask about NVLink on a single board that is "
+            f"two devices: {cfg['nvlink']!r}")
+        assert run_interactive_on(key, 1, nvlink_answer="n")["nvlink"] is False
+    finally:
+        del gr.GPUS[key]
+
+test("interactive_mode asks about NVLink when one board is several devices",
+     check_interactive_gates_nvlink_on_devices)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

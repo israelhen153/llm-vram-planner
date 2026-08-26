@@ -669,6 +669,490 @@ const readInputStateFor = (gpuKey, interconnect) => {
   return fn();
 };
 
+console.log('\nA board is not always one device');
+/* The catalog stores per-board figures because that is the unit you buy. A
+   multi-GCD module — one OAM presenting two GCDs — is one row with devices: 2.
+   Everything except cost has to be scoped to devices, and each of the three
+   traps below passes the existing suite while being wrong. */
+const dualGCD = { gb: 128, bw: 3276.8, tflops: 383, hyper: 6.0, spec: 2.5, spot: 1.2,
+                  name: 'Dual-GCD 128 GB', vendor: 'nvidia', devices: 2, form: 'sxm' };
+const asState = (card, count, extra = {}) => ({
+  params: 70, activePercent: 100, bytesPerParam: 2, layers: 80, kvHeads: 8, headDim: 128,
+  sharedExperts: 0, contextLength: 8192, concurrency: 16, gpuCount: count,
+  hasNVLink: true, kvBytesPerValue: 2, modelMaxCtx: 1048576, vendor: card.vendor,
+  gpuGB: card.gb, gpuBandwidth: card.bw, gpuTFLOPS: card.tflops, gpuDevices: card.devices,
+  gpuHyperCost: card.hyper, gpuSpecCost: card.spec, gpuSpotCost: card.spot,
+  gpuName: card.name, ...extra,
+});
+// The same silicon described as one dual-device board, or as two single-device
+// boards. Every number except the per-board cost must agree.
+const single = { ...dualGCD, gb: 64, bw: 3276.8 / 2, tflops: 383 / 2, devices: 1 };
+
+test('a dual-GCD board and two single-GCD boards compute the same everything', () => {
+  const a = computeInference(asState(dualGCD, 1));
+  const b = computeInference(asState(single, 2));
+  for (const k of ['weightsGB', 'kvCacheGB', 'totalGB', 'freeForKVCache',
+                   'maxContextSingleUser', 'singleStreamTokS', 'aggregateTokS', 'ttftMs']) {
+    assert.ok(Math.abs(a[k] - b[k]) < Math.max(1e-6, Math.abs(b[k]) * 1e-9),
+      `${k}: dual-GCD ${a[k]} vs two singles ${b[k]}`);
+  }
+  assert.ok(Math.abs(a.perGPU.total - b.perGPU.total) < 1e-6, 'per-device VRAM must match');
+});
+test('per-device VRAM halves, and the fit check halves with it', () => {
+  // The trap: dividing the shares by deviceCount while still comparing against
+  // the *board* capacity says a model fits when each GCD is over its limit.
+  const dual = computeInference(asState(dualGCD, 1));
+  const asIfOneDevice = computeInference(asState({ ...dualGCD, devices: 1 }, 1));
+  assert.ok(dual.perGPU.total < asIfOneDevice.perGPU.total,
+    'two devices should each hold less than one device would');
+  assert.strictEqual(dual.deviceGB, 64, 'per-device capacity is the board halved');
+  assert.strictEqual(dual.deviceCount, 2, 'one dual-GCD board is two devices');
+});
+test('aggregate bandwidth is unchanged by how the silicon is packaged', () => {
+  // deviceBandwidth * deviceCount === gpuBandwidth * gpuCount, or the roofline
+  // moved when nothing physical did.
+  const a = computeInference(asState(dualGCD, 2));
+  const b = computeInference(asState(single, 4));
+  assert.ok(Math.abs(a.aggregateTokS - b.aggregateTokS) < 1, 'aggregate throughput drifted');
+});
+test('cost is per board, not per device', () => {
+  // The double-count: a dual-GCD module is one line item on the invoice.
+  const dual = computeInference(asState(dualGCD, 1));
+  assert.strictEqual(dual.hourlyHyper, dualGCD.hyper, 'one module must bill as one module');
+  const four = computeInference(asState(dualGCD, 4));
+  assert.strictEqual(four.hourlyHyper, dualGCD.hyper * 4, 'four modules, four line items');
+});
+test('free KV cache moves both operands together', () => {
+  // Halving the per-device capacity while still multiplying by the board count
+  // (or the reverse) silently halves or doubles free KV, and every capacity
+  // number downstream inherits it with no fit check to catch it.
+  // A model that actually fits, so free KV is a live number and not a clamped
+  // zero that would agree by accident.
+  const fits = { params: 13, bytesPerParam: 2, layers: 40 };
+  const dual = computeInference(asState(dualGCD, 1, fits));
+  const twoSingles = computeInference(asState(single, 2, fits));
+  assert.ok(dual.freeForKVCache > 0, 'the probe config must leave room for KV');
+  assert.ok(Math.abs(dual.freeForKVCache - twoSingles.freeForKVCache) < 1e-6,
+    `free KV differs: ${dual.freeForKVCache} vs ${twoSingles.freeForKVCache}`);
+  assert.ok(dual.freeForKVCache < dualGCD.gb,
+    'free KV should be a fraction of the board, not a multiple of it');
+});
+test('a single dual-GCD module still asks vLLM for tensor parallel 2', () => {
+  // The one that leaves half the silicon idle: sized in boards, a single module
+  // emits no --tensor-parallel-size at all.
+  const src = html.slice(html.indexOf('function splitParallelism('), html.indexOf('function renderStrategyBadges'));
+  const parallelismFor = new Function(`${src}; return parallelismFor;`)();
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 1, gpuDevices: 2 }), { tp: 2, dp: 1 });
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 4, gpuDevices: 2 }), { tp: 8, dp: 1 });
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 1, gpuDevices: 1 }), { tp: 1, dp: 1 });
+  assert.deepStrictEqual(parallelismFor({ gpuCount: 8, gpuDevices: 1 }), { tp: 8, dp: 1 });
+});
+
+/* ---- rendered output, driven against a stub DOM --------------------------
+   Every renderer below had zero coverage in either engine, and an independent
+   review demonstrated the consequence: twelve separate reversions of the
+   board-vs-device fixes left the whole suite green, because nothing ever read
+   what these functions actually produce. The compute core is diffed against a
+   second implementation; the strings around it were diffed against nothing.  */
+const renderHarness = (inputs = {}) => {
+  const out = {};
+  const values = {
+    'train-method': 'lora', 'train-optimizer': 'adam', 'train-grad-ckpt': '1',
+    'train-batch-size': '1', 'train-seq-len': '2048', 'train-lora-rank': '16',
+    'train-lora-targets': '4', 'train-hidden-size': '4096', ...inputs,
+  };
+  const el = (id) => ({
+    get innerHTML() { return out[id] || ''; }, set innerHTML(v) { out[id] = v; },
+    get value() { return values[id] !== undefined ? values[id] : ''; }, set value(v) { values[id] = v; },
+    style: {}, options: [], selectedOptions: [{ dataset: { q: '' } }], checked: true,
+    classList: { add() {}, remove() {} },
+  });
+  const cache = {};
+  const document = {
+    getElementById: (id) => (cache[id] = cache[id] || el(id)),
+    // Executive mode is on: renderExecutiveSummary() returns immediately
+    // otherwise, and this suite exists to read what it writes.
+    body: { classList: { add() {}, remove() {}, contains: () => true } },
+    // exportSummary() reads the comparison table and copies to the clipboard.
+    querySelector: () => ({ textContent: '', innerHTML: '', parentElement: null }),
+    querySelectorAll: () => [],
+  };
+  const start = html.indexOf('function getVal(id)');
+  const before = [/^const GPU_TABLE = \{[\s\S]*?\n\};$/m, /^const BENCHMARK_DATA = \{[\s\S]*?\n\};$/m,
+                  /^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m, /^const WORKLOAD_PROFILES = \{[\s\S]*?\n\};$/m]
+    .map(re => html.match(re)[0]).filter(d => html.indexOf(d) < start).join('\n');
+  const navigator = { clipboard: { writeText: () => Promise.resolve() } };
+  const api = new Function('document', 'navigator', `
+    let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
+    let currentModelMaxCtx = 131072, importedModelId = null, urlRestoreLost = [];
+    // The real name, declared before this slice begins. It was previously
+    // spelled comparisonSnapshots — a name index.html does not contain — so
+    // renderComparisons() threw on sight and no test could call it.
+    let savedSnapshots = [];
+    ${before}
+    ${html.slice(start, html.indexOf('function updateURLHash()'))}
+    return { renderVerdict, renderGPUCards, renderTraining, renderNotes, renderStrategyBadges,
+             renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary, renderCommand,
+             renderMetrics, renderComparisons, computeInference, buildVllmCommand,
+             pushSnapshot: (s, c) => savedSnapshots.push({ state: s, computed: c, name: 'snap' }) };`)(document, navigator);
+  return { ...api, out };
+};
+
+/* index.html's own formatters, read from source so a change to one cannot make
+   these assertions quietly stop comparing what the page shows. Capacity is
+   pinned absolutely elsewhere, since reading it from source would follow a
+   regression in it. */
+const formatGBLike = new Function(`${html.match(/^function formatGB\(gb\) .+$/m)[0]}; return formatGB;`)();
+const bandwidthLabelDecl = html.match(/^function bandwidthLabel\(gbs\) .+$/m);
+assert.ok(bandwidthLabelDecl, 'bandwidthLabel() not found in index.html');
+const bandwidthLabel = new Function(`${bandwidthLabelDecl[0]}; return bandwidthLabel;`)();
+/* Capacity has its own formatter, so an integer catalog value keeps rendering
+   without a decimal. Read from source for the same reason as the above. */
+const capacityLabelLike = new Function(
+  `${html.match(/^function formatGB\(gb\) .+$/m)[0]}
+   ${html.match(/^function capacityLabel\(gb\) .+$/m)[0]}; return capacityLabel;`)();
+
+console.log('\nWhat the renderers actually put on the page');
+test('the training estimate renders at all', () => {
+  /* It did not. A scoped rename rewrote its own declaration into
+     `const deviceGB = deviceGB / devicesPerBoard`, so every call threw a
+     ReferenceError and the whole feature was dead — with the suite green,
+     because nothing called it. */
+  const h = renderHarness();
+  const state = asState(GPU_TABLE['h100-80'], 2, { params: 8, layers: 32 });
+  h.renderTraining(state, h.computeInference(state));
+  assert.ok((h.out['training-results'] || '').length > 100,
+    'renderTraining produced nothing');
+});
+test('a training shortfall is counted in boards, like every other verdict', () => {
+  const h = renderHarness();
+  const state = asState(dualGCD, 1, { params: 70, layers: 80, bytesPerParam: 2 });
+  h.renderTraining(state, h.computeInference(state));
+  const text = h.out['training-results'] || '';
+  assert.ok(!/\+ devices/.test(text),
+    `training counts in devices while the other banners count in boards: ${text.match(/Need[^<]*/)}`);
+  // the figure, not only the noun
+  const shown = Number((text.match(/Need (\d+)\+ boards/) || [])[1]);
+  assert.ok(Number.isFinite(shown), `no boards figure in the training verdict: ${text.slice(0, 200)}`);
+  // Derived from the overage the banner states plus the device capacity the
+  // engine reports, so the figure is checked rather than its noun.
+  const computed = h.computeInference(state);
+  const over = Number((text.match(/Over by ([\d.]+) GiB per device/) || [])[1]);
+  assert.ok(Number.isFinite(over), `no overage in the training verdict: ${text.slice(0, 200)}`);
+  const perDevice = over + computed.deviceGB;
+  const devicesNeeded = Math.ceil((perDevice * computed.deviceCount) / (computed.deviceGB * 0.9));
+  const perBoard = computed.deviceCount / state.gpuCount;
+  assert.strictEqual(shown, Math.ceil(devicesNeeded / perBoard),
+    `training says ${shown} boards; ${devicesNeeded} devices at ${perBoard} per board is ` +
+    `${Math.ceil(devicesNeeded / perBoard)}`);
+
+  // And the figures themselves must be per device: the same silicon described
+  // as one dual-GCD board or as two single-GCD boards has to land identically.
+  const h2 = renderHarness();
+  const single = { ...dualGCD, gb: dualGCD.gb / 2, bw: dualGCD.bw / 2, tflops: dualGCD.tflops / 2, devices: 1 };
+  const twoBoards = asState(single, 2, { params: 70, layers: 80, bytesPerParam: 2 });
+  h2.renderTraining(twoBoards, h2.computeInference(twoBoards));
+  const pct = (t) => (t.match(/(\d+)%/) || [])[1];
+  assert.ok(pct(text) !== undefined, `no utilisation figure rendered: ${text.slice(0, 200)}`);
+  assert.strictEqual(pct(text), pct(h2.out['training-results'] || ''),
+    'a dual-GCD board and two single-GCD boards must train identically');
+});
+test('a verdict that does not fit says by how much, measured on the device', () => {
+  const h = renderHarness();
+  const state = asState(dualGCD, 1);
+  const computed = h.computeInference(state);
+  assert.strictEqual(computed.fits, false, 'probe config must not fit');
+  h.renderVerdict(state, computed);
+  const text = h.out['verdict-output'] || '';
+  assert.ok(!/Over by 0 GiB/.test(text), `the overage was clamped to zero: ${text}`);
+  // The figure, not just the noun. Reading board capacity here changes the
+  // number while leaving the word "boards" in place.
+  const wantDevices = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9));
+  const wantBoards = Math.ceil(wantDevices / (computed.deviceCount / state.gpuCount));
+  const shown = Number((text.match(/Need (\d+)\+ boards/) || [])[1]);
+  assert.strictEqual(shown, wantBoards,
+    `banner says ${shown} boards, device arithmetic says ${wantBoards}: ${text}`);
+});
+test('the sharding a card claims is the sharding the command performs', () => {
+  // Five dual-GCD boards: ten devices, and the condensed view used to caption
+  // them "sharded 5-way" beside a number divided by ten.
+  const h = renderHarness();
+  // Both branches: four dual-GCD boards give eight devices and a pure TP=8
+  // split, five give ten and a TP=2 x DP=5 one. The review found the dp>1
+  // branch of this test dead because the comment said five and the code said
+  // four.
+  for (const boards of [4, 5]) {
+  const state = asState(dualGCD, boards, { params: 8, layers: 32, bytesPerParam: 2 });
+  const computed = h.computeInference(state);
+  h.renderGPUCards(state, computed);
+  const text = h.out['gpu-cards'] || h.out['vram-output'] || Object.values(h.out).join(' ');
+  const cmd = h.buildVllmCommand(state, computed, 'm');
+  const tp = Number((cmd.match(/--tensor-parallel-size (\d+)/) || [0, 1])[1]);
+  const dp = Number((cmd.match(/--data-parallel-size (\d+)/) || [0, 1])[1]);
+  assert.strictEqual(tp * dp, computed.deviceCount,
+    'the command must account for every device the cards describe');
+  // Every sharding factor the view states, not the first one that matches: the
+  // tile and the interconnect line each carry one, and they are set separately.
+  const ways = [...text.matchAll(/(\d+)-way/g)].map(m => Number(m[1]));
+  assert.ok(ways.length, `the condensed view should state a sharding factor: ${text.slice(0, 200)}`);
+  if (dp === 1) {
+    for (const w of ways) {
+      assert.strictEqual(w, computed.deviceCount,
+        `a card says ${w}-way while the engine shards ${computed.deviceCount}-way`);
+    }
+  } else {
+    // A data-parallel split shards weights tp-way per replica while the panel's
+    // own figures divide by every device. That gap is real and is the next
+    // commit's subject; what this pins is that the view admits it.
+    const caveat = text.match(/assumes sharding across all (\d+)/);
+    assert.ok(caveat, `a dp>1 view must carry the caveat about its own figures: ${text.slice(0, 300)}`);
+    assert.strictEqual(Number(caveat[1]), computed.deviceCount,
+      'the caveat must name the count the figures actually used');
+  }
+  }
+});
+test('the executive summary reads the device it fills, not the board', () => {
+  const h = renderHarness();
+  const state = asState(dualGCD, 2, { params: 8, layers: 32, bytesPerParam: 2 });
+  const computed = h.computeInference(state);
+  h.renderExecutiveSummary(state, computed);
+  const text = Object.values(h.out).join(' ');
+  // Anchored on the phrase itself: the summary carries several percentages and
+  // an unanchored match reads whichever comes first.
+  const pct = Number((text.match(/per device \((\d+)%\)/) || [])[1]);
+  const want = Math.round(computed.perGPU.total / computed.deviceGB * 100);
+  assert.strictEqual(pct, want,
+    `exec summary shows ${pct}% of capacity, per-device arithmetic says ${want}%`);
+  // And the capacity it names, not only the percentage it derives: those are
+  // two separate expressions and only one of them was wrong before.
+  const named = (text.match(/\/ ([\d.]+ GiB) per device/) || [])[1];
+  assert.strictEqual(named, capacityLabelLike(computed.deviceGB),
+    `exec summary names ${named} as the capacity of a ${capacityLabelLike(computed.deviceGB)} device`);
+});
+test('one board that is two devices still explains its interconnect', () => {
+  // The note describing NVLink/PCIe was gated on the board count, so a single
+  // dual-GCD module took the interconnect penalty in silence.
+  const h = renderHarness();
+  const state = asState(dualGCD, 1, { params: 8, layers: 32 });
+  h.renderNotes(state);
+  const notes = Object.values(h.out).join(' ');
+  assert.ok(/NVLink|PCIe/.test(notes),
+    'no interconnect note for a board whose two devices must talk to each other');
+});
+
+console.log('\nThe same silicon renders the same however it is packaged');
+test('two dual-GCD boards and four single-GCD boards produce identical output', () => {
+  /* The strongest guard available for this class, and the one that replaces
+     enumerating every rendered site: any surface that reads boards where it
+     should read devices differs between these two descriptions of the same
+     hardware. Prices are halved on the single-device card so even the cost
+     tiles match, leaving the board count in the "N× name" header as the only
+     legitimate difference. */
+  const dual = { ...dualGCD, name: 'X' };
+  const single = { ...dual, gb: dual.gb / 2, bw: dual.bw / 2, tflops: dual.tflops / 2,
+                   hyper: dual.hyper / 2, spec: dual.spec / 2, spot: dual.spot / 2, devices: 1 };
+  const cfg = { params: 70, layers: 80, bytesPerParam: 2, contextLength: 8192, concurrency: 16 };
+  const renderAll = (card, boards, extra = {}) => {
+    const h = renderHarness();
+    const state = asState(card, boards, { ...cfg, ...extra });
+    const computed = h.computeInference(state);
+    h.renderVerdict(state, computed);
+    h.renderGPUCards(state, computed);
+    h.renderExecutiveSummary(state, computed);
+    h.renderStrategyBadges(state, computed);
+    h.renderTraining(state, computed);
+    h.renderNotes(state);
+    h.renderThroughput(state, computed);
+    h.renderCapacity(state, computed);
+    h.renderCommand(state, computed);
+    h.renderMetrics(computed);
+    // A saved snapshot renders a per-device figure against a capacity, and was
+    // the one view no harness could reach.
+    h.pushSnapshot(state, computed);
+    h.renderComparisons();
+    h.out['__export'] = h.exportSummary(state, computed);
+    return h.out;
+  };
+  // Several pairs, not one. A gate written as `gpuCount > 1` reads the same for
+  // two boards as for four, so only the one-board pair can see it; a
+  // denominator written in boards is invisible at one board but not at four.
+  /* Two things are legitimately board-scoped and so legitimately differ: the
+     "N× card" hardware line, and any shortfall counted in boards — two dual-GCD
+     modules and four single-GCD ones are the same silicon but not the same
+     shopping list. Everything else must match exactly. */
+  const norm = (t) => (t || '').replace(/\d+× X/g, 'N× X').replace(/Need \d+\+ boards/g, 'Need N+ boards')
+    .replace(/requires \d+\+ boards/g, 'requires N+ boards')
+    // "per device" after a bandwidth is a statement *about* the packaging —
+    // it appears only when a board is more than one device — so of course it
+    // differs between two descriptions of the same silicon.
+    .replace(/ GB\/s per device /g, ' GB/s ');
+  // 8 boards = 16 devices, which is the only pair here that produces a
+  // data-parallel split and so the only one that renders the dp>1 captions.
+  for (const boards of [1, 2, 4, 8]) {
+    // Both interconnects: a board that is several devices and has no NVLink is
+    // exactly what an AMD OAM row will be, and every case here was NVLink.
+    for (const link of [true, false]) {
+      const a = renderAll(dual, boards, { hasNVLink: link });
+      const b = renderAll(single, boards * 2, { hasNVLink: link });
+      for (const id of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        assert.strictEqual(norm(a[id]), norm(b[id]),
+          `${id} differs between ${boards} dual-GCD board(s) and ${boards * 2} single-GCD ` +
+          `boards holding the same silicon (${link ? 'NVLink' : 'PCIe'})`);
+      }
+    }
+  }
+});
+test('an integer capacity renders without a decimal, stated absolutely', () => {
+  /* Every other assertion about capacity reads the formatter out of the source,
+     so dropping its integer rule changed "80 GiB" to "80.0 GiB" on all twelve
+     rows with the suite green: the tests followed the regression. These are
+     literals on purpose. */
+  assert.strictEqual(capacityLabelLike(80), '80 GiB');
+  assert.strictEqual(capacityLabelLike(16), '16 GiB');
+  assert.strictEqual(capacityLabelLike(141), '141 GiB');
+  assert.strictEqual(capacityLabelLike(64), '64 GiB');
+  assert.strictEqual(capacityLabelLike(128 / 3), '42.7 GiB');
+
+  /* Its sibling, which prints the bare number for the two places that carry
+     their own unit. It had no test at all, and it is the same regression
+     class: a snapshot card read "32.6 GiB / 16" on master and must still. */
+  const capacityNumberDecl = html.match(/^function capacityNumber\(gb\) .+$/m);
+  assert.ok(capacityNumberDecl, 'capacityNumber() not found in index.html');
+  const capacityNumber = new Function(`${capacityNumberDecl[0]}; return capacityNumber;`)();
+  assert.strictEqual(capacityNumber(16), '16');
+  assert.strictEqual(capacityNumber(80), '80');
+  assert.strictEqual(capacityNumber(128 / 3), '42.7');
+});
+test('the same bandwidth reads the same in the page and in the PDF', () => {
+  // The page interpolated the raw quotient — 1092.2666666666667 GB/s — while
+  // the PDF printed 1092.27 for the same board.
+  assert.strictEqual(bandwidthLabel(3276.8 / 3), '1092.27');
+  assert.strictEqual(bandwidthLabel(3276.8), '3276.8');
+  assert.strictEqual(bandwidthLabel(320), '320');
+  assert.strictEqual(bandwidthLabel(1638.4), '1638.4');
+});
+test('a bandwidth that does not divide cleanly is rounded before it is shown', () => {
+  /* Pinning the formatter is not pinning its use: the throughput line
+     interpolated the raw quotient, so a three-device board read
+     "1092.2666666666667 GB/s per device" on the page while the PDF printed
+     1092.27 for the same hardware. */
+  const h = renderHarness();
+  const thirds = { ...dualGCD, devices: 3 };
+  const state = asState(thirds, 1, { params: 8, layers: 32 });
+  const computed = h.computeInference(state);
+  h.renderThroughput(state, computed);
+  const text = h.out['throughput-output'] || '';
+  assert.ok(text.includes(`${bandwidthLabel(computed.deviceBandwidth)} GB/s`),
+    `the line does not show the rounded bandwidth: ${text.slice(0, 240)}`);
+  assert.ok(!/\d\.\d{4,}/.test(text),
+    `a raw quotient reached the page: ${(text.match(/[\d.]{8,}/) || [])[0]}`);
+});
+test('the metrics tiles agree with the engine they are describing', () => {
+  /* Total VRAM is the same in both packagings, so the equivalence test above
+     cannot see it — an absolute assertion is the only thing that can. The two
+     engines also compute it by different routes (deviceGB x deviceCount here,
+     board GB x board count in Python), so it is compared across them too. */
+  const h = renderHarness();
+  const state = asState(dualGCD, 2, { params: 8, layers: 32 });
+  const computed = h.computeInference(state);
+  h.renderMetrics(computed);
+  const text = h.out['metrics-output'] || '';
+  assert.ok(text.includes(formatGBLike(computed.totalVRAM)),
+    `Total VRAM tile does not show ${formatGBLike(computed.totalVRAM)}: ${text.slice(0, 200)}`);
+  assert.strictEqual(computed.totalVRAM, computed.deviceGB * computed.deviceCount,
+    'total VRAM must be every device summed');
+  assert.strictEqual(computed.totalVRAM, state.gpuGB * state.gpuCount,
+    'and equally every board summed — the two routes must agree');
+});
+test('the state builder carries the catalog device count to the page', () => {
+  // Deleting this one line disconnects the catalog from every derivation above
+  // while leaving the whole suite green — verified by review.
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const state = readInputStateFor(key, '1');
+    assert.strictEqual(state.gpuDevices, gpu.devices,
+      `${key}: state carries gpuDevices=${state.gpuDevices}, catalog says ${gpu.devices}`);
+  }
+});
+test('a compute-bound estimate is bound by the devices, not the boards', () => {
+  // The decode ceiling was the one arithmetic site no case exercised with
+  // devices > 1: every parity case is bandwidth-bound there.
+  const h = renderHarness();
+  const bound = { params: 30, activePercent: 10, contextLength: 256, concurrency: 256, layers: 48 };
+  const single = { ...dualGCD, gb: 64, bw: dualGCD.bw / 2, tflops: dualGCD.tflops / 2, devices: 1 };
+  const dual = h.computeInference(asState(dualGCD, 1, bound));
+  const two = h.computeInference(asState(single, 2, bound));
+  // Sized in boards the product deviceTFLOPS*deviceCount is unchanged; what
+  // moves is the interconnect penalty, which is 1.0 at one board and 0.85 at
+  // two devices. So the ceiling has to be compared where those disagree.
+  assert.ok(dual.computeBound || two.computeBound, 'the probe must sit on the compute ceiling');
+  assert.ok(Math.abs(dual.saturatedTokS - two.saturatedTokS) < 1,
+    `compute ceiling differs by packaging: ${dual.saturatedTokS} vs ${two.saturatedTokS}`);
+});
+test('a single-device card emits exactly the flags it always did', () => {
+  /* The gate that fixes the dual-GCD case must not disturb the twelve real
+     rows. An earlier version keyed on `tp > 1` and silently dropped
+     --tensor-parallel-size at odd counts above eight, where the split is
+     TP=1 x DP=N — a command-text change on real hardware, disclosed but not
+     licensed by the requirement. */
+  const h = renderHarness();
+  for (const count of [1, 2, 8, 9, 11, 17, 33]) {
+    const state = asState(GPU_TABLE['h100-80'], count, { params: 8, layers: 32 });
+    const cmd = h.buildVllmCommand(state, h.computeInference(state), 'm');
+    const hasTP = /--tensor-parallel-size/.test(cmd);
+    assert.strictEqual(hasTP, count > 1,
+      `${count} single-device GPUs: --tensor-parallel-size ${hasTP ? 'present' : 'absent'}, ` +
+      'which is not what a board count above one has always meant');
+  }
+});
+test('a single dual-GCD board emits the flags its devices require', () => {
+  // Reverting the TP and expert-parallel gates in *both* engines at once is
+  // invisible to a cross-engine diff. These are absolute.
+  const h = renderHarness();
+  const state = asState(dualGCD, 1, { params: 8, layers: 32 });
+  const computed = h.computeInference(state);
+  const cmd = h.buildVllmCommand(state, computed, 'm');
+  assert.match(cmd, /--tensor-parallel-size 2/,
+    `one dual-GCD module needs TP=2 or half the silicon idles:\n${cmd}`);
+  const moe = asState(dualGCD, 1, { params: 30, activePercent: 10, layers: 48 });
+  const moeComputed = h.computeInference(moe);
+  assert.ok(moeComputed.isMoE, 'the probe must be an MoE');
+  assert.match(h.buildVllmCommand(moe, moeComputed, 'm'), /--enable-expert-parallel/,
+    'an MoE across two devices needs expert parallelism');
+});
+
+console.log('\nA verdict reads per-device numbers against per-device capacity');
+test('an over-capacity dual-GCD board reports a real overage, not zero', () => {
+  /* The symptom review found: per-device shares measured against the board's
+     capacity. 87.6 GiB on a 64 GiB device printed "Over by 0 GiB", because the
+     overage was taken against the 128 GiB board and clamped at zero. */
+  const c = computeInference(asState(dualGCD, 1));
+  assert.strictEqual(c.fits, false, 'the probe config must not fit');
+  const overage = c.perGPU.total - c.deviceGB;
+  assert.ok(overage > 1, `overage against device capacity should be real, got ${overage}`);
+  assert.ok(c.perGPU.total - dualGCD.gb < 0,
+    'and measuring against the board is what produced the clamped zero');
+});
+test('the boards-needed figure is in boards, not devices, at every board count', () => {
+  /* Checked across board counts, not only at one. A plausible typo that reads
+     the per-board divisor only when gpuCount === 1 doubles the purchase
+     recommendation for everyone else, and the equivalence test above cannot
+     see it: a shortfall counted in boards legitimately differs between the two
+     packagings, so that test normalises the figure away. */
+  const src = html.slice(html.indexOf('function boardsNeeded'), html.indexOf('function renderVerdict'));
+  const boardsNeeded = new Function(`${src}; return boardsNeeded;`)();
+  for (const devices of [1, 2, 4]) {
+    for (const boards of [1, 2, 4]) {
+      const card = { ...dualGCD, gb: 128, devices };
+      const state = asState(card, boards, { params: 400, layers: 126, bytesPerParam: 2 });
+      const c = computeInference(state);
+      const needDevices = Math.ceil(c.totalGB / (c.deviceGB * 0.9));
+      assert.strictEqual(boardsNeeded(state, c), Math.ceil(needDevices / devices),
+        `${boards} board(s) of ${devices} device(s): ${needDevices} devices is ` +
+        `${Math.ceil(needDevices / devices)} boards, not ${boardsNeeded(state, c)}`);
+    }
+  }
+});
+
 console.log('\nThe NVLink gate as the state builder actually applies it');
 test('a card without NVLink cannot report NVLink, whatever the control says', () => {
   for (const key of ['t4-16', 'l4-24', 'rtx4090-24', 'rtx5090-32',
