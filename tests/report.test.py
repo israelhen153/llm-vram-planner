@@ -1069,12 +1069,17 @@ print("\nThe parallelism row and the command below it describe the same split")
 
 
 def report_strings(card, boards, **over):
-    """Every string in the story, including the command.
+    """Every string in the story, plus the cfg that produced it.
 
-    report_text() above harvests Paragraph.text, table cells and .contents,
-    which is enough for prose but not for the command: it is a Preformatted,
-    and its text lives in .lines. This walks those too, because the command is
-    half of what is being compared here.
+    Not a second harvester because report_text() misses the command — it does
+    not. The command renders as one Paragraph per line
+    (generate_report.py:826-828), so .text reaches every line of it and the
+    packaging-invariance test above has always compared it; reverting
+    build_vllm_cmd() to split on boards turns that test red. What the callers
+    here need, and report_text() does not return, is the cfg alongside the
+    strings, so a rendered divisor can be checked against the one the figure
+    was actually computed with. The .lines walk is a forward guard only:
+    nothing in the report is a Preformatted today.
     """
     cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), ctx=8192, conc=16,
                n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
