@@ -290,13 +290,51 @@ def compute(cfg):
     oh_per_gpu = 1.5
     nccl_oh = (0.3 if nvlink else 0.2) * (device_count - 1) if device_count > 1 else 0
     total_oh = oh_per_gpu * device_count + nccl_oh
-    total_gb = weights_gb + kv_gb + act_gb + total_oh
 
-    per_w = weights_gb / device_count
+    # The divisor for the quantities a data-parallel replica holds a whole copy
+    # of. Dense models shard those tp ways, not tp * dp ways: the command this
+    # report prints replicates the model in every DP group and shards it only
+    # inside one.
+    #
+    # MoE is held at the device count on purpose, not by omission. Both engines
+    # emit --enable-expert-parallel, and under it vLLM splits two weight classes
+    # on two different axes — attention, embeddings and the dense/shared FFN
+    # shard tp ways, while the routed experts spread across all tp * dp ranks.
+    # No single divisor describes that, so any single divisor is wrong; a flat
+    # /tp puts DeepSeek-V3 671B at fp8 on 128 devices near 78 GiB/device against
+    # a modelled ~8.5, about 9x too much hardware, where leaving it here is
+    # roughly 1.75x too little. Over-buying is not the safe kind of wrong.
+    #
+    # Gated on is_moe — the same active_pct < 100 that build_vllm_cmd() reads
+    # before emitting --enable-expert-parallel — so the sharding rule and the
+    # flag cannot disagree about one configuration.
+    #
+    # At or below 8 devices tp == device_count, so neither branch moves a number
+    # there. Mirrors computeInference()'s shardDivisor; parity enforces it.
+    shard_divisor = device_count if is_moe else tp
+
+    # KV cache keeps the device count and that is not an oversight: DP
+    # replicates the model but partitions the *request stream*, so the
+    # cluster-wide cache is the same size and still spreads over every device.
+    per_w = weights_gb / shard_divisor
     per_kv = kv_gb / device_count
-    per_a = act_gb / device_count
+    per_a = act_gb / shard_divisor
     per_oh = oh_per_gpu + ((0.3 if nvlink else 0.2) if device_count > 1 else 0)
     per_total = per_w + per_kv + per_a + per_oh
+
+    # Cluster-wide footprint, and the same statement as the per-device
+    # breakdown above rather than a second opinion about it. Every device holds
+    # one share of the weights and there are device_count devices, so the
+    # cluster holds device_count / shard_divisor whole copies — dp for a dense
+    # model above one domain, exactly 1 everywhere else, which is every
+    # configuration at or below 8 devices and every MoE. Written that way and
+    # not as dp so the two views cannot drift if the divisor changes again.
+    # Activations replicate with the model. KV is counted once: there is one
+    # cluster-wide cache however the model is laid out. total_oh is already
+    # cluster-scoped. This used to sum one copy regardless of the split, and
+    # the "Need N+ boards" line on page 1 divides it.
+    model_copies = device_count / shard_divisor
+    total_gb = weights_gb * model_copies + kv_gb + act_gb * model_copies + total_oh
     # gpu["gb"] * n_gpu, not device_gb * device_count: the two are equal by
     # construction, and this one keeps an integer catalog value an integer
     # rather than rendering "160.0 GB" where every previous report said 160.
@@ -341,6 +379,16 @@ def compute(cfg):
     # NVLink is roughly flat within a domain (full bisection); PCIe worsens with GPU
     # count — decode all-reduces are small, so hop latency dominates. Heuristic step,
     # same class as MBU/MFU. Mirrors index.html exactly; the parity suite enforces it.
+    #
+    # Keyed on the device count and not on tp, deliberately. Splitting it into a
+    # tp-sized intra factor and a dp-sized inter one reads the emitted command
+    # more faithfully, and it was tried here and reverted: at TP=1 x DP=9 it
+    # rightly charges nothing for an all-reduce that does not exist, which
+    # doubled single-stream throughput on a figure already about 4x optimistic
+    # — the decode model pools every device's bandwidth for one user's request
+    # while nine independent replicas would serve it from one of them. The
+    # penalty was masking that. Replica-scoping single-stream and TTFT is its
+    # own change; until it lands this curve stays put.
     if device_count <= 1:
         nv_penalty = 1.0
     elif nvlink:
@@ -426,8 +474,61 @@ def compute(cfg):
         # to each caller to re-derive, so a figure in the PDF and the command
         # printed later in the same PDF cannot disagree about the sharding.
         "tp": tp, "dp": dp,
+        # The divisor the replicated figures above were computed with, so every
+        # sentence that names one reads the number that was used rather than
+        # re-deriving device_count-if-MoE-else-tp and drifting from it.
+        "shard_divisor": shard_divisor,
+        # The same fact at cluster scope, so the breakdown row can sum to the
+        # total without a renderer dividing for itself.
+        "model_copies": model_copies,
         "fits": fits, "comfortable": comfortable,
     }
+
+
+# How many boards would hold this — asked as a question this engine can answer,
+# rather than derived from a total. It used to be
+# ceil(total_gb / (device_gb * 0.9)), a cluster total over one device's
+# capacity, which is circular: buying boards changes the split, so a count
+# derived from the current split describes a machine that stops existing the
+# moment the reader acts on it. On a 70B at AWQ over nine RTX 4090s it printed
+# "Need 15+ boards"; fifteen splits TP=1 and still does not fit, and iterating
+# the advice gives 15, 25, 42. On 123B bf16 over T4s it printed "Need 52+" when
+# no count ever fits, and re-asking gave 216, 460, 1903.
+#
+# A scan, not a bisection: fits is not monotonic in the board count, because
+# eight devices split TP=8 and hold an eighth each while nine split TP=1 and
+# hold a whole copy each. compute() is the judge rather than a second copy of
+# the per-device formula written out here. Mirrors index.html's boardsNeeded();
+# the parity suite compares the answers.
+BOARD_SEARCH_CAP = 256
+
+
+def boards_needed(cfg, comp):
+    """(boards, capped): a count that fits, or None with whether any would."""
+    for n in range(1, BOARD_SEARCH_CAP + 1):
+        if compute(dict(cfg, n_gpu=n))["fits"]:
+            return n, False
+    # Past a TP group of 8 the only per-device term still shrinking with more
+    # devices is the KV cache, so a cluster this size failing means all do.
+    return None, compute(dict(cfg, n_gpu=BOARD_SEARCH_CAP * 4096))["fits"]
+
+
+def boards_advice(cfg, comp):
+    """The one sentence page 1 prints, matching index.html word for word."""
+    boards, capped = boards_needed(cfg, comp)
+    if boards:
+        # Not "N+": the scan exists because fits is not monotonic in the board
+        # count, and the "+" asserted the opposite — 8B bf16 on T4s fits at 2
+        # and fails at 9, where TP drops to 1 and every device needs a whole
+        # copy. The sentence names the smallest fit and says so.
+        return f"Smallest fit: {boards} boards \u2014 larger counts can split worse. Or lower precision."
+    if capped:
+        return f"No board count up to {BOARD_SEARCH_CAP} fits. Lower precision or a larger card."
+    return ("No number of these boards fits \u2014 per-device residency stops falling before it "
+            "reaches this card."
+            + ("" if comp["is_moe"] else " Tensor parallelism is capped at 8, so past that more "
+                                         "boards add replicas, not smaller shards.")
+            + " Lower precision or a larger card.")
 
 
 def split_parallelism(gpu_count):
@@ -713,10 +814,8 @@ class ReportCard:
             # Against device capacity, and against a board count the reader
             # can act on. Measured per board while dividing per device, this
             # printed "Over by 0 GiB" on a configuration that does not fit.
-            need = math.ceil(c["total_gb"] / (c["device_gb"] * 0.9))
-            per_board = c["device_count"] // cfg["n_gpu"] if cfg["n_gpu"] else 1
             msg = (f"Over by {fmt_gb(c['per_total'] - c['device_gb'])} per device. "
-                   f"Need {math.ceil(need / max(per_board, 1))}+ boards or lower precision.")
+                   f"{boards_advice(cfg, c)}")
         story.append(Paragraph(f"[{icon}] {msg}", self.styles[style_name]))
         story.append(Spacer(1, 4*mm))
 
@@ -763,14 +862,22 @@ class ReportCard:
         story.append(Spacer(1, 3*mm))
 
         # ---- VRAM Breakdown ----
-        story.append(Paragraph("VRAM breakdown (per device)", self.styles["SectionHead"]))
+        story.append(Paragraph("VRAM breakdown", self.styles["SectionHead"]))
         story.append(self._vram_bar())
         story.append(Spacer(1, 2*mm))
+        # Cluster-scoped, and the first three sum to the fourth. They did before
+        # the weights divisor was corrected, because nothing replicated; a
+        # "Weights" cell showing one copy beside a Total counting sixteen is a
+        # contradiction inside one table. The label says how many copies, so the
+        # number is explained and not merely consistent. At one copy — every
+        # configuration at or below 8 devices, and every MoE — this is unchanged.
+        copies = c["model_copies"]
         story.append(self._make_metric_row([
-            ("Weights", fmt_gb(c["weights_gb"])),
+            ("Weights" if copies <= 1 else f"Weights ({copies:g} copies)",
+             fmt_gb(c["weights_gb"] * copies)),
             ("KV cache", fmt_gb(c["kv_gb"])),
-            ("Act + OH", fmt_gb(c["act_gb"] + c["total_oh"])),
-            ("Total", fmt_gb(c["total_gb"])),
+            ("Act + OH", fmt_gb(c["act_gb"] * copies + c["total_oh"])),
+            ("Total" if copies <= 1 else "Total (cluster)", fmt_gb(c["total_gb"])),
             ("Per device", fmt_gb(c["per_total"])),
         ]))
         story.append(Spacer(1, 3*mm))
@@ -867,16 +974,28 @@ class ReportCard:
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
         if dp > 1:
-            # Same caveat index.html shows on screen (renderGPUCards' warning
-            # banner) — repeated here because this PDF, not the screen, is
-            # the artifact README.md calls procurement-ready and that gets
-            # forwarded. A reader who only sees the PDF must not be able to
-            # read "Per device: X GiB" next to --data-parallel-size and conclude
-            # that's what actually fits.
-            notes.append(f"Per-device VRAM above assumes weights sharded across all {device_count_for(cfg)} devices; the "
-                         f"vLLM command below instead shards {tp}-way and replicates a full copy of the model "
-                         f"across each of {dp} data-parallel groups, so the fit verdict on page 1 is optimistic. "
-                         f"Reconciling this VRAM math with the real split is planned but not done yet.")
+            # Matches what index.html shows on screen (renderGPUCards' banner) —
+            # repeated here because this PDF, not the screen, is the artifact
+            # README.md calls procurement-ready and that gets forwarded. It no
+            # longer apologises: the per-device figures are now divided by the
+            # sharding the command above performs, so the fit verdict on page 1
+            # is computed against the deployment it prints. What is left is the
+            # divisor each quantity used, the MoE exception, and the fact that
+            # the split itself is a heuristic.
+            if c["is_moe"]:
+                notes.append(f"Per-device weights above is divided by all {device_count_for(cfg)} devices. Under "
+                             f"--enable-expert-parallel the routed experts do spread that way, but attention, "
+                             f"embeddings and the dense layers shard only {tp} ways, so for a mixture-of-experts "
+                             f"model this figure is optimistic by an amount that depends on the expert fraction. "
+                             f"Dense models in this report divide by {tp}.")
+            else:
+                notes.append(f"Per-device weights and activations above are divided by {tp}, the sharding the vLLM "
+                             f"command performs, with a full copy of the model in each of the {dp} data-parallel "
+                             f"groups. KV cache is divided by all {device_count_for(cfg)} devices, because data "
+                             f"parallelism partitions the request stream rather than replicating the cache.")
+            notes.append(f"TP={tp} x DP={dp} is a starting point, not an answer. Above one NVLink domain both the "
+                         f"split and the interconnect factor priced against it are heuristics; nothing here is "
+                         f"measured above 2 devices, so the throughput and TTFT figures inherit that uncertainty.")
         notes.append("Parameter estimates from presets are approximate. Verify against the model's config.json.")
         notes.append("GPU prices are mid-2026 per-board/hr estimates across 3 tiers: hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave/RunPod), spot/marketplace (Vast.ai). Reserved instances typically 30-60% off.")
         for n in notes:

@@ -112,21 +112,23 @@ test('int4 quantisation quarters the weights vs bf16', () => {
   const int4 = computeInference(state({ bytesPerParam: 0.5 })).weightsGB;
   between(bf16 / int4, 3.99, 4.01, 'bf16:int4 ratio');
 });
-test('above 8 devices, each device still holds the whole model over the device count', () => {
+test('above 8 devices, a dense model divides its weights by TP, not by the device count', () => {
   /* A literal, worked out by hand, not an expression over the same constants
      the engine uses — an expression follows whatever the divisor becomes and
-     therefore pins nothing. This is the one number the next change moves:
+     therefore pins nothing:
 
        70B at bf16      = 70e9 * 2         = 1.4e11 bytes of weights
        in GiB           = 1.4e11 / 2**30   = 130.385160446167
-       12 devices split TP=4 x DP=3, and every device holds 1/12 of the model:
-                          130.385160446167 / 12 = 10.865430037181 GiB
+       12 devices split TP=4 x DP=3. Each of the 3 data-parallel replicas holds
+       a whole copy of the model, sharded 4 ways inside itself:
+                          130.385160446167 / 4  = 32.596290111542 GiB
 
-     Weights are actually sharded TP ways, so the honest figure is
-     130.385160446167 / 4 = 32.596290111542 GiB — three times this one. That
-     correction is a separate commit, and it has to rewrite this literal and
-     say why; a test that recomputed the figure from `weightsGB / deviceCount`
-     would follow the bug in either direction and report nothing.
+     This literal was 10.865430037181 — the same weights over all 12 devices —
+     and the comment here said the honest figure was three times that and that
+     correcting it was a later commit. This is that commit, so the pin is
+     rewritten to the number the arithmetic now produces and to the reason it
+     is the right one: 12 devices cannot each hold a twelfth of the model when
+     the command they are given loads three copies of it.
 
      Twelve devices, because at eight or fewer TP equals the device count and
      the two divisors are the same number: a pin down there proves nothing.
@@ -135,42 +137,151 @@ test('above 8 devices, each device still holds the whole model over the device c
   assert.strictEqual(c.tp, 4, `TP at 12 devices: ${c.tp}`);
   assert.strictEqual(c.dp, 3, `DP at 12 devices: ${c.dp}`);
   assert.strictEqual(c.deviceCount, 12, `deviceCount: ${c.deviceCount}`);
-  assert.ok(Math.abs(c.perGPU.weights - 10.8654) < 1e-4,
-    `per-device weights on 12 devices: expected 10.8654 GiB, got ${c.perGPU.weights}`);
+  assert.ok(Math.abs(c.perGPU.weights - 32.5963) < 1e-4,
+    `per-device weights on 12 devices: expected 32.5963 GiB, got ${c.perGPU.weights}`);
+  /* And the same configuration as an MoE, which is deliberately *not* divided
+     by TP. Without this the MoE hold-back is defended by a comment alone, and
+     the obvious tidy-up — one divisor for everything — passes every other
+     assertion in this file. 70B at 5% active is still 70B of weights on disk,
+     so the literal is the same 130.385160446167 over all 12 devices. */
+  const moe = computeInference(state({ params: 70, layers: 80, gpuCount: 12, activePercent: 5 }));
+  assert.ok(moe.isMoE, 'the probe must be an MoE');
+  assert.strictEqual(moe.tp, 4, `TP at 12 devices: ${moe.tp}`);
+  assert.ok(Math.abs(moe.perGPU.weights - 10.8654) < 1e-4,
+    `an MoE must still divide by all 12 devices: expected 10.8654 GiB, got ${moe.perGPU.weights}`);
+  /* And free KV as an absolute, on the same twelve devices, because it is the
+     figure that moves with the weights divisor without being the weights
+     divisor. Every device keeps 90% of 80 GiB for vLLM and the fixed residents
+     take what the breakdown above says they take:
+
+       dense: weights 32.596290111542 + activations 1.3038516044617/4 = 0.325962901115
+              + overhead 1.5 + 0.3 (NVLink)         = 34.722253012657 per device
+              (72 - 34.722253012657) x 12           = 447.332963848114 GiB
+
+       MoE:   weights 10.865430037181 + activations 0.1/12 = 0.008333333333
+              + 1.8                                  = 12.673763370514 per device
+              (72 - 12.673763370514) x 12            = 711.914839553833 GiB
+
+     Both engines applying the same wrong free-KV formula is invisible to the
+     parity suite, so these are literals rather than a second derivation. */
+  assert.ok(Math.abs(c.freeForKVCache - 447.332963848114) < 1e-6,
+    `free KV on 12 devices, dense: expected 447.332963848114 GiB, got ${c.freeForKVCache}`);
+  assert.ok(Math.abs(moe.freeForKVCache - 711.914839553833) < 1e-6,
+    `free KV on 12 devices, MoE: expected 711.914839553833 GiB, got ${moe.freeForKVCache}`);
+  /* And the replicated half of the cluster total, which is the part this
+     divisor owns. Stated without the KV and overhead terms so it does not move
+     when the fixture's context or concurrency is retuned:
+
+       dense, 3 replicas of one copy sharded 4 ways
+         (weights 130.385160446167 + activations 1.303851604462) x 3
+                                              = 395.067036151889 GiB
+       MoE, held at one copy across all 12
+         (weights 130.385160446167 + activations 0.1) x 1
+                                              = 130.485160446167 GiB
+
+     The cluster total summed a single copy at every split until this commit,
+     so the dense figure here is three times what it was. Both engines carried
+     that formula, which the parity suite cannot see, so this is a literal. */
+  const replicated = (x) => x.totalGB - x.kvCacheGB - x.totalOverhead;
+  assert.ok(Math.abs(replicated(c) - 395.067036151889) < 1e-6,
+    `replicated cluster footprint, dense on 12 devices: expected 395.067036151889 GiB, ` +
+    `got ${replicated(c)}`);
+  assert.ok(Math.abs(replicated(moe) - 130.485160446167) < 1e-6,
+    `replicated cluster footprint, MoE on 12 devices: expected 130.485160446167 GiB, ` +
+    `got ${replicated(moe)}`);
 });
-test('every device holds the whole model over the device count, at every count', () => {
-  /* The literal above pins one number; this pins the shape. A change that
-     divided by tp at every count except the two the literals happen to use
-     would satisfy them both and ship TP-sharding everywhere else — an actual
-     falsification, not a hypothetical, so the invariant gets stated directly:
+test('a dense model holds one copy per TP group, an MoE one copy per cluster, at every count', () => {
+  /* The literals above pin two numbers; this pins the shape. A change that
+     divided by tp at every count except the one the literals happen to use
+     would satisfy them and ship the wrong divisor everywhere else — an actual
+     falsification found on this branch, not a hypothetical, so the invariant
+     is stated directly for both regimes at once:
 
-         perGPU.weights * deviceCount === weightsGB
+         dense:  perGPU.weights * tp          === weightsGB
+         MoE:    perGPU.weights * deviceCount === weightsGB
 
-     which is "every device holds an equal share of one copy of the model".
-     That is what the tool claims today, in prose as well as arithmetic. When
-     weights become sharded TP ways the right-hand side is tp, not deviceCount,
-     and this test has to be rewritten to say so — deliberately, for every
-     count at once, rather than at whichever counts a fixture happened to use.
+     The right-hand side moved from deviceCount to tp for dense models in this
+     commit, and stayed at deviceCount for MoE. Both halves are asserted here
+     because holding only one of them lets the other slide: an engine that
+     divided everything by tp, or everything by deviceCount, would still pass a
+     one-sided version of this test.
 
-     The spread matters more than its length: tp is 2, 4 or 8 across these
+     Activations replicate with the model, so they take the same divisor and are
+     checked alongside — that operand was never pinned and moving weights alone
+     is the obvious half-fix.
+
+     The spread matters more than its length: tp is 1, 2, 4 or 8 across these
      counts, and dp runs from 2 to 25, so no single divisor coincidence covers
-     them. 1-8 are the control, where tp === deviceCount and the invariant
-     survives the change unchanged; that is exactly why a pin down there proves
-     nothing on its own. */
-  let dpAbove1 = 0;
+     them. 1-8 are the control, where tp === deviceCount and both formulas are
+     the same statement; that is exactly why a pin down there proves nothing on
+     its own. */
+  let dpAbove1 = 0, tpBelowCount = 0;
   for (const count of [1, 2, 4, 5, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128])
-    for (const params of [8, 70]) {
-      const c = computeInference(state({ params, layers: 80, gpuCount: count }));
-      assert.strictEqual(c.deviceCount, count, `deviceCount at ${count}`);
-      assert.ok(Math.abs(c.perGPU.weights * c.deviceCount - c.weightsGB) <= c.weightsGB * 1e-12,
-        `${params}B on ${count} devices (TP=${c.tp} x DP=${c.dp}): ` +
-        `${c.perGPU.weights} per device x ${c.deviceCount} = ${c.perGPU.weights * c.deviceCount}, ` +
-        `but the model is ${c.weightsGB} GiB — the per-device figure is not one copy split evenly`);
-      if (c.dp > 1) dpAbove1++;
-    }
+    for (const params of [8, 70])
+      for (const activePercent of [100, 5]) {
+        const c = computeInference(state({ params, layers: 80, gpuCount: count, activePercent }));
+        assert.strictEqual(c.deviceCount, count, `deviceCount at ${count}`);
+        const want = c.isMoE ? c.deviceCount : c.tp;
+        assert.strictEqual(c.shardDivisor, want,
+          `${params}B ${c.isMoE ? 'MoE' : 'dense'} on ${count} devices: shardDivisor ` +
+          `${c.shardDivisor}, expected ${want}`);
+        for (const [field, whole] of [['weights', c.weightsGB], ['activations', c.activationsGB]])
+          assert.ok(Math.abs(c.perGPU[field] * want - whole) <= whole * 1e-12,
+            `${params}B ${c.isMoE ? 'MoE' : 'dense'} on ${count} devices (TP=${c.tp} x DP=${c.dp}): ` +
+            `${c.perGPU[field]} ${field} per device x ${want} = ${c.perGPU[field] * want}, ` +
+            `but the whole is ${whole} GiB`);
+        // KV cache does not move with the model: DP partitions the request
+        // stream, so the cluster-wide cache still spreads over every device.
+        assert.ok(Math.abs(c.perGPU.kvCache * c.deviceCount - c.kvCacheGB) <= c.kvCacheGB * 1e-12,
+          `${params}B on ${count} devices: KV cache must divide by all ${count} devices, ` +
+          `got ${c.perGPU.kvCache} x ${c.deviceCount} against ${c.kvCacheGB}`);
+        /* Free KV, against the per-device breakdown this same result reports —
+           not against a second copy of the formula. freeForKVCache multiplies a
+           per-device headroom by the device count, so raising the weights
+           divisor without following it through there leaves free KV on the old
+           number and silently hands back cache that does not exist. That exact
+           mutation — fixedPerGPU recomputed as weightsGB / deviceCount while
+           perGPU.weights divides by tp — passed every other test in this suite
+           and in the parity suite, in both engines at once, which is why the
+           invariant is stated here rather than assumed from the source. */
+        /* The cluster total against the per-device breakdown, which are two
+           views of one deployment and must reconcile. They are allowed to
+           differ through the overhead term and through nothing else:
+           totalOverhead charges (deviceCount - 1) NCCL peer buffers
+           cluster-wide while perGPU.overhead gives every device one, a
+           pre-existing asymmetry in the overhead model that predates this
+           change and is not a sharding disagreement. Everything that does
+           shard — weights, activations, KV — has to cancel exactly.
+
+           Nothing asserted this before, which is how totalGB came through the
+           weights correction still summing a single copy: it read 401.79 GiB
+           beside a per-device figure implying 2377.42 on the same screen, and
+           boardsNeeded() divides it into a hardware recommendation. */
+        const overheadResidual = c.perGPU.overhead * c.deviceCount - c.totalOverhead;
+        const residual = c.perGPU.total * c.deviceCount - c.totalGB;
+        assert.ok(Math.abs(residual - overheadResidual) <= Math.max(c.totalGB, 1) * 1e-12,
+          `${params}B ${c.isMoE ? 'MoE' : 'dense'} on ${count} devices (TP=${c.tp} x DP=${c.dp}): ` +
+          `per-device total x ${c.deviceCount} = ${c.perGPU.total * c.deviceCount} against a cluster ` +
+          `total of ${c.totalGB} — a gap of ${residual}, but only ${overheadResidual} of it is the ` +
+          `NCCL peer-buffer asymmetry, so the two views disagree about the sharded quantities`);
+        // And that escape hatch stays the size of one peer buffer, so it cannot
+        // become somewhere a real drift hides.
+        assert.ok(Math.abs(overheadResidual) <= 0.3 + 1e-9,
+          `the overhead views differ by ${overheadResidual} GiB, more than one NCCL peer buffer`);
+
+        const fixed = c.perGPU.total - c.perGPU.kvCache;
+        const wantFree = Math.max((c.deviceGB * 0.9 - fixed) * c.deviceCount, 0);
+        assert.ok(Math.abs(c.freeForKVCache - wantFree) <= Math.max(wantFree, 1) * 1e-12,
+          `${params}B ${c.isMoE ? 'MoE' : 'dense'} on ${count} devices: free KV is ` +
+          `${c.freeForKVCache} GiB, but the per-device figures leave ` +
+          `(${c.deviceGB} x 0.9 - ${fixed}) x ${c.deviceCount} = ${wantFree}`);
+        if (c.dp > 1) dpAbove1++;
+        if (c.tp < c.deviceCount) tpBelowCount++;
+      }
   // The counts where TP and the device count are different numbers are the
   // only ones this can speak about; without them it is a tautology.
-  assert.ok(dpAbove1 >= 16, `only ${dpAbove1} of the swept configs have dp > 1`);
+  assert.ok(dpAbove1 >= 32, `only ${dpAbove1} of the swept configs have dp > 1`);
+  assert.ok(tpBelowCount >= 32, `only ${tpBelowCount} of the swept configs have tp < deviceCount`);
 });
 test('a state carrying tp or dp keys computes exactly what one without them does', () => {
   /* computeInference() derives the split and reads nothing from state.tp. That
@@ -202,6 +313,73 @@ test('FP8 KV cache halves KV footprint', () => {
 test('70B bf16 does not fit on one H100, does fit on four', () => {
   assert.strictEqual(computeInference(state({ params: 70, layers: 80, kvHeads: 8 })).fits, false);
   assert.strictEqual(computeInference(state({ params: 70, layers: 80, kvHeads: 8, gpuCount: 4 })).fits, true);
+});
+test('the interconnect factor is one curve on the device count, and this commit does not move it', () => {
+  /* The penalty, recovered from the number it multiplies rather than read back
+     out of the source. Decode at batch 1 is achievedBandwidth over a constant,
+     and achievedBandwidth is deviceBandwidth x deviceCount x MBU x penalty, so
+     the ratio against a single device of the same card divides everything else
+     out:
+
+         tok/s(n) / tok/s(1) / deviceCount === penalty(n)
+
+     These are absolute, and they exist because both engines apply this formula:
+     changing it in one of them is caught by the parity suite, changing it in
+     both is not, and that mutation passed the entire suite before this test.
+
+     They pin the curve as it already was. An earlier version of this commit
+     replaced it with intra(tp) x inter(dp), which is the faithful reading of
+     the emitted command — at TP=1 there is genuinely no all-reduce to price —
+     and it was reverted, because the penalty was covering a different error:
+     decode pools every device's bandwidth for a single user's request, while
+     under DP that request runs on one replica. Removing the penalty at TP=1
+     doubled a figure that was already about 4x optimistic. So this test now
+     guards the status quo, and the commit that scopes single-stream and TTFT
+     to a replica has to move these numbers deliberately.
+
+       1 device     1.0
+       8, NVLink    0.85          flat within a domain, full bisection
+       8, PCIe      0.45          0.55 - 0.05*log2(8/2)
+       9, PCIe      0.441503...   0.55 - 0.05*log2(9/2)
+       16, PCIe     0.40          0.55 - 0.05*log2(16/2), at the floor
+       128, PCIe    0.40          floored
+       NVLink is 0.85 at every count above one. */
+  /* A deliberately tiny model at a short context, because tok/s is reported as
+     a rounded integer and these ratios have to resolve differences of about 1%.
+     At ~2.3K tok/s on one device the rounding error is under 0.03%. */
+  const PROBE = { params: 0.5, layers: 4, kvHeads: 1, headDim: 64, contextLength: 512 };
+  const penaltyOf = (o) => {
+    const many = computeInference(state({ ...PROBE, ...o }));
+    const one = computeInference(state({ ...PROBE, ...o, gpuCount: 1 }));
+    return many.singleStreamTokS / one.singleStreamTokS / many.deviceCount;
+  };
+  const pcie9 = 0.55 - 0.05 * Math.log2(9 / 2);
+  for (const [count, nvlink, want] of [
+    [1, true, 1.0], [1, false, 1.0],
+    [8, true, 0.85], [8, false, 0.45],
+    [9, true, 0.85], [9, false, pcie9],
+    [16, true, 0.85], [16, false, 0.40],
+    [128, true, 0.85], [128, false, 0.40],
+  ]) {
+    const got = penaltyOf({ gpuCount: count, hasNVLink: nvlink });
+    const c = computeInference(state({ ...PROBE, gpuCount: count, hasNVLink: nvlink }));
+    assert.ok(Math.abs(got - want) <= want * 1e-3,
+      `${count} devices on ${nvlink ? 'NVLink' : 'PCIe'} (TP=${c.tp} x DP=${c.dp}): ` +
+      `interconnect factor ${got}, expected ${want}`);
+  }
+  /* And the known-wrong case, pinned as known-wrong rather than left silent: at
+     nine devices the split is TP=1 x DP=9 and the emitted command runs no
+     tensor-parallel all-reduce at all, yet the fabric is still priced against
+     decode — NVLink and PCIe give different answers for nine independent
+     replicas. That is the status quo this commit deliberately does not touch,
+     and the test says so out loud so the next one cannot change it by accident
+     and call it a refactor. */
+  const nine = computeInference(state({ ...PROBE, gpuCount: 9 }));
+  assert.strictEqual(nine.tp, 1, 'nine devices should split TP=1 x DP=9');
+  assert.notStrictEqual(penaltyOf({ gpuCount: 9, hasNVLink: true }),
+                        penaltyOf({ gpuCount: 9, hasNVLink: false }),
+    'nine one-device replicas run no TP collective, yet the fabric is still ' +
+    'priced — known, deliberate, and the next commit\'s subject, not this one\'s');
 });
 test('tensor parallel shards weights across GPUs', () => {
   const one = computeInference(state()).perGPU.weights;
@@ -882,6 +1060,7 @@ const renderHarness = (inputs = {}) => {
     return { renderVerdict, renderGPUCards, renderTraining, renderNotes, renderStrategyBadges,
              renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary, renderCommand,
              renderMetrics, renderComparisons, computeInference, buildVllmCommand,
+             boardsNeeded, boardsAdvice,
              pushSnapshot: (s, c) => savedSnapshots.push({ state: s, computed: c, name: 'snap' }) };`)(document, navigator);
   return { ...api, out };
 };
@@ -953,52 +1132,87 @@ test('a verdict that does not fit says by how much, measured on the device', () 
   h.renderVerdict(state, computed);
   const text = h.out['verdict-output'] || '';
   assert.ok(!/Over by 0 GiB/.test(text), `the overage was clamped to zero: ${text}`);
-  // The figure, not just the noun. Reading board capacity here changes the
-  // number while leaving the word "boards" in place.
-  const wantDevices = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9));
-  const wantBoards = Math.ceil(wantDevices / (computed.deviceCount / state.gpuCount));
-  const shown = Number((text.match(/Need (\d+)\+ boards/) || [])[1]);
-  assert.strictEqual(shown, wantBoards,
-    `banner says ${shown} boards, device arithmetic says ${wantBoards}: ${text}`);
+  /* The figure, not just the noun. This used to compare the banner against
+     ceil(totalGB / (deviceGB * 0.9)) — the circular formula the banner no
+     longer uses — so it would have gone on agreeing with whatever that formula
+     produced. It now compares the banner against the count the search names,
+     and the neighbouring test proves that count actually fits. */
+  const shown = Number((text.match(/Smallest fit: (\d+) boards/) || [])[1]);
+  assert.strictEqual(shown, h.boardsNeeded(state, computed).boards,
+    `banner says ${shown} boards, the search says ` +
+    `${h.boardsNeeded(state, computed).boards}: ${text}`);
+  assert.ok(h.computeInference({ ...state, gpuCount: shown }).fits,
+    `the banner names ${shown} boards, which does not fit`);
 });
 test('the sharding a card claims is the sharding the command performs', () => {
   // Five dual-GCD boards: ten devices, and the condensed view used to caption
   // them "sharded 5-way" beside a number divided by ten.
   const h = renderHarness();
-  // Both branches: four dual-GCD boards give eight devices and a pure TP=8
-  // split, five give ten and a TP=2 x DP=5 one. The review found the dp>1
-  // branch of this test dead because the comment said five and the code said
-  // four.
-  for (const boards of [4, 5]) {
-  const state = asState(dualGCD, boards, { params: 8, layers: 32, bytesPerParam: 2 });
-  const computed = h.computeInference(state);
-  h.renderGPUCards(state, computed);
-  const text = h.out['gpu-cards'] || h.out['vram-output'] || Object.values(h.out).join(' ');
-  const cmd = h.buildVllmCommand(state, computed, 'm');
-  const tp = Number((cmd.match(/--tensor-parallel-size (\d+)/) || [0, 1])[1]);
-  const dp = Number((cmd.match(/--data-parallel-size (\d+)/) || [0, 1])[1]);
-  assert.strictEqual(tp * dp, computed.deviceCount,
-    'the command must account for every device the cards describe');
-  // Every sharding factor the view states, not the first one that matches: the
-  // tile and the interconnect line each carry one, and they are set separately.
-  const ways = [...text.matchAll(/(\d+)-way/g)].map(m => Number(m[1]));
-  assert.ok(ways.length, `the condensed view should state a sharding factor: ${text.slice(0, 200)}`);
-  if (dp === 1) {
-    for (const w of ways) {
-      assert.strictEqual(w, computed.deviceCount,
-        `a card says ${w}-way while the engine shards ${computed.deviceCount}-way`);
+  /* Both branches: four dual-GCD boards give eight devices and a pure TP=8
+     split, five give ten and a TP=2 x DP=5 one. The review found the dp>1
+     branch of this test dead once already, because the comment said five and
+     the code said four.
+
+     Dense and MoE at each, because above one domain they take different
+     divisors and only one of them is the emitted --tensor-parallel-size. A
+     dense-only version of this passed while the dp>1 branch had silently
+     drifted off the weights tile and onto the layers tile, which carries the
+     same words for a different reason. */
+  for (const boards of [4, 5])
+    for (const activePercent of [100, 10]) {
+      const state = asState(dualGCD, boards, { params: 8, layers: 32, bytesPerParam: 2, activePercent });
+      const computed = h.computeInference(state);
+      h.renderGPUCards(state, computed);
+      const text = h.out['gpu-cards'] || h.out['vram-output'] || Object.values(h.out).join(' ');
+      const cmd = h.buildVllmCommand(state, computed, 'm');
+      const tp = Number((cmd.match(/--tensor-parallel-size (\d+)/) || [0, 1])[1]);
+      const dp = Number((cmd.match(/--data-parallel-size (\d+)/) || [0, 1])[1]);
+      assert.strictEqual(tp * dp, computed.deviceCount,
+        'the command must account for every device the cards describe');
+      /* The figure against the flag, directly: what the weights number was
+         divided by, read back out of the number itself, against what the
+         command tells vLLM to shard by. For a dense model these must be the
+         same integer at every count — that is the whole subject of this
+         change, and nothing else in the suite compares the two code paths. */
+      const divisor = computed.weightsGB / computed.perGPU.weights;
+      assert.strictEqual(divisor, computed.shardDivisor,
+        `perGPU.weights implies a divisor of ${divisor} but shardDivisor says ${computed.shardDivisor}`);
+      if (!computed.isMoE) {
+        assert.strictEqual(divisor, tp,
+          `the weights figure was divided by ${divisor} while the command shards ${tp}-way:\n${cmd}`);
+      } else {
+        /* An MoE is held at the device count, and that is only defensible
+           because the command asks for expert parallelism. If the flag ever
+           stops being emitted, the divisor loses its justification and this
+           says so rather than leaving the two to drift. */
+        assert.strictEqual(divisor, computed.deviceCount,
+          `an MoE must stay divided by all ${computed.deviceCount} devices, got ${divisor}`);
+        assert.match(cmd, /--enable-expert-parallel/,
+          `the MoE divisor assumes expert parallelism; the command does not ask for it:\n${cmd}`);
+      }
+      // Every sharding factor the view states, not the first one that matches:
+      // the tile and the interconnect line each carry one, set separately.
+      const ways = [...text.matchAll(/(\d+)-way/g)].map(m => Number(m[1]));
+      if (dp === 1 || !computed.isMoE) {
+        assert.ok(ways.length, `the condensed view should state a sharding factor: ${text.slice(0, 200)}`);
+        for (const w of ways)
+          assert.strictEqual(w, divisor,
+            `a card says ${w}-way while the figure beside it was divided by ${divisor}`);
+      } else {
+        // Above one domain an expert-parallel MoE does not shard one way, so
+        // the panel states the divisor it used and must not dress it up as a
+        // sharding factor.
+        assert.ok(!ways.length,
+          `an expert-parallel MoE across ${computed.deviceCount} devices must not caption ` +
+          `a single sharding factor: ${ways.join(', ')}`);
+        const claim = text.match(/divided by all (\d+) devices/);
+        assert.ok(claim, `a dp>1 MoE view must name the divisor it used: ${text.slice(0, 300)}`);
+        assert.strictEqual(Number(claim[1]), divisor,
+          'the claim must name the count the figure was actually divided by');
+      }
     }
-  } else {
-    // A data-parallel split shards weights tp-way per replica while the panel's
-    // own figures divide by every device. That gap is real and is the next
-    // commit's subject; what this pins is that the view admits it.
-    const caveat = text.match(/assumes sharding across all (\d+)/);
-    assert.ok(caveat, `a dp>1 view must carry the caveat about its own figures: ${text.slice(0, 300)}`);
-    assert.strictEqual(Number(caveat[1]), computed.deviceCount,
-      'the caveat must name the count the figures actually used');
-  }
-  }
 });
+
 test('the executive summary reads the device it fills, not the board', () => {
   const h = renderHarness();
   const state = asState(dualGCD, 2, { params: 8, layers: 32, bytesPerParam: 2 });
@@ -1070,6 +1284,7 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
      shopping list. Everything else must match exactly. */
   const norm = (t) => (t || '').replace(/\d+× X/g, 'N× X').replace(/Need \d+\+ boards/g, 'Need N+ boards')
     .replace(/requires \d+\+ boards/g, 'requires N+ boards')
+    .replace(/Smallest fit: \d+ boards/g, 'Smallest fit: N boards')
     // "per device" after a bandwidth is a statement *about* the packaging —
     // it appears only when a board is more than one device — so of course it
     // differs between two descriptions of the same silicon.
@@ -1230,56 +1445,81 @@ test('the badge says single device exactly when the command asks for no parallel
 test('every sentence about the divisor states the divisor that was used', () => {
   /* A number going wrong is caught by the pins above. A *sentence* going wrong
      is not, and this tool's whole claim on a reader is that it shows its work:
-     "Per-device VRAM above assumes weights sharded across all 12 devices" is a
-     statement about the arithmetic, and under a change that divides by tp it
-     silently becomes false while every numeric assertion in this file still
-     passes. So the prose is held to the arithmetic directly — each claimed
+     "Per-device VRAM above assumes weights sharded across all 12 devices" was a
+     statement about the arithmetic, and the commit that started dividing by tp
+     turned it false while every numeric assertion in this file still passed.
+     That is why this test exists and why it went red on that commit rather than
+     after it. So the prose is held to the arithmetic directly: each claimed
      divisor must equal weightsGB / perGPU.weights, the divisor actually used.
 
-     Two kinds of claim, and they must not be conflated: the surfaces below say
-     what the *figure* was divided by, and the caveat also says what the
-     *command* shards by. The first must equal the real divisor, the second must
-     equal tp. Today those are deviceCount and tp respectively; that is exactly
-     the inconsistency the caveat exists to disclose, and it has to keep saying
-     so honestly in both halves. */
+     Four kinds of claim, and conflating them hides exactly what the sentences
+     exist to disclose:
+       divisor     — what the per-device weights figure was divided by. tp for a
+                     dense model, the device count for an MoE.
+       tp          — what the emitted command shards by.
+       dp          — how many replicas the model is copied into.
+       deviceCount — what the KV cache was divided by, which is every device
+                     whatever the model does, because DP partitions requests.
+     For a dense model above 8 devices, divisor and deviceCount are different
+     numbers on purpose; for an MoE they are the same one, on purpose. */
   const h = renderHarness();
   const CLAIMS = [
     // what the per-device weights figure was divided by
     ['weights-sharded tile', /Weights sharded<\/span><br><b>(\d+)-way<\/b>/g, 'divisor'],
-    ['weights-per-device tile', /Weights per device<\/span>[\s\S]{0,160}?assumes sharding across all (\d+)</g, 'divisor'],
-    ['dp caveat', /assumes? weights sharded across all (\d+) devices/g, 'divisor'],
     ['interconnect line', /sharded (\d+)-way, each device holds 1\/(\d+) of model/g, 'divisor'],
+    ['moe weights tile', /Weights per device<\/span>[\s\S]{0,160}?divided by all (\d+) devices/g, 'divisor'],
+    ['moe banner divisor', /Per-device weights here is divided by all (\d+) devices/g, 'divisor'],
+    ['moe summary divisor', /weights per device divided by all (\d+) devices/g, 'divisor'],
     // what the emitted command shards by
-    ['command claim', /shards (?:only )?(\d+)-way/g, 'tp'],
+    ['dense banner divisor', /Weights and activations above are divided by (\d+), the sharding the command performs/g, 'tp'],
+    ['dense summary divisor', /weights and activations divided by (\d+), the sharding the command performs/g, 'tp'],
+    ['moe aside on the dense rule', /Dense models (?:on this page )?divide by (\d+)/g, 'tp'],
+    ['moe aside on attention', /shard only (\d+) ways/g, 'tp'],
+    ['parallelism tile', /Parallelism<\/span><br><b>TP=(\d+)/g, 'tp'],
+    ['interconnect TP group', /all-reduce inside each (\d+)-device TP group/g, 'tp'],
+    // how many copies of the model exist
+    ['replica note on the tile', /inside each of (\d+) replicas/g, 'dp'],
+    ['dense summary replicas', /a full copy in each of the (\d+) data-parallel groups/g, 'dp'],
+    ['interconnect replica count', /TP group, (\d+) replicas across the fabric/g, 'dp'],
+    // what the KV cache was divided by — every device, model sharding aside
+    ['dense banner KV divisor', /KV cache is divided by all (\d+), because data parallelism/g, 'deviceCount'],
+    ['dense summary KV divisor', /KV cache divided by all (\d+) devices/g, 'deviceCount'],
   ];
   const seen = new Map(CLAIMS.map(([name]) => [name, 0]));
   for (const card of [GPU_TABLE['h100-80'], dualGCD])
-    for (const count of [3, 5, 6, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128]) {
-      const st = asState(card, count, { params: 70, layers: 80 });
-      const c = h.computeInference(st);
-      h.renderGPUCards(st, c);
-      const text = (h.out['gpu-cards'] || '') + '\n' + h.exportSummary(st, c);
-      // Derived from the output, not from deviceCount: if the engine stopped
-      // dividing by the device count this has to move, or the test is only
-      // comparing the prose against the assumption it is meant to check.
-      const divisor = c.weightsGB / c.perGPU.weights;
-      for (const [name, re, against] of CLAIMS) {
-        const want = against === 'tp' ? c.tp : divisor;
-        for (const m of text.matchAll(re)) {
-          seen.set(name, seen.get(name) + 1);
-          for (const claimed of m.slice(1).map(Number))
-            assert.ok(Math.abs(claimed - want) <= Math.abs(want) * 1e-9,
-              `${count}x ${card.name} (${c.deviceCount} devices, TP=${c.tp} x DP=${c.dp}): the ` +
-              `${name} says ${claimed}, but the ${against === 'tp' ? 'command shards ' + c.tp : 'figure was divided by ' + divisor}-way — ` +
-              `"${m[0].slice(0, 120)}"`);
+    for (const count of [3, 5, 6, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128])
+      // Both regimes. A dense-only sweep would let every MoE sentence go
+      // unread, and the MoE sentences are the ones describing a divisor the
+      // engine deliberately did not correct.
+      for (const activePercent of [100, 5]) {
+        const st = asState(card, count, { params: 70, layers: 80, activePercent });
+        const c = h.computeInference(st);
+        h.renderGPUCards(st, c);
+        const text = (h.out['gpu-cards'] || '') + '\n' + h.exportSummary(st, c);
+        // Derived from the output, not from deviceCount and not from tp: if the
+        // engine changes what it divides by, this moves with it, and the test
+        // keeps comparing the prose against the arithmetic rather than against
+        // an assumption of its own.
+        const divisor = c.weightsGB / c.perGPU.weights;
+        const targets = { divisor, tp: c.tp, dp: c.dp, deviceCount: c.deviceCount };
+        for (const [name, re, against] of CLAIMS) {
+          const want = targets[against];
+          for (const m of text.matchAll(re)) {
+            seen.set(name, seen.get(name) + 1);
+            for (const claimed of m.slice(1).map(Number))
+              assert.ok(Math.abs(claimed - want) <= Math.abs(want) * 1e-9,
+                `${count}x ${card.name} (${c.deviceCount} devices, TP=${c.tp} x DP=${c.dp}, ` +
+                `${c.isMoE ? 'MoE' : 'dense'}): the ${name} says ${claimed}, but ${against} ` +
+                `is ${want} — "${m[0].slice(0, 120)}"`);
+          }
         }
       }
-    }
   // A regex that matches nothing asserts nothing, and rewording a sentence is
   // exactly how this test would stop looking without anyone noticing.
   const silent = [...seen].filter(([, n]) => n === 0).map(([name]) => name);
   assert.ok(!silent.length, `these claims were never found in any rendered output: ${silent.join(', ')}`);
 });
+
 test('a single dual-GCD board emits the flags its devices require', () => {
   // Reverting the TP and expert-parallel gates in *both* engines at once is
   // invisible to a cross-engine diff. These are absolute.
@@ -1308,25 +1548,310 @@ test('an over-capacity dual-GCD board reports a real overage, not zero', () => {
   assert.ok(c.perGPU.total - dualGCD.gb < 0,
     'and measuring against the board is what produced the clamped zero');
 });
-test('the boards-needed figure is in boards, not devices, at every board count', () => {
-  /* Checked across board counts, not only at one. A plausible typo that reads
-     the per-board divisor only when gpuCount === 1 doubles the purchase
-     recommendation for everyone else, and the equivalence test above cannot
-     see it: a shortfall counted in boards legitimately differs between the two
-     packagings, so that test normalises the figure away. */
-  const src = html.slice(html.indexOf('function boardsNeeded'), html.indexOf('function renderVerdict'));
-  const boardsNeeded = new Function(`${src}; return boardsNeeded;`)();
-  for (const devices of [1, 2, 4]) {
-    for (const boards of [1, 2, 4]) {
-      const card = { ...dualGCD, gb: 128, devices };
-      const state = asState(card, boards, { params: 400, layers: 126, bytesPerParam: 2 });
-      const c = computeInference(state);
-      const needDevices = Math.ceil(c.totalGB / (c.deviceGB * 0.9));
-      assert.strictEqual(boardsNeeded(state, c), Math.ceil(needDevices / devices),
-        `${boards} board(s) of ${devices} device(s): ${needDevices} devices is ` +
-        `${Math.ceil(needDevices / devices)} boards, not ${boardsNeeded(state, c)}`);
+test('the copied summary adds up, and says "cluster" only where that means something', () => {
+  /* The export is the artifact that leaves the screen it was computed on, so it
+     carries the same breakdown as the metrics row and has to hold the same
+     relation: the three component lines sum to the figure printed beside them.
+
+     And it must not grow a line in the regime this commit holds unchanged. A
+     "Total (cluster)" line at one copy repeats the sum of the three lines above
+     it and tells a reader nothing — master's export had no such line, and
+     emitting one everywhere changed a document at every device count while the
+     numbers in it stayed put. That went unnoticed because nothing pinned the
+     export's shape, only its numbers. So the line is required to appear exactly
+     where replication exists and nowhere else. */
+  const h = renderHarness();
+  const grain = (v) => (v >= 100 ? 0.5 : v >= 10 ? 0.05 : 0.005);
+  let replicated = 0, single = 0;
+  for (const count of [1, 2, 4, 8, 9, 12, 16, 64, 128])
+    for (const activePercent of [100, 5])
+      for (const card of [GPU_TABLE['h100-80'], dualGCD]) {
+        const st = asState(card, count, { params: 70, layers: 80, activePercent });
+        const c = h.computeInference(st);
+        const full = h.exportSummary(st, c);
+        /* Anchored inside the breakdown section: the Model section also has a
+           "- KV cache:" line carrying a dtype rather than a size, and an
+           unanchored match reads that one and finds no figure at all. */
+        const text = full.slice(full.indexOf('## VRAM breakdown'), full.indexOf('## Capacity'));
+        assert.ok(text, `no VRAM breakdown section in the export: ${full.slice(0, 200)}`);
+        const line = (label) => {
+          const m = text.match(new RegExp(`- ${label}[^:]*: ([\\d.]+) GiB`));
+          return m ? Number(m[1]) : null;
+        };
+        const w = line('Weights'), kv = line('KV cache'), ao = line('Act \\+ overhead');
+        assert.ok(w !== null && kv !== null && ao !== null,
+          `export is missing a breakdown line: ${text.slice(0, 300)}`);
+        const total = line('Total \\(cluster\\)');
+        if (c.modelCopies > 1) {
+          replicated++;
+          assert.ok(total !== null,
+            `${c.deviceCount} devices holds ${c.modelCopies} copies but the export names no ` +
+            `cluster total: ${text.slice(0, 300)}`);
+          const tol = grain(w) + grain(kv) + grain(ao) + grain(total);
+          assert.ok(Math.abs(w + kv + ao - total) <= tol,
+            `export breakdown does not sum: ${w} + ${kv} + ${ao} = ${w + kv + ao} against ${total}`);
+          assert.ok(text.includes(`- Weights (${c.modelCopies} copies):`),
+            `the export must say how many copies it is counting: ${text.slice(0, 300)}`);
+        } else {
+          single++;
+          assert.strictEqual(total, null,
+            `one copy, but the export prints a cluster total that just repeats the sum ` +
+            `of the lines above it: ${text.slice(0, 300)}`);
+          assert.ok(text.includes('- Weights: '),
+            `at one copy the weights line must be unqualified: ${text.slice(0, 300)}`);
+        }
+      }
+  assert.ok(replicated > 0 && single > 0,
+    `only reached one regime: ${replicated} replicated, ${single} single-copy`);
+});
+test('no help text offers pipeline parallelism as something this tool does', () => {
+  /* The GPU-count tooltip said weights and KV are sharded "via tensor or
+     pipeline parallelism" for as long as the tool has existed. Neither engine
+     has ever emitted --pipeline-parallel-size, so a reader who believed it was
+     being told the wrong thing about their own command at every device count.
+
+     Pinned over the whole set of user-visible help strings rather than that one
+     tooltip: any mention of pipeline parallelism has to be a denial. That is
+     what "not modelled" means, and it is the one claim in this family a reader
+     can act on by choosing a topology the tool cannot cost. */
+  const tips = new Set([...html.matchAll(/data-tip="([^"]*)"/g)].map(m => m[1])
+    .concat([...html.matchAll(/aria-label="([^"]*)"/g)].map(m => m[1])));
+  assert.ok(tips.size > 20, `only ${tips.size} help strings found — the scan has stopped reaching them`);
+  for (const t of tips) {
+    if (!/pipeline[- ]parallel/i.test(t)) continue;
+    assert.match(t, /\bnever\b|\bnot\b|\bno\b/i,
+      `help text offers pipeline parallelism without saying the tool does not use it: "${t}"`);
+  }
+  /* And the same string has to be right about the class this commit went out of
+     its way to protect: a data-parallel replica holds a whole copy of a dense
+     model, but an MoE spreads its routed experts across every rank — that is
+     the entire reason the MoE divisor was held back. A sentence that describes
+     only the dense case is wrong for seven of the sixteen presets. */
+  for (const t of tips) {
+    if (!/data-parallel replicas/i.test(t)) continue;
+    assert.match(t, /mixture-of-experts|MoE/i,
+      `help text describes what a data-parallel replica holds without the MoE case, ` +
+      `which is the one the divisor was held back for: "${t}"`);
+  }
+});
+test('every view that prints a throughput figure above one domain carries the caveat', () => {
+  /* The device slider runs to 128 rather than stopping at one NVLink domain,
+     and the owner's ruling was that the per-field label carries the honesty the
+     cap would otherwise have carried. A view that prints the number and omits
+     the label defeats the ruling rather than simplifying for its audience.
+
+     The first version of this test named three surfaces, and a fourth —
+     renderComparisons, which prints "~194 / 194 tok/s" for a saved snapshot at
+     any device count — passed by not being on the list. An enumerated list of
+     call sites is exactly what this suite is supposed to be immune to, and the
+     old comment claiming it stopped that was written above a test that could
+     not. So nothing is enumerated now: every renderer the harness exposes is
+     invoked, with its arguments read from its own declared parameter names in
+     index.html, and every rendered element whose text contains a throughput
+     figure is required to carry the label. Surface five fails automatically. */
+  const h = renderHarness();
+  const THROUGHPUT = /tok\/s|tokens\/sec/;
+  const LABEL = /unmeasured above 2 devices/i;
+  // Declared parameter names, from the source, so a renderer is called the way
+  // it is written rather than the way this test guesses.
+  const params = {};
+  for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
+    params[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
+  const renderers = Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function');
+  assert.ok(renderers.length >= 8,
+    `only ${renderers.length} renderers reachable — the harness has stopped exposing them`);
+  for (const name of renderers)
+    assert.ok(params[name], `${name} is exposed but not declared in index.html`);
+
+  let above = 0, within = 0, surfaces = new Set();
+  for (const count of [2, 4, 8, 9, 11, 12, 16, 64, 128])
+    for (const card of [GPU_TABLE['h100-80'], dualGCD])
+      for (const nv of [true, false]) {
+        const st = asState(card, count, { params: 8, layers: 32, hasNVLink: nv });
+        const c = h.computeInference(st);
+        Object.keys(h.out).forEach(k => delete h.out[k]);
+        // Snapshots first: renderComparisons draws saved cards, each carrying
+        // its own computed result, and renders a placeholder when there are none.
+        h.pushSnapshot(st, c);
+        for (const name of renderers) {
+          const args = params[name].map(pn => (pn === 'computed' ? c : pn === 'state' ? st : undefined));
+          try { h[name](...args); } catch (e) {
+            assert.fail(`${name}(${params[name].join(', ')}) threw: ${e.message}`);
+          }
+        }
+        for (const [id, text] of Object.entries(h.out)) {
+          if (!THROUGHPUT.test(text)) continue;
+          surfaces.add(id);
+          const labelled = LABEL.test(text);
+          if (c.dp > 1) {
+            above++;
+            assert.ok(labelled,
+              `${id} at ${c.deviceCount} devices (TP=${c.tp} x DP=${c.dp}) prints a throughput ` +
+              `figure with no unmeasured-heuristic label: ${text.slice(0, 240)}`);
+          } else {
+            /* Two to eight devices is deliberately unlabelled, and that is a
+               known gap rather than an oversight: the same curve applies there
+               and is just as unmeasured, but labelling it would move renders in
+               the regime this commit proves unchanged. MODEL.md says so in as
+               many words. Pinned in this direction too, so the gap cannot be
+               closed by accident and then reported as unchanged. */
+            within++;
+            assert.ok(!labelled,
+              `${id} at ${c.deviceCount} devices gained a label in the regime this commit ` +
+              `holds unchanged — intended, but it has to be a deliberate change`);
+          }
+        }
+      }
+  assert.ok(above > 0 && within > 0,
+    `only reached one regime: ${above} above one domain, ${within} within`);
+  // The surfaces are discovered, not declared, so this only guards against the
+  // discovery silently collapsing to one.
+  assert.ok(surfaces.size >= 3,
+    `only ${surfaces.size} surfaces print throughput at all (${[...surfaces].join(', ')}) — ` +
+    `the sweep has stopped reaching them`);
+});
+
+test('the VRAM breakdown row adds up to the total it prints beside it', () => {
+  /* A reader adds a breakdown up. Before the weights divisor was corrected this
+     row did add up — Weights + KV + Act+OH was exactly Total, because nothing
+     replicated — and correcting the divisor broke it: at 12 devices it showed
+     "Weights 130 GiB · KV 2.50 · Act+OH 22.6 · Total 419", a 263 GiB gap with
+     no caption. One screen contradicting itself is the defect class this branch
+     exists to close, so the relation is pinned on the rendered strings rather
+     than on the arithmetic behind them, which would be a tautology.
+
+     The tolerance is the formatter's own, not a guess: formatGB rounds to the
+     integer above 100, one decimal above 10 and two below, so each printed
+     figure carries at most half of its last digit and the sum carries the sum
+     of those. */
+  const h = renderHarness();
+  const grain = (v) => (v >= 100 ? 0.5 : v >= 10 ? 0.05 : 0.005);
+  let withCopies = 0, singleCopy = 0;
+  for (const count of [1, 2, 4, 8, 9, 12, 16, 64, 128])
+    for (const activePercent of [100, 5])
+      for (const card of [GPU_TABLE['h100-80'], dualGCD]) {
+        const st = asState(card, count, { params: 70, layers: 80, activePercent });
+        const c = h.computeInference(st);
+        h.renderMetrics(c);
+        const cells = [...(h.out['metrics-output'] || '').matchAll(
+          /<p class="metric-label">(.*?)<\/p><p class="metric-value">(.*?)<\/p>/g)]
+          .map(m => [m[1], m[2]]);
+        assert.strictEqual(cells.length, 6, `expected six metric cards, got ${cells.length}`);
+        const num = (t) => Number(String(t).replace(/[^0-9.]/g, ''));
+        const [wLabel, wVal] = cells[0], [, kvVal] = cells[1];
+        const [, aoVal] = cells[2], [, tVal] = cells[3];
+        const parts = [num(wVal), num(kvVal), num(aoVal)];
+        const total = num(tVal);
+        const tol = parts.reduce((a, v) => a + grain(v), grain(total));
+        assert.ok(Math.abs(parts[0] + parts[1] + parts[2] - total) <= tol,
+          `${count}x ${card.name} (${c.deviceCount} devices, ${c.modelCopies} copies): ` +
+          `${wVal} + ${kvVal} + ${aoVal} = ${parts[0] + parts[1] + parts[2]}, but the row ` +
+          `prints ${tVal} beside them`);
+        // And the copy count is stated wherever it is not one, so the weights
+        // figure is explained rather than merely made to add up.
+        if (c.modelCopies > 1) {
+          withCopies++;
+          assert.strictEqual(wLabel, `Weights (${c.modelCopies} copies)`,
+            `weights tile is labelled "${wLabel}" on a ${c.modelCopies}-copy cluster`);
+        } else {
+          singleCopy++;
+          assert.strictEqual(wLabel, 'Weights', `weights tile is labelled "${wLabel}" at one copy`);
+        }
+      }
+  assert.ok(withCopies > 0 && singleCopy > 0,
+    `only reached one regime: ${withCopies} replicated, ${singleCopy} single-copy`);
+});
+test('the board count the tool recommends is one its own arithmetic agrees with', () => {
+  /* This used to pin ceil(totalGB / (deviceGB * 0.9)) as correct — a cluster
+     total divided by one device's capacity. That formula is circular: buying
+     boards changes the split, so the answer describes a machine that stops
+     existing the moment the reader acts on it. It does not merely round badly,
+     it diverges. On a 70B at AWQ over nine RTX 4090s it said 15, and re-asking
+     the tool at 15 said 25, then 42. On a 123B at bf16 over T4s it said 52
+     where no board count ever fits, then 216, 460, 1903.
+
+     So the property is stated as what a reader can act on: whatever number the
+     banner prints, recomputing the whole configuration at that number must fit
+     — and where nothing fits, the banner has to say so instead of printing a
+     number. That is checkable without knowing the formula, which is the point;
+     the old test could only ever agree with whatever the formula did.
+
+     Board counts and multi-device boards both, because the recommendation is
+     in boards while the split is sized in devices, and a version that reads the
+     per-board divisor only at gpuCount === 1 doubles the purchase advice for
+     everyone else. */
+  const harness = renderHarness();
+  const probes = [];
+  for (const devices of [1, 2, 4])
+    for (const boards of [1, 2, 4, 9])
+      for (const [params, layers, bpp, gb] of [[400, 126, 2, 128], [70, 80, 0.5, 24],
+                                               [123, 88, 2, 16], [8, 32, 2, 80]])
+        probes.push(asState({ ...dualGCD, gb, devices }, boards,
+                            { params, layers, bytesPerParam: bpp }));
+  let recommended = 0, impossible = 0, alreadyFits = 0;
+  for (const state of probes) {
+    const c = harness.computeInference(state);
+    if (c.fits) { alreadyFits++; continue; }
+    const { boards, capped } = harness.boardsNeeded(state, c);
+    const advice = harness.boardsAdvice(state, c);
+    if (boards === null) {
+      impossible++;
+      assert.ok(!/\d+ boards/.test(advice),
+        `no board count fits, but the banner still names one: ${advice}`);
+      assert.match(advice, /No (?:number of these boards|board count)/,
+        `the banner must say plainly that nothing fits: ${advice}`);
+      // And it must be true, not merely unproven: the largest cluster the
+      // search will consider does not fit either.
+      assert.strictEqual(capped, false, 'a capped search must not be reported as impossible');
+      continue;
+    }
+    recommended++;
+    // The claim under test. Recompute the entire configuration at the count the
+    // banner names and ask the engine, not the formula.
+    const at = harness.computeInference({ ...state, gpuCount: boards });
+    assert.ok(at.fits,
+      `banner says "${advice}" but ${boards} boards recomputes to ` +
+      `${at.perGPU.total} GiB per device against ${at.deviceGB} (TP=${at.tp} x DP=${at.dp})`);
+    // Smallest, not merely sufficient: everything below it must genuinely fail,
+    // which is also what stops a bisection being slipped in over a fits curve
+    // that is not monotonic.
+    for (let n = 1; n < boards; n++)
+      assert.ok(!harness.computeInference({ ...state, gpuCount: n }).fits,
+        `${boards} boards was recommended but ${n} already fits`);
+    assert.ok(advice.includes(`Smallest fit: ${boards} boards`),
+      `advice must name the count it found: ${advice}`);
+    /* And it must not claim more than it found. "Need N+ boards" asserted that
+       every larger count also fits, which is false wherever the split gets
+       worse — 8B bf16 on T4s fits at 2 and fails at 9, where TP drops to 1 and
+       every device needs a whole copy. Pinned against the fit vector rather
+       than against the wording, so a "+" can only come back on a configuration
+       where it is actually true. */
+    const plus = advice.match(/(\d+)\+ boards/);
+    if (plus) {
+      const from = Number(plus[1]);
+      for (let n = from; n <= from + 24; n++)
+        assert.ok(harness.computeInference({ ...state, gpuCount: n }).fits,
+          `advice says "${from}+ boards" but ${n} boards does not fit ` +
+          `(TP=${harness.computeInference({ ...state, gpuCount: n }).tp})`);
     }
   }
+  // Both outcomes have to be exercised or this is only testing one of them.
+  assert.ok(recommended > 0 && impossible > 0,
+    `probes did not reach both outcomes: ${recommended} recommended, ${impossible} ` +
+    `impossible, ${alreadyFits} already fitting`);
+  /* And the two surfaces that print it must print the same sentence. The exec
+     view used to re-word the recommendation around its own copy of the number,
+     which is how one screen can recommend different hardware from another. */
+  const notFitting = probes.find(st => !harness.computeInference(st).fits);
+  const c2 = harness.computeInference(notFitting);
+  harness.renderVerdict(notFitting, c2);
+  // The harness reports exec-mode on, which is why renderExecutiveSummary
+  // writes anything at all here.
+  harness.renderExecutiveSummary(notFitting, c2);
+  const sentence = harness.boardsAdvice(notFitting, c2);
+  for (const id of ['verdict-output', 'exec-summary'])
+    assert.ok((harness.out[id] || '').includes(sentence),
+      `${id} does not carry the shared recommendation "${sentence}"`);
 });
 
 console.log('\nThe NVLink gate as the state builder actually applies it');

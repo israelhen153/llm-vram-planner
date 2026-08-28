@@ -940,6 +940,7 @@ def check_packaging_is_invisible_to_the_report():
             # The shortfall is checked as a relation just above, so the figure
             # itself is normalised here rather than left to differ.
             t = re.sub(r"(Need|requires) \d+\+ boards", r"\1 N+ boards", t)
+            t = re.sub(r"Smallest fit: \d+ boards", "Smallest fit: N boards", t)
             out.append(re.sub(r"\b\d+x X", "Nx X", t))
         return out
 
@@ -948,7 +949,8 @@ def check_packaging_is_invisible_to_the_report():
         packagings by exactly the devices-per-board factor — a relation to
         check, not a value to normalise away."""
         for t in xs:
-            m = re.search(r"(?:Need|requires) (\d+)\+ boards", t)
+            m = re.search(r"Smallest fit: (\d+) boards", t) or \
+                re.search(r"(?:Need|requires) (\d+)\+ boards", t)
             if m:
                 return int(m.group(1))
         return None
@@ -1148,26 +1150,156 @@ test("the parallelism row says single device exactly when the command asks for n
      check_parallelism_row_agrees_with_the_command)
 
 
+# ---- the VRAM breakdown row adds up ---------------------------------------
+# A reader adds a breakdown up. Before the weights divisor was corrected this
+# row did add up, because nothing replicated; correcting it broke the relation
+# and left a 263 GiB gap with no caption on a 12-device 70B. Pinned on the
+# rendered cells rather than the arithmetic behind them, which is a tautology.
+# The tolerance is the formatter's own: fmt_gb rounds to the integer above 100,
+# one decimal above 10 and two below, so each cell carries at most half of its
+# last digit.
+print("\nThe VRAM breakdown row adds up to the total printed beside it")
+
+
+def check_vram_breakdown_row_sums():
+    import re
+
+    def grain(v):
+        return 0.5 if v >= 100 else 0.05 if v >= 10 else 0.005
+
+    with_copies = single_copy = 0
+    for preset, boards, card in (("llama31-70b", 12, dict(DUAL, devices=1, gb=80, name="S")),
+                                 ("llama31-70b", 1, dict(DUAL, devices=1, gb=80, name="S")),
+                                 ("llama31-70b", 4, DUAL),
+                                 ("llama31-70b", 64, dict(DUAL, devices=1, gb=80, name="S")),
+                                 ("dsv3-671b", 16, dict(DUAL, devices=1, gb=80, name="S")),
+                                 ("qwen3-30b", 12, dict(DUAL, devices=1, gb=80, name="S"))):
+        cfg = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=2, ctx=8192, conc=16,
+                   n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+                   hf_model="m", model_name="M")
+        comp = gr.compute(dict(cfg))
+        blob = report_text(card, boards, preset=preset, bpp=2)
+        # A metric cell is one Paragraph carrying its own label and value:
+        #   <font ...>Weights (3 copies)</font><br/><font ...><b>391 GiB</b></font>
+        # Parsed as pairs so this reads the cells the reader sees, not the
+        # arithmetic behind them, which would be a tautology.
+        cells = dict(re.findall(
+            r"<font[^>]*>([^<]+)</font><br/><font[^>]*><b>([^<]+)</b></font>", "\n".join(blob)))
+        label = "Weights" if comp["model_copies"] <= 1 else f"Weights ({comp['model_copies']:g} copies)"
+        total_label = "Total" if comp["model_copies"] <= 1 else "Total (cluster)"
+        assert label in cells, f"{preset} at {boards}: no {label!r} cell in the report: {sorted(cells)}"
+        if comp["model_copies"] > 1:
+            with_copies += 1
+        else:
+            single_copy += 1
+        vals = []
+        for want in (label, "KV cache", "Act + OH", total_label):
+            assert want in cells, f"{preset} at {boards}: no {want!r} cell: {sorted(cells)}"
+            vals.append(float(re.sub(r"[^0-9.]", "", cells[want])))
+        tol = sum(grain(v) for v in vals)
+        assert abs(vals[0] + vals[1] + vals[2] - vals[3]) <= tol, (
+            f"{preset} at {boards} boards ({comp['model_copies']:g} copies): "
+            f"{vals[0]} + {vals[1]} + {vals[2]} = {sum(vals[:3])}, but the row prints {vals[3]}")
+    assert with_copies and single_copy, (
+        f"only reached one regime: {with_copies} replicated, {single_copy} single-copy")
+
+test("the report's VRAM breakdown row sums to its own total",
+     check_vram_breakdown_row_sums)
+
+
+# ---- the board count page 1 recommends -----------------------------------
+# It used to be ceil(total_gb / (0.9 * device_gb)): a cluster total divided by
+# one device's capacity, which is circular because buying boards changes the
+# split. It did not merely round badly, it diverged — 70B AWQ over nine RTX
+# 4090s printed "Need 15+ boards" and re-asking at fifteen printed 25, then 42;
+# 123B bf16 over T4s printed a number where no board count ever fits. So the
+# property is stated as something a reader can act on, without reference to any
+# formula: whatever number the report prints, recomputing the configuration at
+# that number must fit, and where nothing fits it must say so instead.
+print("\nThe board count the report recommends is one this engine agrees with")
+
+
+def check_recommended_board_count_actually_fits():
+    import re
+    recommended = impossible = 0
+    for preset, bpp, card, boards in (("llama31-70b", 0.5, dict(DUAL, devices=1, gb=24, name="S"), 9),
+                                      ("mistral-lg-123b", 2, dict(DUAL, devices=1, gb=16, name="S"), 24),
+                                      ("llama31-70b", 2, dict(DUAL, devices=1, gb=80, name="S"), 1),
+                                      ("llama31-70b", 2, DUAL, 1),
+                                      ("dsv3-671b", 1, DUAL, 2)):
+        cfg = dict(gr.arch_fields(gr.PRESETS[preset]), ctx=8192, conc=16, n_gpu=boards,
+                   gpu=card, nvlink=True, kv_bpp=2, bpp=bpp, vendor=card["vendor"],
+                   hf_model="m", model_name="M")
+        comp = gr.compute(dict(cfg))
+        if comp["fits"]:
+            continue
+        blob = "\n".join(report_text(card, boards, preset=preset, bpp=bpp))
+        named = re.search(r"Smallest fit: (\d+) boards", blob)
+        want, capped = gr.boards_needed(cfg, comp)
+        if want is None:
+            impossible += 1
+            assert not named, f"nothing fits, but the report still names {named.group(1)} boards"
+            assert not re.search(r"\d+\+ boards", blob), (
+                "nothing fits, but the report claims a count and everything above it")
+            assert "No number of these boards fits" in blob, (
+                f"the report must say plainly that nothing fits:\n{blob[:400]}")
+            assert capped is False, "a capped search must not be reported as impossible"
+            continue
+        recommended += 1
+        assert named and int(named.group(1)) == want, (
+            f"{preset}: report names {named and named.group(1)} boards, the search says {want}")
+        # The claim: recompute the whole configuration there and ask the engine.
+        at = gr.compute(dict(cfg, n_gpu=want))
+        assert at["fits"], (
+            f"{preset}: the report recommends {want} boards, which recomputes to "
+            f"{at['per_total']} GiB per device against {at['device_gb']} "
+            f"(TP={at['tp']} x DP={at['dp']})")
+        # Smallest, not merely sufficient.
+        for n in range(1, want):
+            assert not gr.compute(dict(cfg, n_gpu=n))["fits"], (
+                f"{preset}: {want} boards recommended but {n} already fits")
+    assert recommended and impossible, (
+        f"did not reach both outcomes: {recommended} recommended, {impossible} impossible")
+
+test("recomputing at the recommended board count fits, or the report says none does",
+     check_recommended_board_count_actually_fits)
+
+
 # ---- the prose about the divisor, against the divisor ---------------------
 # A number going wrong is caught by the pins in parity.test.py. A *sentence*
 # going wrong is not: "Per-device VRAM above assumes weights sharded across all
-# 12 devices" is a statement about the arithmetic, and under a change that
-# divides by tp it quietly becomes false while every numeric assertion in this
-# suite still passes. This is the report README.md calls procurement-ready, and
-# a document that misdescribes its own divisor is a worse failure than one that
-# prints a wrong number, because the wrong number at least looks like a number.
+# 12 devices" was a statement about the arithmetic, and the commit that started
+# dividing by tp turned it false while every numeric assertion in this suite
+# still passed. That is why this exists and why it went red on that commit
+# rather than after it. This is the report README.md calls procurement-ready,
+# and a document that misdescribes its own divisor is a worse failure than one
+# that prints a wrong number, because the wrong number at least looks like one.
 print("\nEvery sentence about the divisor states the divisor that was used")
 
 
 def check_divisor_prose_matches_the_arithmetic():
     import re
-    # Two kinds of claim in one sentence, and conflating them would hide the
-    # thing it exists to disclose: the first says what the per-device figure was
-    # divided by, the second what the emitted command shards by. Today those are
-    # the device count and tp, and they are different numbers on purpose.
+    # Four kinds of claim, and conflating them hides exactly what the sentences
+    # exist to disclose:
+    #   divisor      what the per-device weights figure was divided by — tp for
+    #                a dense model, the device count for an MoE.
+    #   tp           what the emitted command shards by.
+    #   dp           how many copies of the model the cluster holds.
+    #   device_count what the KV cache was divided by, which is every device
+    #                whatever the model does, because DP partitions requests.
     claims = [
-        ("divisor claim", re.compile(r"assumes weights sharded across all (\d+) devices"), "divisor"),
-        ("command claim", re.compile(r"shards (\d+)-way"), "tp"),
+        ("dense divisor claim",
+         re.compile(r"weights and activations above are divided by (\d+), the sharding"), "tp"),
+        ("dense KV claim",
+         re.compile(r"KV cache is divided by all (\d+) devices"), "device_count"),
+        ("dense replica claim",
+         re.compile(r"full copy of the model in each of the (\d+) data-parallel"), "dp"),
+        ("moe divisor claim",
+         re.compile(r"Per-device weights above is divided by all (\d+) devices"), "divisor"),
+        ("moe aside on attention", re.compile(r"shard only (\d+) ways"), "tp"),
+        ("moe aside on the dense rule",
+         re.compile(r"Dense models in this report divide by (\d+)"), "tp"),
+        ("split claim", re.compile(r"TP=(\d+) x DP=(\d+) is a starting point"), ("tp", "dp")),
     ]
     seen = {name: 0 for name, _, _ in claims}
     for card, counts in ((dict(DUAL, devices=1, gb=80, name="S"),
@@ -1177,25 +1309,32 @@ def check_divisor_prose_matches_the_arithmetic():
                          # divisor would hide the difference.
                          (DUAL, (5, 6, 8, 12))):
         for boards in counts:
-            cfg, text = report_strings(card, boards, bpp=0.5)
-            comp = gr.compute(cfg)
-            # Read back out of the result rather than assumed to be the device
-            # count: if the engine stops dividing by the device count this moves,
-            # and the test is comparing the prose against the arithmetic instead
-            # of against the assumption it is meant to be checking.
-            divisor = comp["weights_gb"] / comp["per_w"]
-            blob = "\n".join(text)
-            for name, rx, against in claims:
-                want = comp["tp"] if against == "tp" else divisor
-                for m in rx.finditer(blob):
-                    seen[name] += 1
-                    claimed = int(m.group(1))
-                    assert abs(claimed - want) <= abs(want) * 1e-9, (
-                        f"{boards} boards x {card['devices']} devices "
-                        f"(TP={comp['tp']} x DP={comp['dp']}): the {name} says {claimed}, but the "
-                        + (f"command shards {comp['tp']}-way" if against == "tp"
-                           else f"figure was divided by {divisor}")
-                        + f" — {m.group(0)!r}")
+            # Both regimes. A dense-only sweep leaves every MoE sentence unread,
+            # and the MoE sentences are the ones describing a divisor this
+            # engine deliberately did not correct.
+            for active in (100, 5):
+                cfg, text = report_strings(card, boards, bpp=0.5, active=active)
+                comp = gr.compute(cfg)
+                # Read back out of the result rather than assumed to be the
+                # device count or tp: if the engine changes what it divides by,
+                # this moves with it, and the test keeps comparing the prose
+                # against the arithmetic instead of against an assumption of
+                # its own.
+                divisor = comp["weights_gb"] / comp["per_w"]
+                targets = {"divisor": divisor, "tp": comp["tp"], "dp": comp["dp"],
+                           "device_count": comp["device_count"]}
+                blob = "\n".join(text)
+                for name, rx, against in claims:
+                    names = against if isinstance(against, tuple) else (against,)
+                    for m in rx.finditer(blob):
+                        seen[name] += 1
+                        for claimed, key in zip(m.groups(), names):
+                            want = targets[key]
+                            assert abs(int(claimed) - want) <= abs(want) * 1e-9, (
+                                f"{boards} boards x {card['devices']} devices, "
+                                f"{'MoE' if comp['is_moe'] else 'dense'} "
+                                f"(TP={comp['tp']} x DP={comp['dp']}): the {name} says "
+                                f"{claimed}, but {key} is {want} — {m.group(0)!r}")
     # A regex that matches nothing asserts nothing, and rewording the note is
     # exactly how this test would stop looking with no one the wiser.
     silent = [n for n, k in seen.items() if not k]
