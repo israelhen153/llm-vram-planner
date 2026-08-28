@@ -219,6 +219,25 @@ def compute(cfg):
     device_gb = gpu["gb"] / devices_per_board
     device_bw = gpu["bw"] / devices_per_board
     device_tflops = gpu["tflops"] / devices_per_board
+    # The parallelism split, derived once here and returned below, so the GPU
+    # configuration row and the emitted command read the same pair instead of
+    # each re-deriving it from cfg. Nothing below divides by tp yet — the
+    # per-device figures still shard across every device — so this moves no
+    # number; it only puts the split where the engine can see it.
+    #
+    # Derived, never read from cfg. from_json() copies through every key it
+    # does not recognise (that is the default-allow property report.test.py
+    # pins), and neither REQUEST_KEYS nor ARCH_TYPES mentions tp or dp — so a
+    # cfg.get("tp") here would make two previously inert JSON keys live and
+    # unvalidated: {"n_gpu": 1, "dp": 3} emitted --data-parallel-size 3 beside
+    # a "Single device" parallelism row, and {"tp": "4"} crashed on `tp * dp`.
+    # A user-settable split is a later commit that has to validate the input
+    # and wire the VRAM math to it.
+    #
+    # Mirrors computeInference() in index.html, down to going through
+    # device_count_for() rather than the device_count above, so the
+    # devices-not-boards rule stays in one place.
+    tp, dp = split_parallelism(device_count_for(cfg))
     nvlink = cfg.get("nvlink", True)
     kv_bpp = cfg.get("kv_bpp", 2)
     is_moe = active_pct < 100
@@ -403,6 +422,10 @@ def compute(cfg):
         # it wrong: per-device figures must be read against per-device
         # capacity, not against the board they share.
         "device_count": device_count, "device_gb": device_gb, "device_bw": device_bw,
+        # The split this result was computed against. Returned rather than left
+        # to each caller to re-derive, so a figure in the PDF and the command
+        # printed later in the same PDF cannot disagree about the sharding.
+        "tp": tp, "dp": dp,
         "fits": fits, "comfortable": comfortable,
     }
 
@@ -454,7 +477,10 @@ def build_vllm_cmd(cfg, comp):
     # shlex.quote() is a no-op on an ordinary value and neutralizes anything
     # that isn't one, instead of executing it.
     hf = shlex.quote(cfg.get("hf_model", "/opt/models/YourModel"))
-    tp, dp = split_parallelism(device_count_for(cfg))
+    # The split compute() sharded against, not a second derivation of it: the
+    # figures above this command and the command itself are now the same number
+    # by construction rather than by two call sites agreeing.
+    tp, dp = comp["tp"], comp["dp"]
     parts = [f"vllm serve {hf} \\"]
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     # More than one device, which is what the board count used to mean on every
@@ -719,7 +745,7 @@ class ReportCard:
         # "TP=12" while build_vllm_cmd(), printed a few sections later in the
         # same PDF, emitted --tensor-parallel-size 4 --data-parallel-size 3 —
         # one document contradicting itself.
-        tp, dp = split_parallelism(device_count_for(cfg))
+        tp, dp = c["tp"], c["dp"]
         parallelism_label = "Single device"
         if device_count_for(cfg) > 1:
             parallelism_label = f"Tensor parallel (TP={tp})" + (f" + data parallel (DP={dp})" if dp > 1 else "")

@@ -974,6 +974,26 @@ function computeInference(state) {
   const deviceBandwidth = gpuBandwidth / devicesPerBoard;
   const deviceTFLOPS = gpuTFLOPS / devicesPerBoard;
 
+  /* The parallelism split, derived once here and returned below, so the badges,
+     the export and the emitted command all read the same pair instead of each
+     re-deriving it from state. Nothing above or below divides by tp yet — the
+     per-device figures still shard across every device — so this moves no
+     number; it only puts the split where the engine can see it.
+
+     Derived, never taken from state: a caller-supplied tp would be a second
+     source of truth for the one value this whole change exists to make single,
+     and an unvalidated one — the same key reaching generate_report.py through
+     a JSON config emitted --data-parallel-size 3 on a single-GPU box and
+     crashed on a string. A user-settable split is a later commit that has to
+     validate the input and wire the VRAM math to it; until then the only way
+     to change the split is to change the device count.
+
+     parallelismFor(state) rather than splitParallelism(deviceCount) because
+     the devices-not-boards rule belongs in one place; the two are the same
+     value, since devicesPerBoard is (state.gpuDevices || 1) whichever branch
+     of the default fires. */
+  const { tp, dp } = parallelismFor(state);
+
   const isMoE = activePercent < 100;
   const weightsGB = (params * 1e9 * bytesPerParam) / GIB;
 
@@ -1184,6 +1204,10 @@ function computeInference(state) {
   return {
     isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
     perGPU, totalVRAM: deviceGB * deviceCount, deviceCount, deviceGB, deviceBandwidth,
+    // The split this result was computed against. Returned rather than left to
+    // each caller to re-derive, so a figure on the page and the command printed
+    // under it cannot disagree about how the model is sharded.
+    tp, dp,
     freeForKVCache, kvPerTokenGB, kvBytesPerToken,
     maxContextSingleUser, maxConcurrentAt8K, maxConcurrentAt4K,
     singleStreamTokS, aggregateTokS, perUserAtLoadTokS, effectiveBatch,
@@ -1240,9 +1264,10 @@ function renderSliderLabels(state) {
 // for 100 GPUs and TP=6 for 12, neither a valid head-count split. This is
 // the regime that actually diverged between the two engines.
 //
-// Single source of truth for every call site below and for
-// buildVllmCommand(), so the displayed split and the emitted command can
-// never disagree.
+// Single source of truth: computeInference() calls it once, through
+// parallelismFor(), and returns the pair on its result, so every renderer and
+// buildVllmCommand() read the same split and the displayed one can never
+// disagree with the emitted one.
 function splitParallelism(gpuCount) {
   // n_gpu is declared (int, float) on the Python side (ARCH_TYPES), so a
   // fractional GPU count can arrive from JSON; truncate before it can leak
@@ -1256,8 +1281,9 @@ function splitParallelism(gpuCount) {
 }
 
 /* A parallelism split is sized in devices, not boards: a single dual-GCD module
-   still needs --tensor-parallel-size 2. Five call sites read this, so it is
-   derived once rather than multiplied at each of them. */
+   still needs --tensor-parallel-size 2. computeInference() is the only caller:
+   it derives the split once and returns it, and the five places that used to
+   call this for themselves now read it off that result. */
 function parallelismFor(state) {
   return splitParallelism(state.gpuCount * (state.gpuDevices || 1));
 }
@@ -1271,7 +1297,7 @@ function renderStrategyBadges(state, computed) {
   // computed.isMoE *can* diverge on a loaded link. Reading the same source
   // buildVllmCommand() already reads keeps this badge and the emitted
   // --enable-expert-parallel flag from disagreeing about the same config.
-  const { tp, dp } = parallelismFor(state);
+  const { tp, dp } = computed;
   let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px">';
   html += `<span class="badge" style="background:var(--accent-bg);color:var(--accent-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-cpu"></use></svg> ${computed.deviceCount > 1 ? 'TP=' + tp + (dp > 1 ? ' × DP=' + dp : '') : 'Single device'}</span>`;
   if (computed.deviceCount > 1 && !state.hasNVLink) html += '<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> PCIe — 45-60% perf loss, worse with more devices</span>';
@@ -1283,10 +1309,10 @@ function renderStrategyBadges(state, computed) {
 
 function renderGPUCards(state, computed) {
   const { perGPU } = computed;
-  // Computed once at function scope, not just inside the condensed-view
-  // branch below, because the NVLink/PCIe sharding line at the bottom of
-  // this function applies to every gpuCount > 1, individual cards included.
-  const { tp, dp } = parallelismFor(state);
+  // Read at function scope, not just inside the condensed-view branch
+  // below, because the NVLink/PCIe sharding line at the bottom of this
+  // function applies to every gpuCount > 1, individual cards included.
+  const { tp, dp } = computed;
   const maxBarValue = Math.max(perGPU.total, computed.deviceGB) * 1.05;
   const weightsPct = Math.max(perGPU.weights / maxBarValue * 100, 0.5);
   const kvPct = Math.max(perGPU.kvCache / maxBarValue * 100, 0.5);
@@ -1489,7 +1515,10 @@ function renderCost(state, computed) {
 // result to the page; this function owns only the command text itself.
 function buildVllmCommand(state, computed, modelPath) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
-  const { tp, dp } = parallelismFor(state);
+  // The split computeInference() sharded against, not a second derivation of
+  // it: the figures above this command and the command itself are now the same
+  // number by construction rather than by two call sites agreeing.
+  const { tp, dp } = computed;
   let cmd = `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
   /* Emitted whenever more than one device is in play, which is what the board
      count used to mean and still means on every single-device card — so the
@@ -1528,7 +1557,7 @@ function renderCommand(state, computed) {
 
   let warning = '';
   if (computed.fits) {
-    const { tp, dp } = parallelismFor(state);
+    const { tp, dp } = computed;
     if (dp > 1) {
       warning += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${computed.deviceCount} devices: TP=${tp} × DP=${dp} is a starting point. Optimal split depends on interconnect topology and whether you're optimizing for latency or throughput. Test on real hardware.</div>`;
     }
@@ -1797,7 +1826,7 @@ function removeSnapshot(index) { savedSnapshots.splice(index, 1); renderComparis
 function exportSummary(state = readInputState(), computed = computeInference(state)) {
   const preset = MODEL_PRESETS[state.presetKey];
   const name = preset ? document.getElementById('preset').options[document.getElementById('preset').selectedIndex].text : (importedModelId || state.params + 'B model');
-  const { tp, dp } = parallelismFor(state);
+  const { tp, dp } = computed;
 
   let report = `# LLM VRAM Plan — ${name}\n\n`;
   report += `## Model\n- Parameters: ${state.params}B${state.activePercent < 100 ? ' (MoE, ' + state.activePercent + '% active)' : ' (dense)'}\n`;

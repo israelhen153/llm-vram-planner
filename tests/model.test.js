@@ -28,8 +28,18 @@ assert.ok(gibDecl, 'GIB constant not found in index.html');
 const perfDecl = html.match(/^const PERF = \{[\s\S]*?\n\};$/m);
 assert.ok(perfDecl, 'PERF constant not found in index.html');
 
+/* computeInference() derives the TP/DP split it returns through
+   parallelismFor()/splitParallelism(), so those come into scope with it the
+   same way GIB and PERF do — without them the function is a ReferenceError.
+   The two are adjacent in the source, so one slice carries both. */
+const splitStart = html.indexOf('function splitParallelism(');
+assert.notStrictEqual(splitStart, -1, 'splitParallelism() not found in index.html');
+const splitEnd = html.indexOf('function renderStrategyBadges');
+assert.notStrictEqual(splitEnd, -1, 'could not find the end of parallelismFor()');
+const splitDecl = html.slice(splitStart, splitEnd);
+
 const computeInference = new Function(
-  `${gibDecl[0]}\n${perfDecl[0]}\n${html.slice(start, end + 2)}; return computeInference;`
+  `${gibDecl[0]}\n${perfDecl[0]}\n${splitDecl}\n${html.slice(start, end + 2)}; return computeInference;`
 )();
 assert.strictEqual(new Function(`${gibDecl[0]}; return GIB;`)(), 1024 ** 3, 'GIB must be 2^30');
 const PERF = new Function(`${perfDecl[0]}; return PERF;`)();
@@ -101,6 +111,84 @@ test('int4 quantisation quarters the weights vs bf16', () => {
   const bf16 = computeInference(state()).weightsGB;
   const int4 = computeInference(state({ bytesPerParam: 0.5 })).weightsGB;
   between(bf16 / int4, 3.99, 4.01, 'bf16:int4 ratio');
+});
+test('above 8 devices, each device still holds the whole model over the device count', () => {
+  /* A literal, worked out by hand, not an expression over the same constants
+     the engine uses — an expression follows whatever the divisor becomes and
+     therefore pins nothing. This is the one number the next change moves:
+
+       70B at bf16      = 70e9 * 2         = 1.4e11 bytes of weights
+       in GiB           = 1.4e11 / 2**30   = 130.385160446167
+       12 devices split TP=4 x DP=3, and every device holds 1/12 of the model:
+                          130.385160446167 / 12 = 10.865430037181 GiB
+
+     Weights are actually sharded TP ways, so the honest figure is
+     130.385160446167 / 4 = 32.596290111542 GiB — three times this one. That
+     correction is a separate commit, and it has to rewrite this literal and
+     say why; a test that recomputed the figure from `weightsGB / deviceCount`
+     would follow the bug in either direction and report nothing.
+
+     Twelve devices, because at eight or fewer TP equals the device count and
+     the two divisors are the same number: a pin down there proves nothing.
+     Twelve is also ordinary and reachable — the slider goes to 128. */
+  const c = computeInference(state({ params: 70, layers: 80, gpuCount: 12 }));
+  assert.strictEqual(c.tp, 4, `TP at 12 devices: ${c.tp}`);
+  assert.strictEqual(c.dp, 3, `DP at 12 devices: ${c.dp}`);
+  assert.strictEqual(c.deviceCount, 12, `deviceCount: ${c.deviceCount}`);
+  assert.ok(Math.abs(c.perGPU.weights - 10.8654) < 1e-4,
+    `per-device weights on 12 devices: expected 10.8654 GiB, got ${c.perGPU.weights}`);
+});
+test('every device holds the whole model over the device count, at every count', () => {
+  /* The literal above pins one number; this pins the shape. A change that
+     divided by tp at every count except the two the literals happen to use
+     would satisfy them both and ship TP-sharding everywhere else — an actual
+     falsification, not a hypothetical, so the invariant gets stated directly:
+
+         perGPU.weights * deviceCount === weightsGB
+
+     which is "every device holds an equal share of one copy of the model".
+     That is what the tool claims today, in prose as well as arithmetic. When
+     weights become sharded TP ways the right-hand side is tp, not deviceCount,
+     and this test has to be rewritten to say so — deliberately, for every
+     count at once, rather than at whichever counts a fixture happened to use.
+
+     The spread matters more than its length: tp is 2, 4 or 8 across these
+     counts, and dp runs from 2 to 25, so no single divisor coincidence covers
+     them. 1-8 are the control, where tp === deviceCount and the invariant
+     survives the change unchanged; that is exactly why a pin down there proves
+     nothing on its own. */
+  let dpAbove1 = 0;
+  for (const count of [1, 2, 4, 5, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128])
+    for (const params of [8, 70]) {
+      const c = computeInference(state({ params, layers: 80, gpuCount: count }));
+      assert.strictEqual(c.deviceCount, count, `deviceCount at ${count}`);
+      assert.ok(Math.abs(c.perGPU.weights * c.deviceCount - c.weightsGB) <= c.weightsGB * 1e-12,
+        `${params}B on ${count} devices (TP=${c.tp} x DP=${c.dp}): ` +
+        `${c.perGPU.weights} per device x ${c.deviceCount} = ${c.perGPU.weights * c.deviceCount}, ` +
+        `but the model is ${c.weightsGB} GiB — the per-device figure is not one copy split evenly`);
+      if (c.dp > 1) dpAbove1++;
+    }
+  // The counts where TP and the device count are different numbers are the
+  // only ones this can speak about; without them it is a tautology.
+  assert.ok(dpAbove1 >= 16, `only ${dpAbove1} of the swept configs have dp > 1`);
+});
+test('a state carrying tp or dp keys computes exactly what one without them does', () => {
+  /* computeInference() derives the split and reads nothing from state.tp. That
+     is deliberate and load-bearing: the same two keys reaching the Python
+     engine through a JSON config once emitted --data-parallel-size 3 beside a
+     "Single device" label, and crashed outright on a string. Today the only
+     thing defending it in this engine is a comment, and the next person to
+     reason from first principles about where an override control would plug in
+     will re-add exactly that. So it is pinned: these keys are inert, including
+     the shapes that used to be actively harmful. */
+  const base = state({ params: 70, layers: 80, gpuCount: 12 });
+  const clean = computeInference(base);
+  for (const poison of [{ tp: 1 }, { dp: 1 }, { tp: 16, dp: 4 }, { tp: '4' },
+                        { tp: 2.0 }, { tp: 0 }, { dp: -1 }, { tp: null }]) {
+    const got = computeInference({ ...base, ...poison });
+    assert.deepStrictEqual(got, clean,
+      `${JSON.stringify(poison)} in state changed the result — tp/dp must be derived, not accepted`);
+  }
 });
 test('KV cache matches 2 * layers * kvHeads * headDim * bytes', () => {
   const c = computeInference(state());
@@ -1103,6 +1191,94 @@ test('a single-device card emits exactly the flags it always did', () => {
       `${count} single-device GPUs: --tensor-parallel-size ${hasTP ? 'present' : 'absent'}, ` +
       'which is not what a board count above one has always meant');
   }
+});
+test('the badge says single device exactly when the command asks for no parallelism', () => {
+  /* Two gates, written differently, that have to agree for every input: the
+     badge branches on `computed.deviceCount > 1` and the command on
+     `tp * dp > 1`. They are equal for every valid configuration — but that is
+     a property, and until it is checked it is a claim. A report that says
+     "Single device" above a --data-parallel-size flag is the exact shape of
+     defect this pair has produced before.
+
+     Scoped to configurations that fit, because a command that does not fit is
+     not a command: both engines short-circuit to a "does not fit" comment
+     before any flag is reached, so the property genuinely does not hold there
+     and pretending otherwise would just pin the short-circuit. */
+  const h = renderHarness();
+  let single = 0, multi = 0, skipped = 0;
+  for (const card of [GPU_TABLE['h100-80'], dualGCD])
+    for (const count of [1, 2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 64, 100, 128])
+      for (const bpp of [2, 0.5]) {
+        const state = asState(card, count, { params: 70, layers: 80, bytesPerParam: bpp });
+        const computed = h.computeInference(state);
+        if (!computed.fits) { skipped++; continue; }
+        h.renderStrategyBadges(state, computed);
+        const badge = h.out['strategy-badges'] || '';
+        const cmd = h.buildVllmCommand(state, computed, 'm');
+        const saysSingle = badge.includes('Single device');
+        const asksForNone = !/--tensor-parallel-size|--data-parallel-size/.test(cmd);
+        assert.strictEqual(saysSingle, asksForNone,
+          `${count}x ${card.name} (${computed.deviceCount} devices, TP=${computed.tp} x DP=${computed.dp}) ` +
+          `at ${bpp} B/param: badge ${saysSingle ? 'says' : 'does not say'} "Single device" while the ` +
+          `command ${asksForNone ? 'asks for no parallelism' : 'asks for it'}:\n${cmd}`);
+        saysSingle ? single++ : multi++;
+      }
+  // Or an iff that never saw both sides of itself would pass on one branch.
+  assert.ok(single > 0 && multi > 0,
+    `not discriminating: ${single} single-device and ${multi} multi-device fitting configs (${skipped} skipped)`);
+});
+test('every sentence about the divisor states the divisor that was used', () => {
+  /* A number going wrong is caught by the pins above. A *sentence* going wrong
+     is not, and this tool's whole claim on a reader is that it shows its work:
+     "Per-device VRAM above assumes weights sharded across all 12 devices" is a
+     statement about the arithmetic, and under a change that divides by tp it
+     silently becomes false while every numeric assertion in this file still
+     passes. So the prose is held to the arithmetic directly — each claimed
+     divisor must equal weightsGB / perGPU.weights, the divisor actually used.
+
+     Two kinds of claim, and they must not be conflated: the surfaces below say
+     what the *figure* was divided by, and the caveat also says what the
+     *command* shards by. The first must equal the real divisor, the second must
+     equal tp. Today those are deviceCount and tp respectively; that is exactly
+     the inconsistency the caveat exists to disclose, and it has to keep saying
+     so honestly in both halves. */
+  const h = renderHarness();
+  const CLAIMS = [
+    // what the per-device weights figure was divided by
+    ['weights-sharded tile', /Weights sharded<\/span><br><b>(\d+)-way<\/b>/g, 'divisor'],
+    ['weights-per-device tile', /Weights per device<\/span>[\s\S]{0,160}?assumes sharding across all (\d+)</g, 'divisor'],
+    ['dp caveat', /assumes? weights sharded across all (\d+) devices/g, 'divisor'],
+    ['interconnect line', /sharded (\d+)-way, each device holds 1\/(\d+) of model/g, 'divisor'],
+    // what the emitted command shards by
+    ['command claim', /shards (?:only )?(\d+)-way/g, 'tp'],
+  ];
+  const seen = new Map(CLAIMS.map(([name]) => [name, 0]));
+  for (const card of [GPU_TABLE['h100-80'], dualGCD])
+    for (const count of [3, 5, 6, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128]) {
+      const st = asState(card, count, { params: 70, layers: 80 });
+      const c = h.computeInference(st);
+      h.renderGPUCards(st, c);
+      const text = (h.out['gpu-cards'] || '') + '\n' + h.exportSummary(st, c);
+      // Derived from the output, not from deviceCount: if the engine stopped
+      // dividing by the device count this has to move, or the test is only
+      // comparing the prose against the assumption it is meant to check.
+      const divisor = c.weightsGB / c.perGPU.weights;
+      for (const [name, re, against] of CLAIMS) {
+        const want = against === 'tp' ? c.tp : divisor;
+        for (const m of text.matchAll(re)) {
+          seen.set(name, seen.get(name) + 1);
+          for (const claimed of m.slice(1).map(Number))
+            assert.ok(Math.abs(claimed - want) <= Math.abs(want) * 1e-9,
+              `${count}x ${card.name} (${c.deviceCount} devices, TP=${c.tp} x DP=${c.dp}): the ` +
+              `${name} says ${claimed}, but the ${against === 'tp' ? 'command shards ' + c.tp : 'figure was divided by ' + divisor}-way — ` +
+              `"${m[0].slice(0, 120)}"`);
+        }
+      }
+    }
+  // A regex that matches nothing asserts nothing, and rewording a sentence is
+  // exactly how this test would stop looking without anyone noticing.
+  const silent = [...seen].filter(([, n]) => n === 0).map(([name]) => name);
+  assert.ok(!silent.length, `these claims were never found in any rendered output: ${silent.join(', ')}`);
 });
 test('a single dual-GCD board emits the flags its devices require', () => {
   // Reverting the TP and expert-parallel gates in *both* engines at once is
