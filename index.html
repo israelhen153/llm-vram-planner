@@ -341,7 +341,7 @@ body.exec-mode .exec-summary { display: block; }
              that. Full field docs live in data/gpus.json's _meta.schema. -->
       </select>
     </div>
-    <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism." data-tip="How many GPUs. Weights and KV cache are sharded across them via tensor or pipeline parallelism."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
+    <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights shard across the tensor-parallel group, and above 8 devices the split adds data-parallel replicas — a dense model is copied into each, while a mixture-of-experts model spreads its routed experts across every device instead. KV cache always spreads across every device. Pipeline parallelism is never used." data-tip="How many GPUs. Weights shard across the tensor-parallel group, and above 8 devices the split adds data-parallel replicas — a dense model is copied into each, while a mixture-of-experts model spreads its routed experts across every device instead. KV cache always spreads across every device. Pipeline parallelism is never used."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
     <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="interconnect" onchange="recalculate()"><option value="1">NVLink / NVSwitch</option><option value="0">PCIe only</option></select>
     </div>
@@ -407,7 +407,7 @@ body.exec-mode .exec-summary { display: block; }
      Results sections (populated by JS)
      ========================================================================== -->
 <div class="section">
-  <div class="section-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-chart-bar"></use></svg> VRAM breakdown <span class="info-tip" tabindex="0" role="img" aria-label="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per device." data-tip="How the model uses GPU memory, split into weights, KV cache, activations, and overhead, per device."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
+  <div class="section-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-chart-bar"></use></svg> VRAM breakdown <span class="info-tip" tabindex="0" role="img" aria-label="How the model uses GPU memory, split into weights, KV cache, activations and overhead. The bar and the "Per-device" figure are per device; the rest are cluster totals." data-tip="How the model uses GPU memory, split into weights, KV cache, activations and overhead. The bar and the "Per-device" figure are per device; the rest are cluster totals."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></div>
   <div id="strategy-badges" class="engineer-only"></div>
   <div class="legend engineer-only">
     <span><i style="background:#7F77DD"></i>Weights</span>
@@ -1059,16 +1059,67 @@ function computeInference(state) {
   const overheadPerGPU = 1.5;
   const ncclOverhead = deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) * (deviceCount - 1) : 0;
   const totalOverhead = overheadPerGPU * deviceCount + ncclOverhead;
-  const totalGB = weightsGB + kvCacheGB + activationsGB + totalOverhead;
 
-  // Per-device breakdown (tensor parallel sharding)
+  /* The divisor for the quantities a data-parallel replica holds a whole copy
+     of. Dense models shard those tp ways, not tp * dp ways: the command below
+     replicates the model in every DP group and shards it only inside one.
+
+     MoE is held at the device count on purpose, not by omission. Both engines
+     emit --enable-expert-parallel, and under it vLLM splits two weight classes
+     on two different axes — attention, embeddings and the dense/shared FFN
+     shard tp ways, while the routed experts spread across all tp * dp ranks.
+     No single divisor describes that, so any single divisor is wrong; a flat
+     /tp puts DeepSeek-V3 671B at fp8 on 128 devices near 78 GiB/device against
+     a modelled ~8.5, about 9x too much hardware, where leaving it here is
+     roughly 1.75x too little. Over-buying is not the safe kind of wrong, and
+     seven of the sixteen presets are MoE. Modelling the two classes separately
+     is its own change.
+
+     Gated on isMoE — the same activePercent < 100 that buildVllmCommand()
+     reads before emitting --enable-expert-parallel — so the sharding rule and
+     the flag cannot disagree about one configuration.
+
+     At or below 8 devices tp === deviceCount, so neither branch moves a
+     number there: that whole regime is bit-identical to before. */
+  const shardDivisor = isMoE ? deviceCount : tp;
+
+  /* Per-device breakdown.
+
+     Weights and activations divide by shardDivisor. KV cache does not, and
+     that is the one that looks like it should move: DP replicates the model
+     but partitions the *request stream*, so the cluster-wide cache is the same
+     size it was and still spreads over every device. The throughput math below
+     reads it the same way, pooling every device's bandwidth against the
+     aggregate batch. Overhead is already per-device. */
   const perGPU = {
-    weights: weightsGB / deviceCount,
+    weights: weightsGB / shardDivisor,
     kvCache: kvCacheGB / deviceCount,
-    activations: activationsGB / deviceCount,
+    activations: activationsGB / shardDivisor,
     overhead: overheadPerGPU + (deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) : 0),
   };
   perGPU.total = perGPU.weights + perGPU.kvCache + perGPU.activations + perGPU.overhead;
+
+  /* Cluster-wide footprint, and it has to be the same statement as the
+     per-device breakdown above rather than a second opinion about it.
+
+     Every device holds one share of the weights, and there are deviceCount
+     devices, so the cluster holds deviceCount / shardDivisor whole copies —
+     dp for a dense model above one domain, and exactly 1 everywhere else,
+     which is every configuration at or below 8 devices and every MoE. Written
+     as deviceCount / shardDivisor rather than as dp on purpose: whatever
+     divisor a device holds one share of, the cluster holds deviceCount of
+     those shares, so the two views cannot drift even if the divisor changes
+     again. Activations replicate with the model and take the same factor.
+
+     KV cache is counted once, because there is one cluster-wide cache however
+     the model is laid out. totalOverhead is already cluster-scoped.
+
+     This used to sum one copy regardless of the split, which was consistent
+     with the old per-device figure and wrong with the new one: at 70B bf16 on
+     128 devices it read 401.79 GiB beside a per-device figure implying
+     2377.42, and boardsNeeded() divides it to recommend hardware. */
+  const modelCopies = deviceCount / shardDivisor;
+  const totalGB = weightsGB * modelCopies + kvCacheGB + activationsGB * modelCopies + totalOverhead;
 
   // Reverse calculations — capacity limits
   const fixedPerGPU = perGPU.weights + perGPU.activations + perGPU.overhead;
@@ -1131,7 +1182,20 @@ function computeInference(state) {
   /* NVLink/NVSwitch has full bisection bandwidth, so TP cost is roughly flat within
    * a domain. PCIe is not: decode all-reduces are small, so per-hop latency dominates
    * and the cost grows with the ring. -0.05 per doubling is a heuristic, same class
-   * as MBU/MFU — flagged in MODEL.md, floor at 0.40. */
+   * as MBU/MFU — flagged in MODEL.md, floor at 0.40.
+   *
+   * Keyed on the device count, not on tp, and that is deliberate rather than
+   * overlooked. Splitting it into a tp-sized intra factor and a dp-sized inter
+   * one is the arithmetically faithful reading of the emitted command, and it
+   * was tried here and reverted: at TP=1 x DP=9 it correctly charges nothing
+   * for a tensor-parallel all-reduce that does not exist, which doubled
+   * single-stream throughput on a 9-device PCIe box — from a figure that was
+   * already about 4x optimistic, because the decode model pools every device's
+   * bandwidth for one user's request while nine independent replicas would run
+   * that request on one of them. The penalty was masking that, so removing it
+   * exposed the mask and not the bug. Replica-scoping the single-stream and
+   * TTFT figures is its own change; until it lands, this curve stays where it
+   * is and no throughput number in this commit moves. */
   const interconnectPenalty = deviceCount <= 1 ? 1.0
     : hasNVLink ? 0.85
     : Math.max(0.55 - 0.05 * Math.log2(deviceCount / 2), 0.40);
@@ -1204,6 +1268,12 @@ function computeInference(state) {
   return {
     isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
     perGPU, totalVRAM: deviceGB * deviceCount, deviceCount, deviceGB, deviceBandwidth,
+    // The divisor the replicated figures above were computed with, returned so
+    // every caption that names one reads the number that was used instead of
+    // re-deriving isMoE ? deviceCount : tp and drifting from it. modelCopies is
+    // the same fact at cluster scope, so the breakdown row can sum to the total
+    // without a renderer doing this division for itself.
+    shardDivisor, modelCopies,
     // The split this result was computed against. Returned rather than left to
     // each caller to re-derive, so a figure on the page and the command printed
     // under it cannot disagree about how the model is sharded.
@@ -1361,66 +1431,161 @@ function renderGPUCards(state, computed) {
     html += buildBar(10);
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin:8px 0">';
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Cluster VRAM</span><br><b>${formatGB(computed.totalVRAM)}</b></div>`;
-    /* dp > 1 (only above 8 devices — see splitParallelism) means the command
-       shards tp-way while this tile's own number is still weights / deviceCount,
-       which compute() has not been changed to reflect: that is planned, not done.
-       At dp === 1, tp === deviceCount and the "N-way" caption is exactly true.
+    /* The caption states the divisor the figure beside it was actually computed
+       with — computed.shardDivisor — instead of one number over another, which
+       is what the old "assumes sharding across all N" caveat existed to
+       apologise for. At dp === 1 that divisor is the device count and this is
+       master's caption unchanged.
+
+       An MoE above one domain gets the figure without the "N-way", because
+       under --enable-expert-parallel it does not shard one way: the routed
+       experts spread over every rank while attention and the dense layers stay
+       inside the TP group. "Sharded 128-way" would be a true divisor and a
+       false description of the sharding in the same breath, which is the shape
+       this whole change exists to remove. The note below says which is which.
+
        Everything here counts devices, never boards — a dual-GCD module is two
        of them, and the figures beside these captions are already divided that
        way. */
-    html += dp > 1
-      ? `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per device</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ${computed.deviceCount}</span></div>`
-      : `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.deviceCount}-way</b> (${formatGB(perGPU.weights)}/device)</div>`;
-    // layersPerGPU = ceil(layers / deviceCount) has the same all-device assumption
-    // baked in; same gating, so 1-8 is unchanged and only >8 gets the caveat.
+    if (dp > 1 && computed.isMoE) {
+      html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights per device</span><br><b>${formatGB(perGPU.weights)}</b><br><span style="font-size:10px;color:var(--warning-text)">divided by all ${computed.deviceCount} devices</span></div>`;
+    } else {
+      const replicaNote = dp > 1
+        ? `<br><span style="font-size:10px;color:var(--text-muted)">inside each of ${dp} replicas</span>` : '';
+      html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.shardDivisor}-way</b> (${formatGB(perGPU.weights)}/device)${replicaNote}</div>`;
+    }
+    /* layersPerGPU = ceil(layers / deviceCount) is now the only figure in this
+       panel still divided by the device count, and it is wrong for a reason
+       the weights divisor never had: dividing layers across devices is
+       *pipeline* parallelism, and neither engine ever emits --pipeline-
+       parallel-size. Under TP x DP every device holds a slice of every layer.
+       Left as it is here on purpose — correcting it is a separate change with
+       its own caption to rewrite — so the caveat stays and keeps naming the
+       divisor this tile really used. */
     html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per device</span><br><b>~${layersPerGPU}</b> of ${state.layers}${dp > 1 ? '<br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ' + computed.deviceCount + '</span>' : ''}</div>`;
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Parallelism</span><br><b>TP=${tp}${dp > 1 ? ' × DP=' + dp : ''}</b></div>`;
+    /* The per-field heuristic label. The slider runs to 128 rather than
+       stopping at one NVLink domain, and this is the honesty that decision
+       leans on: above 8 devices the split is chosen by a rule of thumb, and
+       the interconnect factor priced against it has no measurement behind it.
+       Said next to the number it qualifies, not only in MODEL.md. */
+    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Parallelism</span><br><b>TP=${tp}${dp > 1 ? ' × DP=' + dp : ''}</b>${dp > 1 ? '<br><span style="font-size:10px;color:var(--warning-text);font-weight:500">Unmeasured above 2 devices — heuristic split</span>' : ''}</div>`;
     if (dp > 1) html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Est. nodes</span><br><b>~${Math.ceil(computed.deviceCount / 8)}</b> (8 devices/node)</div>`;
     html += '</div>';
     // dp > 1 only above 8 GPUs now (splitParallelism leaves 1-8 as tp=gpuCount,
     // dp=1, matching master), so this is the >8 regime exactly and the
     // node/topology sentence always applies here.
     if (dp > 1) {
-      // Known inconsistency (fix is a later commit): the VRAM figures above
-      // assume weights sharded across every GPU, but the command below
-      // shards only tp-way and replicates a full copy per DP group, so the
-      // fit check is optimistic here.
-      const note = `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point. Optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology. Per-device VRAM above assumes weights sharded across all ${computed.deviceCount} devices; the emitted command instead shards only ${tp}-way and replicates a full copy of the model across each of the ${dp} data-parallel groups, so the fit check above is optimistic here.`;
+      /* What is left after the correction: a topology caveat, which is real,
+         and — for an MoE only — the divisor this engine deliberately did not
+         move. The apology that used to live here ("the fit check above is
+         optimistic") is gone because the figures above are now computed the
+         way the command below shards. */
+      const note = computed.isMoE
+        ? `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Per-device weights here is divided by all ${computed.deviceCount} devices: under --enable-expert-parallel the routed experts do spread that way, but attention, embeddings and the dense layers shard only ${tp} ways, so for an MoE this figure is optimistic by an amount that depends on the expert fraction. Dense models on this page divide by ${tp}.`
+        : `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by ${tp}, the sharding the command performs; KV cache is divided by all ${computed.deviceCount}, because data parallelism partitions the request stream rather than replicating the cache.`;
       html += `<div style="font-size:11px;color:var(--warning-text);background:var(--warning-bg);border-radius:var(--radius);padding:6px 10px;margin:6px 0"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>${note}</div>`;
     }
     html += '</div>';
   }
 
-  // This line's job is the interconnect cost, not a sharding claim. Above 8
-  // GPUs (dp > 1) it used to assert "sharded gpuCount-way", which the actual
-  // command contradicts (tp-way, not gpuCount-way) — and the Parallelism
-  // tile above is already the one place that states the real split, so this
-  // line just drops the factor there instead of picking a number to repeat.
-  // Below 9 GPUs (dp === 1) nothing here was wrong, so it is unchanged.
+  // This line's job is the interconnect cost. Above 8 GPUs (dp > 1) the
+  // collective it describes is not cluster-wide: the layer-by-layer all-reduce
+  // runs inside a TP group, and the replicas only meet across the fabric. That
+  // is also where the throughput penalty now comes from, in two factors, so
+  // this sentence names both groups rather than saying "across devices".
+  // Below 9 GPUs (dp === 1) there is one group and nothing here changes.
   if (computed.deviceCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
-    ? (state.hasNVLink ? 'NVLink — all-reduce across devices' : 'PCIe — 5-12x slower all-reduce')
+    ? (state.hasNVLink ? 'NVLink — all-reduce inside each ' + tp + '-device TP group, ' + dp + ' replicas across the fabric' : 'PCIe — 5-12x slower all-reduce')
     : (state.hasNVLink ? 'NVLink — sharded ' + computed.deviceCount + '-way, each device holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
   setHTML('gpu-cards', html);
 }
 
+/* Every figure in this row is cluster-scoped, and the first three sum to the
+   fourth. They have to: the row reads as a breakdown, a reader adds it up, and
+   until the weights divisor was corrected it did add up — Weights + KV +
+   Act+OH was exactly Total, because nothing replicated. Once a data-parallel
+   cluster holds several copies, a "Weights" tile showing one copy beside a
+   Total counting sixteen is a contradiction on one screen, which is the class
+   of defect this whole branch exists to close.
+
+   So Weights and the activations half of Act+OH are multiplied by the same
+   modelCopies the total uses, and the label says how many copies that is, so
+   the number is explained rather than merely consistent. At one copy — every
+   configuration at or below 8 devices, and every MoE — the label and all four
+   figures are exactly what they were. */
 function renderMetrics(computed) {
-  setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">Weights</p><p class="metric-value">${formatGB(computed.weightsGB)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(computed.activationsGB + computed.totalOverhead)}</p></div><div class="metric-card"><p class="metric-label">Total</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GiB</p></div><div class="metric-card"><p class="metric-label">Per-device</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
+  const copies = computed.modelCopies;
+  const weightsLabel = copies > 1 ? `Weights (${copies} copies)` : 'Weights';
+  const clusterWeights = computed.weightsGB * copies;
+  const clusterActOverhead = computed.activationsGB * copies + computed.totalOverhead;
+  setHTML('metrics-output', `<div class="metrics-grid"><div class="metric-card"><p class="metric-label">${weightsLabel}</p><p class="metric-value">${formatGB(clusterWeights)}</p></div><div class="metric-card"><p class="metric-label">KV cache (${computed.totalTokens.toLocaleString()} tok)</p><p class="metric-value">${formatGB(computed.kvCacheGB)}</p></div><div class="metric-card"><p class="metric-label">Act + overhead</p><p class="metric-value">${formatGB(clusterActOverhead)}</p></div><div class="metric-card"><p class="metric-label">${copies > 1 ? 'Total (cluster)' : 'Total'}</p><p class="metric-value">${formatGB(computed.totalGB)}</p></div><div class="metric-card"><p class="metric-label">Total VRAM</p><p class="metric-value">${computed.totalVRAM} GiB</p></div><div class="metric-card"><p class="metric-label">Per-device</p><p class="metric-value">${formatGB(computed.perGPU.total)}</p></div></div>`);
 }
 
-/* How many boards would hold this, given that a board may be several devices.
-   Both the "does not fit" banners and the PDF's compute it the same way: size
-   the shortfall in devices, then convert to the unit the reader actually buys. */
+/* How many boards would hold this — asked as a question this tool's own
+   arithmetic can answer, rather than derived from a total.
+
+   It used to be ceil(totalGB / (deviceGB * 0.9)): a cluster total divided by
+   one device's capacity. That is circular, because buying more boards changes
+   the split, so a count derived from the current split describes a machine
+   that stops existing the moment you act on the advice. On a 70B at AWQ over
+   nine RTX 4090s it said "Need 15+ boards"; at fifteen the split is TP=1 again
+   and it still does not fit, and iterating the tool's own recommendation gives
+   15, then 25, then 42. It diverges. Correcting the per-device figures made
+   this branch reachable where it used to be hidden behind numbers that
+   wrongly fit, and correcting totalGB made the divergence faster, since the
+   total it divided now grows with the replica count.
+
+   So the question is asked directly: the smallest board count whose own
+   recomputed configuration fits. computeInference() is the judge — not a
+   second copy of the per-device formula written out here, which is the
+   duplication this whole branch exists to remove. A full scan costs well under
+   a millisecond and only runs on the does-not-fit path.
+
+   A scan and not a bisection, because fits is not monotonic in the board
+   count: eight devices split TP=8 and hold an eighth of the model each, nine
+   split TP=1 and hold a whole copy each. A count that fits sits below counts
+   that do not.
+
+   And nothing may fit. splitParallelism caps tp at 8, so for a dense model the
+   weights stop sharding further past that and per-device residency has a floor
+   no board count reaches under — 123B at bf16 on a 16 GB card is under it at
+   every count, where the old formula printed "Need 52+ boards" and then 216,
+   460, 1903 on each re-ask. Saying nothing fits is the true answer and the
+   caller renders it. The third case, capped, is a cluster large enough to
+   dilute the KV term but past anything worth recommending; it is probed rather
+   than assumed so the two failures are never reported as each other. */
+const BOARD_SEARCH_CAP = 256;
 function boardsNeeded(state, computed) {
-  const devices = Math.ceil(computed.totalGB / (computed.deviceGB * 0.9));
-  const perBoard = state.gpuCount > 0 ? computed.deviceCount / state.gpuCount : 1;
-  return Math.ceil(devices / Math.max(perBoard, 1));
+  for (let n = 1; n <= BOARD_SEARCH_CAP; n++)
+    if (computeInference({ ...state, gpuCount: n }).fits) return { boards: n, capped: false };
+  // Past a TP group of 8 the only per-device term still shrinking with more
+  // devices is the KV cache, so if a cluster this size cannot fit it, no
+  // cluster can. Probed through the engine rather than re-derived here.
+  const far = computeInference({ ...state, gpuCount: BOARD_SEARCH_CAP * 4096 }).fits;
+  return { boards: null, capped: far };
+}
+
+/* The one sentence both the verdict banner and the exec view print, so the two
+   cannot describe different hardware. */
+function boardsAdvice(state, computed) {
+  const { boards, capped } = boardsNeeded(state, computed);
+  /* Not "N+". The scan above exists because fits is not monotonic in the board
+     count, and the "+" asserted the opposite: 8B bf16 on T4s fits at 2 and
+     fails at 9, where TP drops to 1 and every device needs a whole copy. In 204
+     of the swept groups a larger count than the one named does not fit, so the
+     sentence names the smallest fit and says the direction is not safe. */
+  if (boards) return `Smallest fit: ${boards} boards — larger counts can split worse. Or lower precision.`;
+  if (capped) return `No board count up to ${BOARD_SEARCH_CAP} fits. Lower precision or a larger card.`;
+  return 'No number of these boards fits — per-device residency stops falling before it reaches this card.'
+    + (computed.isMoE ? '' : ' Tensor parallelism is capped at 8, so past that more boards add replicas, not smaller shards.')
+    + ' Lower precision or a larger card.';
 }
 
 function renderVerdict(state, computed) {
   let html;
   if (computed.comfortable) html = `<div class="verdict" style="background:var(--success-bg);color:var(--success-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-check"></use></svg>Fits. ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%).</div>`;
   else if (computed.fits) html = `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Tight. ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)}. May OOM under load.</div>`;
-  else { const needed = boardsNeeded(state, computed); html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - computed.deviceGB)} per device. Need ${needed}+ boards or lower precision.</div>`; }
+  else { html = `<div class="verdict" style="background:var(--danger-bg);color:var(--danger-text)"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg>Over by ${formatGB(computed.perGPU.total - computed.deviceGB)} per device. ${boardsAdvice(state, computed)}</div>`; }
   setHTML('verdict-output', html);
 }
 
@@ -1449,10 +1614,22 @@ function renderThroughput(state, computed) {
   const barColor = perUser > 40 ? '#1D9E75' : perUser > 15 ? '#EF9F27' : '#E24B4A';
   const barPct = Math.min(perUser / 150 * 100, 100);
 
+  /* The per-field heuristic label, attached to the three figures the
+     interconnect factor actually multiplies (both decode numbers through
+     achievedBandwidth, TTFT through achievedPrefillFlops). Above one domain
+     that factor stops being the single-node curve and picks up a second,
+     wholly unmeasured term across replicas — and the device slider goes to
+     128. Saying it here, beside each number, is what lets the slider stay
+     there instead of stopping at 8. */
+  const fabricNote = computed.dp > 1
+    ? ` · <span style="color:var(--warning-text);font-weight:500">Unmeasured above 2 devices</span>` +
+      `<span style="color:var(--warning-text)"> — the interconnect factor behind this number is a heuristic, and so is the ${computed.tp}×${computed.dp} split it is priced on</span>`
+    : '';
+
   // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
   // aggregate is what the server delivers across the whole batch. Never compare them.
-  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${bandwidthLabel(computed.deviceBandwidth)} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}</p></div></div>`;
-  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
+  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${bandwidthLabel(computed.deviceBandwidth)} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU${fabricNote}</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}${fabricNote}</p></div></div>`;
+  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}${fabricNote}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
   if (computed.batchLimitedByKV) {
     html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:8px 0"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> You asked for ${state.concurrency} concurrent users but KV cache only fits ${computed.maxBatchByKV} at ${formatContext(state.contextLength)}. vLLM will queue the rest — aggregate throughput above reflects the batch that actually runs.</div>`;
@@ -1681,7 +1858,12 @@ function renderComparisons() {
     html += `<div class="row"><span class="label">Per-device</span><span class="val" style="color:${c.fits ? 'var(--success-text)' : 'var(--danger-text)'}">${formatGB(c.perGPU.total)} / ${capacityNumber(c.deviceGB)}</span></div>`;
     html += `<div class="row"><span class="label">Max ctx (1u)</span><span class="val">${formatContext(c.maxContextSingleUser)}</span></div>`;
     html += `<div class="row"><span class="label">Max users @8K</span><span class="val">${Math.max(c.maxConcurrentAt8K, 0)}</span></div>`;
-    html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s</span></div>`;
+    /* Snapshots carry their own computed result, so the caveat is per card and
+       not per page: two saved configurations can sit side by side with only one
+       of them above a domain. This surface printed both figures bare at any
+       device count — it was not on the list the caveat test enumerated, which
+       is why that test now derives its own set instead of naming three. */
+    html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s${c.dp > 1 ? '<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">unmeasured above 2 devices</span>' : ''}</span></div>`;
     html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}</span></div></div>`;
   });
   html += '</div>';
@@ -1787,14 +1969,25 @@ function renderExecutiveSummary(state, computed) {
   html += `<div class="exec-row"><span class="exec-label">Hardware</span><span class="exec-value">${state.gpuCount}× ${state.gpuName}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">VRAM used</span><span class="exec-value" style="color:var(${verdictColor}-text)">${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} per device (${Math.round(computed.perGPU.total / computed.deviceGB * 100)}%)</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Max concurrent users (8K context)</span><span class="exec-value">${Math.max(computed.maxConcurrentAt8K, 0)}</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec</span></div>`;
+  /* Exec mode showed these two figures bare. The device slider runs to 128
+     rather than stopping at one NVLink domain, and that decision rests on the
+     per-field caveat being present wherever the number is — a mode that omits
+     it defeats the ruling rather than simplifying for its audience. Above one
+     domain the split is chosen by a rule of thumb and the interconnect factor
+     priced against it is unmeasured, so both figures inherit that. */
+  const execCaveat = computed.dp > 1
+    ? ` <span style="color:var(--warning-text);font-weight:500">· unmeasured above 2 devices</span>`
+    : '';
+  html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec${execCaveat}</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec${execCaveat}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
   html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
+  if (computed.dp > 1) html += `<div style="margin-top:10px;font-size:12px;color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Across ${computed.deviceCount} devices the tool picks TP=${computed.tp} × DP=${computed.dp} by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured, so treat the throughput figures as a ceiling to test, not a quote.</div>`;
 
   if (!computed.fits) {
-    const needed = boardsNeeded(state, computed);
-    html += `<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);background:var(--danger-bg);color:var(--danger-text);font-size:13px"><svg class="ti-ico" style="margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg><b>Action needed:</b> This model requires ${needed}+ boards of this type, or a lower precision (e.g. INT4), or a smaller model. Current configuration cannot serve this model.</div>`;
+    // The same sentence renderVerdict prints, through the same function: this
+    // view used to re-word the recommendation around its own copy of the number.
+    html += `<div style="margin-top:12px;padding:10px 14px;border-radius:var(--radius);background:var(--danger-bg);color:var(--danger-text);font-size:13px"><svg class="ti-ico" style="margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg><b>Action needed:</b> ${boardsAdvice(state, computed)} Current configuration cannot serve this model.</div>`;
   }
 
   setHTML('exec-summary', html);
@@ -1834,13 +2027,24 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
   report += `- Layers: ${state.layers}, KV heads: ${state.kvHeads}, head dim: ${state.headDim}\n`;
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
   report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${computed.deviceCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
-  report += `\n## VRAM breakdown\n- Weights: ${formatGB(computed.weightsGB)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB + computed.totalOverhead)}\n- Per-device: ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
-  // Same caveat as the on-screen warning banner (renderGPUCards), repeated
-  // here because this copy-pasted summary is exactly the artifact that
-  // leaves the screen it was computed on — a reader downstream of the clip
-  // board sees "Per-GPU: X (FITS)" next to --data-parallel-size with nothing
-  // to say the two were computed on different sharding assumptions.
-  if (dp > 1) report += `- Note: the figures above assume weights sharded across all ${computed.deviceCount} devices; the command below instead shards ${tp}-way and replicates a full copy of the model across each of ${dp} data-parallel groups, so the fit verdict is optimistic.\n`;
+  // Cluster-scoped and summing, exactly as the on-screen breakdown row does —
+  // this is the same four numbers in text, and a reader pastes it somewhere the
+  // page cannot explain itself.
+  report += `\n## VRAM breakdown\n- Weights${computed.modelCopies > 1 ? ` (${computed.modelCopies} copies)` : ''}: ${formatGB(computed.weightsGB * computed.modelCopies)}\n- KV cache: ${formatGB(computed.kvCacheGB)}\n- Act + overhead: ${formatGB(computed.activationsGB * computed.modelCopies + computed.totalOverhead)}${computed.modelCopies > 1 ? `\n- Total (cluster): ${formatGB(computed.totalGB)}` : ''}\n- Per-device: ${formatGB(computed.perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${computed.fits ? 'FITS' : 'DOES NOT FIT'})\n`;
+  /* The sharding line, matching the on-screen panel (renderGPUCards), repeated
+     here because this copy-pasted summary is exactly the artifact that leaves
+     the screen it was computed on: a reader downstream of the clipboard sees
+     "Per-device: X (FITS)" next to --data-parallel-size and has to be able to
+     tell what the two have in common. It no longer apologises — the fit verdict
+     is now computed against the sharding the command performs — but it still
+     states which divisor went where, and it still says the split above one
+     domain is a heuristic. */
+  if (dp > 1) {
+    report += computed.isMoE
+      ? `- Sharding: weights per device divided by all ${computed.deviceCount} devices. Under --enable-expert-parallel the routed experts do spread that way, but attention and the dense layers shard only ${tp} ways, so for an MoE this is optimistic. Dense models divide by ${tp}.\n`
+      : `- Sharding: weights and activations divided by ${tp}, the sharding the command performs, with a full copy in each of the ${dp} data-parallel groups. KV cache divided by all ${computed.deviceCount} devices — DP partitions the request stream, not the cache.\n`;
+    report += `- Above 8 devices the TP x DP split and the interconnect factor priced against it are heuristics; nothing here is measured above 2 devices.\n`;
+  }
   report += `\n## Capacity\n- Max context (1 user): ${formatContext(computed.maxContextSingleUser)}\n- Max concurrent @ 8K: ${Math.max(computed.maxConcurrentAt8K, 0)}\n- Single-stream decode: ~${formatTokens(computed.singleStreamTokS)} tok/s\n- Aggregate @ ${computed.effectiveBatch} concurrent: ~${formatTokens(computed.aggregateTokS)} tok/s\n- TTFT: ~${computed.ttftMs} ms\n`;
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo\n`;
   const emitted = document.querySelector('#command-output code');
