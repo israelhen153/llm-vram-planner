@@ -6,13 +6,20 @@ they go stale every time that output changes -- silently, in the README and in
 every link preview. The pair these replaced sat wrong for five weeks.
 
 Re-rendering them needs a browser, which the suite deliberately does not, so
-this checks the things that can be checked without one: that the configuration
-the screenshots are pinned to still resolves, that the images the documents
+the staleness check is done by digest instead: the generator records the sha256
+of the index.html it rendered, and if index.html has moved since, the images are
+by definition no longer known to match it. Rendering is deterministic, so the
+remedy is always the same -- re-run the generator -- and an edit that does not
+reach the images reproduces them byte for byte, leaving only the manifest
+changed. The rest of this file checks what can be checked without rendering:
+that the pinned configuration still resolves, that the images the documents
 point at exist, and that the social card is still the size a social card has to
 be. Regenerating is `python3 tools/make_assets.py`.
 
 Run:  python3 tests/assets.test.py
 """
+import hashlib
+import json
 import os
 import re
 import struct
@@ -73,7 +80,7 @@ def check_state_is_complete():
     """
     html = read("index.html")
     body = re.search(r"function updateURLHash\(\) \{(.*?)\n\}", html, re.S).group(1)
-    emitted = set(re.findall(r"[?&`]([a-z]+)=\$\{", body))
+    emitted = set(re.findall(r"[?&`]([a-z]+)=", body))
     assert emitted, "could not read the parameters out of updateURLHash()"
     pinned = set(re.findall(r"([a-z]+)=", read("tools", "make_assets.py").split("STATE = (")[1]
                             .split(")")[0]))
@@ -83,6 +90,36 @@ def check_state_is_complete():
 
 test("the pinned state sets every parameter the tool puts in the URL",
      check_state_is_complete)
+
+
+def check_images_match_the_tool():
+    """The images are a function of index.html; if it moved, they are unverified.
+
+    This is the failure the generator exists to prevent and the only one the other
+    checks here cannot see: a label or a formula changes, every published image
+    silently stops matching the tool, and nothing says so. A cold review changed
+    "VRAM breakdown" to "VRAM Breakdown TEST" and the rest of this file stayed green.
+
+    Deliberately strict -- it fires on any index.html change, not only the ones that
+    reach the pixels. That is affordable because rendering is deterministic: re-running
+    the generator on an unrelated edit rewrites the PNGs identically and leaves only
+    assets/manifest.json in the diff.
+    """
+    path = os.path.join(ROOT, "assets", "manifest.json")
+    assert os.path.exists(path), "assets/manifest.json is missing; run tools/make_assets.py"
+    with open(path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    with open(os.path.join(ROOT, "index.html"), "rb") as fh:
+        actual = hashlib.sha256(fh.read()).hexdigest()
+    assert manifest.get("index_sha256") == actual, (
+        f"index.html has changed since the images were generated "
+        f"({str(manifest.get('index_sha256'))[:12]} -> {actual[:12]}), so they are no "
+        f"longer known to show what the tool renders. Run: python3 tools/make_assets.py")
+    for name in ("vllm_planner.png", "og-image.png"):
+        assert manifest.get(name) == list(png_size(os.path.join(ROOT, "assets", name))), \
+            f"assets/{name} is not the size the manifest recorded; run tools/make_assets.py"
+
+test("the images were generated from this index.html", check_images_match_the_tool)
 
 
 def check_referenced_images_exist():
