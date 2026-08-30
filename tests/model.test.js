@@ -2054,6 +2054,36 @@ test('the benchmark counts README quotes match the data', () => {
     `README says ${measured} measured, data has ${keys.length - flagged}`);
 });
 
+test('the README is honest about which entries are multi-GPU', () => {
+  /* Added after a cold review: the first version of this paragraph said "all 13
+     benchmark entries are single-GPU", and one of them is 2xH100 at TP=2. The claim
+     that matters is not how many devices appear in the dataset but whether any
+     *measured* entry uses more than one, because that is what would validate the
+     multi-GPU model. Both halves are derived from the notes, never enumerated. */
+  const devicesIn = (note = '') => Math.max(1,
+    ...[...note.matchAll(/\b(\d+)\s*[x×]\s*[A-Za-z]/g)].map(m => Number(m[1])),
+    ...[...note.matchAll(/TP\s*=\s*(\d+)/gi)].map(m => Number(m[1])));
+
+  const entries = Object.entries(benchmarks.data);
+  const single = entries.filter(([, b]) => devicesIn(b.note) === 1);
+  const multi = entries.filter(([, b]) => devicesIn(b.note) > 1);
+
+  const m = readmeDoc.match(/(\d+) of the (\d+) benchmark entries are\s+single-GPU/);
+  assert.ok(m, 'README.md no longer states how many entries are single-GPU');
+  assert.strictEqual(Number(m[1]), single.length,
+    `README says ${m[1]} single-GPU entries, the notes describe ${single.length}`);
+  assert.strictEqual(Number(m[2]), entries.length,
+    `README says ${m[2]} entries, data has ${entries.length}`);
+
+  // The load-bearing half: a multi-GPU entry that is not flagged estimated would make
+  // "no measured entry uses more than one GPU" false, and it is the sentence's claim.
+  for (const [key, b] of multi) {
+    assert.ok(b.estimated,
+      `${key} is a ${devicesIn(b.note)}-device entry and is not flagged estimated — ` +
+      `the README claims no measured entry uses more than one GPU`);
+  }
+});
+
 test('the constants README quotes are the constants the model uses', () => {
   /* The band is the one that moves: tests above re-derive obsLo/obsHi from the
      measured entries, so a contributed benchmark can shift it and leave the README

@@ -53,7 +53,9 @@ Every number above is measured or bounded on **one** GPU. Above eight devices th
 splits into TP × DP, and three things get weaker. It now says so beside each affected
 figure rather than only here:
 
-- **Nothing above 2 devices is measured.** All 13 benchmark entries are single-GPU. The
+- **No measured entry uses more than one GPU.** 12 of the 13 benchmark entries are
+  single-GPU. The thirteenth is 2xH100 at TP=2, and it is an unverified community report
+  flagged `estimated`, so nothing in the dataset measures multi-GPU behaviour at all. The
   interconnect penalty — about 15% for NVLink, 45–60% for PCIe and worsening as the ring
   grows — is a heuristic of the same kind as MBU and MFU, and no measurement in this
   repository constrains it.
