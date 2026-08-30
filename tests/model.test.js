@@ -2082,6 +2082,17 @@ test('the README is honest about which entries are multi-GPU', () => {
       `${key} is a ${devicesIn(b.note)}-device entry and is not flagged estimated — ` +
       `the README claims no measured entry uses more than one GPU`);
   }
+
+  /* And the sentence has to keep tracking that fact in both directions. Checking the
+     data alone leaves the claim itself free to invert: a second cold pass rewrote this
+     lead to "some measured entries use multiple GPUs", left the counts correct, and the
+     assertions above stayed green. Same shape as the --device pin — the sentence is
+     required to say what the data says, not merely to exist. */
+  const measuredMulti = multi.filter(([, b]) => !b.estimated).map(([k]) => k);
+  const claimsNone = /No measured entry uses more than one GPU/.test(readmeDoc);
+  assert.strictEqual(claimsNone, measuredMulti.length === 0, measuredMulti.length === 0
+    ? 'no measured entry uses more than one GPU, and the README no longer says so'
+    : `${measuredMulti.join(', ')} measure on more than one GPU, and the README still claims none do`);
 });
 
 test('the constants README quotes are the constants the model uses', () => {
