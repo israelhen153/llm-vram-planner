@@ -1,8 +1,8 @@
 # Roadmap
 
-## v1.0.0 — NVIDIA + ship it (current)
+## v1.0.0 — NVIDIA + ship it (shipped)
 
-**Status: Ready to publish**
+**Status: published** at [israelhen153.github.io/llm-vram-planner](https://israelhen153.github.io/llm-vram-planner/).
 
 Everything targets NVIDIA datacenter and consumer GPUs with vLLM.
 
@@ -20,32 +20,59 @@ Everything targets NVIDIA datacenter and consumer GPUs with vLLM.
 - [x] URL state sharing + comparison snapshots
 - [x] Offline-capable (single HTML file)
 - [x] GitHub project with contribution guide
+- [x] Info tooltips on the inputs and results
 
-**GPUs covered:** T4, RTX 4090, A100 40/80GB, L40S, H100, RTX PRO 6000, B200
+**GPUs covered:** whatever is in [`data/gpus.json`](data/gpus.json). That file is the
+authority — `tools/sync_data.py` generates the catalog in `index.html` and
+`generate_report.py` from it. A list here would be a second copy of the catalog and
+would go stale the first time a row was added, which is exactly what happened to the
+list that used to sit on this line.
 
 **Inference engine:** vLLM only
 
-**Priority after launch:** collect benchmark data from community contributions
+**Corrected after launch:** the multi-GPU checkbox above was ticked at launch and was
+only half true. The TP/DP split was displayed correctly but the VRAM math did not use
+it, so per-device figures were optimistic above 8 devices. Fixed in v1.1 — see below.
 
 ---
 
-## v1.1.0 — AMD GPUs
+## v1.1.0 — AMD, and correct above 8 GPUs
 
-Add ROCm / AMD Instinct support.
+Two halves. The second one is done and awaiting release.
+
+### Correct above 8 GPUs — shipped, not yet released
+
+Per-device VRAM divided by every device in the cluster, which is not how the emitted
+command shards. Above 8 devices the split becomes TP × DP: each data-parallel replica
+loads a full copy of the model and only the TP group inside a replica shards it. The
+figure was correct to 8 devices, 2× optimistic at 16 and **16× at 128** — the slider's
+maximum, where the tool claimed a 70B needed about 1 GiB per card.
+
+Weights and activations now divide by TP; the KV cache keeps the full device count,
+because data parallelism partitions the request stream rather than replicating the
+cache. The board-count recommendation is searched rather than derived, since dividing a
+cluster total by one device's capacity is circular. Mixture-of-experts is deliberately
+held at the old divisor and says so on every surface. Full write-up in
+[docs/MODEL.md §4](docs/MODEL.md).
+
+### AMD / ROCm — not started
 
 **GPUs to add:**
 - MI210 (64GB HBM2e, 1.6 TB/s)
-- MI250X (128GB HBM2e, 3.2 TB/s)
+- MI250X (128GB HBM2e, 3.2 TB/s — one catalog row, two GCDs)
 - MI300X (192GB HBM3, 5.3 TB/s)
 - MI325X (256GB HBM3e, 6.0 TB/s)
 - RX 7900 XTX (24GB, consumer)
 
 **What changes:**
 - GPU dropdown gets an AMD section with correct VRAM, bandwidth, pricing
-- vLLM command adds `--device rocm` flag when AMD is selected
+- AMD gets its own MBU/MFU constants instead of borrowing NVIDIA's
+- ROCm guidance: the `rocm/vllm` image and `HIP_VISIBLE_DEVICES`. **vLLM has no
+  `--device` flag** — an earlier draft of this roadmap promised one, and it does not
+  exist. Which accelerator you get is decided by the image and the environment.
+- FP8 gated off CDNA2 (MI210, MI250X); it needs CDNA3
 - Cost data for AMD GPUs (CoreWeave, Azure, Lambda pricing)
-- Benchmark data structure already supports it — just needs entries
-- Notes section explains ROCm vs CUDA compatibility caveats
+- Benchmark data structure already supports it — it just needs entries
 
 **What doesn't change:**
 - VRAM math is the same — params × bytes, KV cache formula, etc.
@@ -59,43 +86,26 @@ Add ROCm / AMD Instinct support.
 
 ---
 
-## v1.2.0 — Apple Silicon
+## v1.2.0 — Repo-side pipeline + catalog import
 
-Add unified memory Macs for local inference (Ollama / llama.cpp / MLX).
-
-**Chips to add:**
-- M1/M2/M3/M4 (base, Pro, Max, Ultra)
-- Unified memory: 8GB, 16GB, 24GB, 32GB, 36GB, 48GB, 64GB, 96GB, 128GB, 192GB
+Keeping the baked-in data fresh without giving the tool a runtime network dependency.
 
 **What changes:**
-- GPU dropdown gets "Apple Silicon" section
-- Memory model switches from discrete VRAM to unified memory (shared with OS)
-  - Usable memory ≈ total unified memory × 0.65-0.75 (OS + other apps take the rest)
-- Bandwidth values per chip (M4 Max: ~546 GB/s, M2 Ultra: ~800 GB/s)
-- Inference engine switches from vLLM to Ollama / llama.cpp / MLX
-  - Command generator outputs `ollama run` or `mlx_lm.server` instead of `vllm serve`
-- Quantization focus shifts to GGUF (Q4_K_M, Q5_K_M, Q6_K) — native format for llama.cpp
-- Training section: MLX supports LoRA fine-tuning on Apple Silicon
-- Cost section: shows "hardware purchase" cost instead of cloud hourly rates
-  - Mac Studio M4 Ultra 192GB: ~$8,000 one-time
-  - Break-even vs cloud at X months of 24/7 usage
+- A scheduled job opens a PR against `data/gpus.json` when prices move. The file stays
+  baked into the single HTML file; the tool stays offline.
+- Catalog import, for the air-gapped "my card isn't in your list" case
+- Benchmark ingestion in CI, so contributed entries are validated on arrival
 
 **What doesn't change:**
-- VRAM math core — same formulas, different memory pool
-- Import/export, comparison, PDF
-- Benchmark data structure
-
-**Apple-specific caveats:**
-- No tensor parallel (single unified memory pool)
-- Metal performance shaders vs CUDA — different perf characteristics
-- Thermal throttling on laptops vs desktops
-- llama.cpp GGUF is the dominant format, not safetensors
+- No backend, no database, no service, no second engine. **"Live updates" here means a
+  build job that bakes fresh data into the same file** — not something the page calls
+  at runtime. The offline guarantee is the product.
 
 ---
 
 ## v2.0.0 — UI polish + product feel
 
-Only after v1.0-1.2 are stable and there's validated user demand.
+Only after v1.0–1.2 are stable and there's validated user demand.
 
 **Design:**
 - Responsive mobile layout (currently desktop-focused)
@@ -107,7 +117,6 @@ Only after v1.0-1.2 are stable and there's validated user demand.
 
 **UX:**
 - Guided mode: "What are you trying to do?" wizard that walks through choices
-- Tooltips on every metric explaining what it means (hover/tap)
 - "Explain this" expandable sections for each VRAM component
 - History: browser localStorage for recent configurations
 - Side-by-side comparison as a first-class layout (not just appended cards)
@@ -128,7 +137,16 @@ Only after v1.0-1.2 are stable and there's validated user demand.
 
 ## Not planned (but open to PRs)
 
-- **Pipeline parallel** — TP/DP covers most deployments, PP is niche
+- **Pipeline parallel** — TP/DP covers most deployments, PP is niche. Note that the
+  "Layers per device" tile currently divides layers by the device count, which *is*
+  pipeline-parallel arithmetic on a command that never emits it. That tile is wrong and
+  is flagged as wrong; it is a bug to fix, not a feature in progress.
+- **Apple Silicon / unified memory** — was on this roadmap as v1.2, and is dropped
+  rather than quietly deferred. It needs a second memory model (unified, shared with
+  the OS), a second command generator (`ollama run` / `mlx_lm.server`), and a second
+  engine's performance characteristics: a different tool wearing this one's interface.
+  [APXML](https://apxml.com/tools/vram-calculator) already covers that ground well.
+  This one stays opinionated about vLLM.
 - **Power consumption estimation** — interesting but hard to validate
 - **Network bandwidth requirements** — multi-node InfiniBand sizing
 - **Storage planning** — model download sizes, disk I/O for model loading

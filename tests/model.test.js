@@ -2000,7 +2000,7 @@ test('the page never counts views without saying so, or says so without counting
            : 'the footer notice describes a beacon that is not there');
 });
 
-console.log('\nCONTRIBUTING.md describes the tool that exists');
+console.log('\nThe documents describe the tool that exists');
 const contributing = fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8');
 test('the documented parameter buckets are the ones the lookup can select', () => {
   // A bucket documented but unreachable is an invitation to contribute dead
@@ -2023,6 +2023,102 @@ test('CONTRIBUTING.md names objects that exist in the source', () => {
     assert.ok(html.includes(name), `CONTRIBUTING.md names ${name}, which is not in index.html`);
   }
   assert.ok(!/`PR` object/.test(contributing), 'the `PR` object has never existed');
+});
+
+/* README.md and ROADMAP.md make claims a reader is invited to act on, and every one of
+   them restates something the code already knows. Restated facts drift: the ROADMAP
+   listed 8 of 12 catalogued cards, and the README's file listing named 9 of 21 tracked
+   files. Neither was caught by anything, because prose is not executed. These pins
+   derive from the source in every case — a literal here would be a third copy. */
+const readmeDoc = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+const roadmapDoc = fs.readFileSync(path.join(ROOT, 'ROADMAP.md'), 'utf8');
+
+test('ROADMAP.md carries no second copy of the GPU catalog', () => {
+  // Same defect as the CONTRIBUTING pin above, and the reason this one exists: the
+  // AMD rows land in a later commit and would silently falsify any list written here.
+  const copied = Object.keys(GPU_TABLE).filter(k =>
+    roadmapDoc.includes(`\`${k}\``) || new RegExp(`\\b${k}\\b`).test(roadmapDoc));
+  assert.strictEqual(copied.length, 0,
+    `ROADMAP.md hardcodes catalog keys: ${copied.join(', ')} — point at data/gpus.json instead`);
+});
+
+test('the benchmark counts README quotes match the data', () => {
+  const m = readmeDoc.match(/\*\*Benchmark data\*\* is (\d+) entries: (\d+) measured[^,]*, (\d+) extrapolated/);
+  assert.ok(m, 'README.md no longer states the benchmark counts in the expected shape');
+  const [total, measured, estimated] = m.slice(1).map(Number);
+  const keys = Object.keys(benchmarks.data);
+  const flagged = keys.filter(k => benchmarks.data[k].estimated).length;
+  assert.strictEqual(total, keys.length, `README says ${total} entries, data has ${keys.length}`);
+  assert.strictEqual(estimated, flagged, `README says ${estimated} extrapolated, data flags ${flagged}`);
+  assert.strictEqual(measured, keys.length - flagged,
+    `README says ${measured} measured, data has ${keys.length - flagged}`);
+});
+
+test('the constants README quotes are the constants the model uses', () => {
+  /* The band is the one that moves: tests above re-derive obsLo/obsHi from the
+     measured entries, so a contributed benchmark can shift it and leave the README
+     quoting last year's spread. The rest are quoted in a single parenthetical and
+     were correct when written — this is what keeps them that way. */
+  const { mbu, mfuDecode, mfuPrefill, obsLo, obsHi } = PERF.nvidia;
+  const quoted = (re, what) => {
+    const m = readmeDoc.match(re);
+    assert.ok(m, `README.md no longer states ${what} in the expected shape`);
+    return m.slice(1).map(Number);
+  };
+  assert.deepStrictEqual(quoted(/roofline at (\d+)% MBU/, 'MBU'), [mbu * 100]);
+  assert.deepStrictEqual(quoted(/compute roofline at (\d+)% MFU/, 'decode MFU'), [mfuDecode * 100]);
+  assert.deepStrictEqual(quoted(/separate (\d+)% prefill MFU/, 'prefill MFU'), [mfuPrefill * 100]);
+  assert.deepStrictEqual(quoted(/observed range \((\d+)–(\d+)% of ceiling\)/, 'the observed band'),
+    [Math.round(obsLo * 100), Math.round(obsHi * 100)]);
+
+  // The overhead trio, read out of index.html rather than restated here.
+  const actPct = Number(html.match(/const activationsGB = Math\.max\(\(totalActiveParams \* 1e9 \* 2 \* ([\d.]+)\)/)[1]) * 100;
+  const ctxGiB = Number(html.match(/const overheadPerGPU = ([\d.]+);/)[1]);
+  const [hi, lo] = html.match(/hasNVLink \? ([\d.]+) : ([\d.]+)\) \* \(deviceCount - 1\)/).slice(1).map(Number);
+  assert.deepStrictEqual(
+    quoted(/\((\d+)% of active params, ([\d.]+) GiB\/GPU, ([\d.]+)–([\d.]+) GiB per extra GPU\)/, 'the overhead heuristics'),
+    [actPct, ctxGiB, lo, hi]);
+});
+
+test('the project-structure listing names files that exist', () => {
+  const block = readmeDoc.match(/## Project structure\n+```\n([\s\S]*?)```/);
+  assert.ok(block, 'README.md no longer carries a project-structure block');
+  const listed = block[1].split('\n').map(l => l.split(/\s{2,}/)[0].trim()).filter(Boolean);
+  for (const entry of listed) {
+    assert.ok(fs.existsSync(path.join(ROOT, entry)),
+      `README.md's project structure names ${entry}, which does not exist`);
+  }
+  /* And the other direction, which is how it went stale: the block claims to describe
+     the machinery a contributor touches, so nothing in those directories may be
+     missing from it. Derived by reading the directories, never enumerated. */
+  for (const dir of ['tests', 'tools', 'data', 'benchmarks']) {
+    for (const f of fs.readdirSync(path.join(ROOT, dir))) {
+      if (f.startsWith('.') || f === '__pycache__') continue;
+      assert.ok(listed.includes(`${dir}/${f}`),
+        `${dir}/${f} is not in README.md's project structure`);
+    }
+  }
+});
+
+test('no document promises a --device flag', () => {
+  /* vLLM has no --device flag; the accelerator comes from the image and the
+     environment. The ROADMAP promised one for AMD for months. It may be named only to
+     deny it — the same shape as MODEL.md's pipeline-parallel pin. */
+  const docs = {
+    'README.md': readmeDoc, 'ROADMAP.md': roadmapDoc, 'CONTRIBUTING.md': contributing,
+    'docs/MODEL.md': fs.readFileSync(path.join(ROOT, 'docs', 'MODEL.md'), 'utf8'),
+  };
+  for (const [name, text] of Object.entries(docs)) {
+    for (const line of text.split('\n').filter(l => l.includes('--device'))) {
+      assert.ok(/\b(no|not|never)\b/i.test(line),
+        `${name} mentions --device without denying it: ${line.trim()}`);
+    }
+  }
+  // And neither engine may emit it, which is what the denial is asserting.
+  const py = fs.readFileSync(path.join(ROOT, 'generate_report.py'), 'utf8');
+  for (const [name, src] of [['index.html', html], ['generate_report.py', py]]) {
+    assert.ok(!/['"`]--device/.test(src), `${name} emits a --device flag`);
+  }
 });
 
 console.log('\nShared links resolve to the card they named');

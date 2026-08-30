@@ -33,7 +33,7 @@ No single feature here is unique. The combination is what I wanted and couldn't 
 
 It's a planning tool. It gets you to the right hardware and the right flags; it does not replace benchmarking your actual workload.
 
-**VRAM** is close to exact — weights, KV cache and optimizer state are arithmetic. Activations, CUDA context and NCCL buffers use fixed heuristics (1% of active params, 1.5 GiB/GPU, 0.2–0.3 GiB per extra GPU), so treat the total as ±10%, and don't plan to run at 99% utilisation.
+**VRAM** is close to exact — weights, KV cache and optimizer state are arithmetic. Activations, CUDA context and NCCL buffers use fixed heuristics (1% of active params, 1.5 GiB/GPU, 0.2–0.3 GiB per extra GPU), so treat the total as ±10%, and don't plan to run at 99% utilisation. One deliberate exception: a mixture-of-experts model above 8 GPUs reads about 1.75× optimistic on weights — see [Above 8 GPUs](#above-8-gpus).
 
 **Throughput** comes from a memory-bandwidth roofline at 70% MBU, capped by a compute roofline at 35% MFU. TTFT uses a separate 45% prefill MFU — dense prefill GEMMs run at higher utilisation than decode's starved ones:
 
@@ -47,6 +47,30 @@ Against the measured benchmarks in `benchmarks/data.json`, single-stream lands w
 
 **Costs** are list prices from mid-2026 and drift constantly. Reserved and committed-use pricing typically runs 30–60% below on-demand.
 
+### Above 8 GPUs
+
+Every number above is measured or bounded on **one** GPU. Above eight devices the tool
+splits into TP × DP, and three things get weaker. It now says so beside each affected
+figure rather than only here:
+
+- **Nothing above 2 devices is measured.** All 13 benchmark entries are single-GPU. The
+  interconnect penalty — about 15% for NVLink, 45–60% for PCIe and worsening as the ring
+  grows — is a heuristic of the same kind as MBU and MFU, and no measurement in this
+  repository constrains it.
+- **Mixture-of-experts weights read ~1.75× optimistic.** vLLM shards an MoE on two axes
+  at once: attention and the dense FFN by TP, the routed experts across all TP × DP
+  ranks. No single divisor describes that, so MoE keeps the larger one on purpose — the
+  other error puts DeepSeek-V3 at roughly 9× too much hardware, and over-buying is not
+  the safe kind of wrong. Each MoE surface states which divisor produced its figure.
+- **Per-user speed and TTFT are cluster-scoped, so roughly 4× optimistic.** They pool
+  every device's bandwidth for a single request, but under data parallelism that request
+  is served by one replica. That is a known bug awaiting its fix, not a modelling
+  choice, and it is flagged in the interface.
+
+Per-device VRAM for dense models is correct at any device count; that error is fixed and
+in the tool now, ahead of the v1.1 release it belongs to. What stays unmeasured above
+8 GPUs is throughput.
+
 Every formula, constant and known failure mode is written up in **[docs/MODEL.md](docs/MODEL.md)** — including why the two throughput numbers are different quantities, and where the estimates break down.
 
 Run `./tests/run.sh` to check the math yourself.
@@ -55,9 +79,9 @@ Run `./tests/run.sh` to check the math yourself.
 
 Things it does not model yet, listed because finding out the hard way is worse:
 
-- **Pipeline parallel and multi-node.** TP and DP only. Single-node assumptions throughout.
+- **Pipeline parallel and multi-node.** TP and DP only. Single-node assumptions throughout. One surface disagrees and is simply wrong: the "Layers per device" tile divides layers by the device count, which is pipeline-parallel arithmetic on a command that never emits it. The tile says so; the fix is queued.
 - **CPU/NVMe offload.** If it doesn't fit in VRAM, the answer here is "it doesn't fit".
-- **Non-NVIDIA hardware and non-vLLM engines.** AMD and Apple Silicon are on the roadmap; llama.cpp and MLX are not.
+- **Non-NVIDIA hardware and non-vLLM engines.** AMD is on the roadmap for v1.1. Apple Silicon, llama.cpp and MLX are not planned — see [ROADMAP.md](ROADMAP.md) for why.
 - **Speculative decoding and MTP.** Both change the throughput picture substantially and neither is modelled.
 - **Chunked prefill scheduling.** Prefill and decode interleaving affects tail latency under mixed load.
 
@@ -122,9 +146,9 @@ The hosted copy at [israelhen153.github.io](https://israelhen153.github.io/llm-v
 
 ## Roadmap
 
-- **v1.0** (current) — NVIDIA GPUs, vLLM
-- **v1.1** — AMD ROCm (MI300X, MI250X)
-- **v1.2** — Apple Silicon (M1–M4, Ollama/llama.cpp/MLX)
+- **v1.0** (shipped) — NVIDIA GPUs, vLLM
+- **v1.1** — AMD ROCm, and correct above 8 GPUs (that half is already done)
+- **v1.2** — Repo-side price and catalog pipeline; the tool itself stays offline
 - **v2.0** — UI polish, guided wizard, mobile, PWA
 
 See [ROADMAP.md](ROADMAP.md) for details.
@@ -144,11 +168,17 @@ Bug reports and feature requests welcome via [Issues](https://github.com/israelh
 ```
 index.html              The tool (single file, no build step)
 generate_report.py      PDF report generator
+data/gpus.json          GPU catalog — the authority both engines are generated from
 benchmarks/data.json    Community benchmark data
+tools/sync_data.py      Bakes those two files into both engines
 docs/MODEL.md           Every formula, constant and limitation, explained
+docs/research/          Working notes behind catalog entries
+setup.sh                Fork setup — repoints analytics at your account, or strips it
 tests/run.sh            Full suite — node + python3, no other deps
 tests/model.test.js     VRAM, throughput and TTFT math
 tests/parity.test.py    Checks index.html and generate_report.py agree
+tests/report.test.py    The PDF generator and the text it emits
+tests/sync.test.py      Generated blocks round-trip and cannot be poisoned
 CONTRIBUTING.md         How to add benchmarks
 ROADMAP.md              Version plan
 ```
