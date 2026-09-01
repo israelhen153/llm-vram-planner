@@ -17,7 +17,16 @@ This table reports **dense (not sparse) TFLOPS** for BF16/FP16 matrix operations
 | MI325X | 256 | HBM3e | 6000 | 1307.4 | 1000 | [AMD MI325X Datasheet (PDF)](https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/product-briefs/instinct-mi325x-datasheet.pdf), [AMD MI325X Product Page](https://www.amd.com/en/products/accelerators/instinct/mi300/mi325x.html), [TechPowerUp MI325X Launch](https://www.techpowerup.com/327553/amd-launches-instinct-mi325x-accelerator-for-ai-workloads-256-gb-hbm3e-memory-and-2-6-petaflops-fp8-compute) |
 | Radeon RX 7900 XTX | 24 | GDDR6 | 960 | 123 | 355 | [AMD Radeon RX 7900 XTX Product Page](https://www.amd.com/en/products/graphics/desktops/radeon/7000-series/amd-radeon-rx-7900xtx.html), [TechPowerUp RX 7900 XTX Specs](https://www.techpowerup.com/gpu-specs/xfx-mercury-magair-rx-7900-xtx.b11842), [TechPowerUp Review](https://www.techpowerup.com/review/amd-radeon-rx-7900-xtx/) |
 
-*: MI250X TFLOPS (383) is per OAM (Accelerator Module). MI250X is a dual-OAM module, so aggregate system TFLOPS = 2 × 383 = 766 TFLOPS dense FP16/BF16.
+*: **DISPUTED — do not use this reading without re-verifying it.** The line above reads
+383 TFLOPS as a *per-OAM* figure and doubles it to 766 for the module. The v1.1 catalog
+will instead treat **383 as the whole two-GCD board, i.e. ~191.5 TFLOPS per GCD**, which
+is the per-device number the engine needs. The two readings differ by 2×, and this
+document is the only place the larger one is asserted.
+
+Nothing here is corrected yet on purpose: the AMD MI200 datasheet is the authority and
+the correction is scheduled for the commit that adds the AMD catalog rows, where the
+figure is re-verified against primary sources by a reviewer who did not write it. Until
+then, treat this row's TFLOPS as unresolved rather than as a source.
 
 ## Caveats and Unverified Numbers
 
@@ -26,9 +35,11 @@ This table reports **dense (not sparse) TFLOPS** for BF16/FP16 matrix operations
    - FP16 TFLOPS (181) confirmed from AMD specifications and TechPowerUp news.
    - TDP (300 W) confirmed from multiple sources.
 
-2. **MI250X — Most verified; TFLOPS per-OAM caveat**
+2. **MI250X — VRAM and bandwidth verified; TFLOPS DISPUTED**
    - VRAM (128 GB), memory type (HBM2e), and bandwidth (3276.8 GB/s) confirmed from AMD datasheets and TechPowerUp.
-   - FP16/BF16 TFLOPS (383) is reported per OAM from AMD datasheet; MI250X is a dual-OAM design, so total aggregate = 766 TFLOPS.
+   - FP16/BF16 TFLOPS (383): **disputed, see the table footnote.** This entry reads it as
+     per-OAM and aggregates to 766; the catalog will read it as the whole two-GCD board
+     (~191.5 per GCD). Unresolved until the AMD rows land and it is re-verified.
    - TDP (500–560 W) range confirmed from AMD datasheet.
 
 3. **MI300X — All verified from primary sources**
