@@ -1142,6 +1142,8 @@ assert.ok(bandwidthLabelDecl, 'bandwidthLabel() not found in index.html');
 const bandwidthLabel = new Function(`${bandwidthLabelDecl[0]}; return bandwidthLabel;`)();
 /* Capacity has its own formatter, so an integer catalog value keeps rendering
    without a decimal. Read from source for the same reason as the above. */
+const formatTokensLike = new Function(
+  `${html.match(/^function formatTokens\(t\) .+$/m)[0]}; return formatTokens;`)();
 const capacityLabelLike = new Function(
   `${html.match(/^function formatGB\(gb\) .+$/m)[0]}
    ${html.match(/^function capacityLabel\(gb\) .+$/m)[0]}; return capacityLabel;`)();
@@ -1829,11 +1831,20 @@ test('every view that prints a compute figure says when FP8 has no tensor cores'
          bandwidth-bound and the FP8 win there is real, so a label on it would
          be wrong, and requiring every throughput-bearing element would demand
          exactly that. */
-      const labelledIds = Object.entries(h.out)
-        .filter(([, t]) => COMPUTE.test(t) && LABEL.test(t)).map(([id]) => id);
-      assert.ok(labelledIds.length > 0,
-        `${slug} has no FP8 tensor cores and no surface says so; ` +
-        `surfaces printing throughput: ${Object.keys(h.out).filter(k => COMPUTE.test(h.out[k])).join(', ')}`);
+      /* Not "some surface says so" — that passed with the label deleted from
+         the throughput panel, because the executive view and the comparison
+         card still carried their own. The requirement is derived instead: any
+         surface that prints the aggregate figure is printing a number the
+         compute ratio moved, so that surface has to carry the label. */
+      const aggText = formatTokensLike(c.aggregateTokS);
+      const printsAggregate = Object.entries(h.out).filter(([, t]) => t.includes(aggText));
+      assert.ok(printsAggregate.length > 0,
+        `no surface printed the aggregate figure (${aggText}) for ${slug} — the sweep is not reaching them`);
+      for (const [id, text] of printsAggregate) {
+        assert.ok(LABEL.test(text),
+          `${id} prints the aggregate figure for ${slug}, which has no FP8 tensor cores, ` +
+          `without saying so: ${text.slice(0, 220)}`);
+      }
       flagged++;
     }
   }

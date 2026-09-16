@@ -107,6 +107,16 @@ CASES = [
      "params": 8, "active": 100, "bpp": 1, "quant": "fp8", "layers": 32,
      "kv_heads": 8, "h_dim": 128, "ctx": 8192, "conc": 64, "n_gpu": 1,
      "gpu": "h100-80"},
+    # The case above is bandwidth-bound, so it compares the *prefill* half of
+    # the compute ratio and nothing else: doubling the decode ceiling only moves
+    # a number where the ceiling binds, and doubling it makes binding rarer. This
+    # one sits on it — short context, saturated batch, FP8 KV — so removing the
+    # ratio from one engine's ceiling alone is caught here rather than silently
+    # agreeing. Same reason the bf16 A100 case above this block exists.
+    {"name": "8B fp8 on H100 80, compute-bound at high batch (pins the FP8 ceiling)",
+     "params": 8, "active": 100, "bpp": 1, "quant": "fp8", "layers": 32,
+     "kv_heads": 8, "h_dim": 128, "ctx": 256, "conc": 1024, "n_gpu": 1,
+     "kv_bpp": 1, "gpu": "h100-80"},
     {"name": "26B MoE fp8, B200, fp8 KV",
      "params": 26, "active": 15, "bpp": 1, "layers": 48, "kv_heads": 8, "h_dim": 128,
      "ctx": 32768, "conc": 128, "n_gpu": 1, "gpu": "b200-192", "kv_bpp": 1},
