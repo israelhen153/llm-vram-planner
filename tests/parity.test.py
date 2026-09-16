@@ -95,6 +95,28 @@ CASES = [
     {"name": "70B MoE bf16, 12x H100 80 (held at the device count)",
      "params": 70, "active": 5, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 12, "gpu": "h100-80"},
+    # FP8 selected on Ampere: weights still halve, but there are no FP8 tensor
+    # cores, so the compute multiplier must NOT apply. Both engines have to agree
+    # about the gate, not just about the ratio.
+    {"name": "8B fp8 on A100 80 (no FP8 tensor cores — gate must hold)",
+     "params": 8, "active": 100, "bpp": 1, "quant": "fp8", "layers": 32,
+     "kv_heads": 8, "h_dim": 128, "ctx": 8192, "conc": 64, "n_gpu": 1,
+     "gpu": "a100-80"},
+    # And the same selection on Hopper, where it must apply.
+    {"name": "8B fp8 on H100 80 (FP8 tensor cores — multiplier applies)",
+     "params": 8, "active": 100, "bpp": 1, "quant": "fp8", "layers": 32,
+     "kv_heads": 8, "h_dim": 128, "ctx": 8192, "conc": 64, "n_gpu": 1,
+     "gpu": "h100-80"},
+    # The case above is bandwidth-bound, so it compares the *prefill* half of
+    # the compute ratio and nothing else: doubling the decode ceiling only moves
+    # a number where the ceiling binds, and doubling it makes binding rarer. This
+    # one sits on it — short context, saturated batch, FP8 KV — so removing the
+    # ratio from one engine's ceiling alone is caught here rather than silently
+    # agreeing. Same reason the bf16 A100 case above this block exists.
+    {"name": "8B fp8 on H100 80, compute-bound at high batch (pins the FP8 ceiling)",
+     "params": 8, "active": 100, "bpp": 1, "quant": "fp8", "layers": 32,
+     "kv_heads": 8, "h_dim": 128, "ctx": 256, "conc": 1024, "n_gpu": 1,
+     "kv_bpp": 1, "gpu": "h100-80"},
     {"name": "26B MoE fp8, B200, fp8 KV",
      "params": 26, "active": 15, "bpp": 1, "layers": 48, "kv_heads": 8, "h_dim": 128,
      "ctx": 32768, "conc": 128, "n_gpu": 1, "gpu": "b200-192", "kv_bpp": 1},
@@ -187,7 +209,7 @@ const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
 for(const [k,g] of Object.entries(GPU_TABLE)){
   G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
-        name:g.name.replace(/ GB$/,'GB'),devices:g.devices};
+        name:g.name.replace(/ GB$/,'GB'),devices:g.devices,caps:g.caps};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
   /* c.card lets a case carry a row the catalog does not have yet — the
@@ -195,13 +217,17 @@ const out=JSON.parse(process.argv[2]).map(c=>{
      such board ships, not after. */
   const g=c.card ? {gb:c.card.gb,bw:c.card.bw,h:c.card.hyper,sp:c.card.spec,
                     st:c.card.spot,tf:c.card.tflops,name:c.card.name.replace(/ GB$/,'GB'),
-                    devices:c.card.devices} : G[c.gpu];
+                    devices:c.card.devices,caps:c.card.caps} : G[c.gpu];
   if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
   return ci({params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
     gpuSpotCost:g.st,gpuName:g.name,gpuDevices:g.devices||1,
+    /* readInputState() reads both of these off the catalog row and the quant
+       selector; this harness builds state by hand, so it has to mirror them or
+       the FP8 compute multiplier applies in Python and not here. */
+    gpuFp8:!!(g.caps&&g.caps.fp8),quantMethod:c.quant||'',
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
@@ -264,6 +290,10 @@ FIELDS = [
     ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),
     ("perf_mfu_prefill", "perfMfuPrefill", 0),
     ("perf_obs_lo", "perfObsLo", 0), ("perf_obs_hi", "perfObsHi", 0),
+    # The FP8 compute ratio, and the multiplier actually applied. The ratio alone
+    # would compare equal on every case: it is a constant, and what can drift is
+    # whether the two engines decide to *apply* it to the same configuration.
+    ("perf_fp8_ratio", "perfFp8Ratio", 0), ("compute_ratio", "computeRatio", 0),
 ]
 def dig(d, path):
     """Walk a dotted path, so a field mapping can name perGPU.weights as easily
