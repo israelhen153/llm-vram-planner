@@ -664,6 +664,53 @@ test('GGUF Q8_0 is not FP8, despite being close to one byte', () => {
   const c = computeInference(state({ bytesPerParam: 1.1, quantMethod: 'gguf' }));
   assert.strictEqual(c.computeRatio, 1.0, 'Q8_0 dequantizes like every other GGUF level');
 });
+test('every catalog row declares the FP8 support its silicon actually has', () => {
+  /* The flag's *value* was pinned on five rows and inferred on the rest, so
+     flipping l40s-48 to false shipped green while halving that card's ceiling
+     and printing a warning that is not true of it. A capability flag is a
+     contract about hardware, not a derivable property, so it gets literals —
+     and the literals are the architecture, not the catalog, or this would be
+     the catalog checked against itself.
+
+       Turing (T4)      sm75  no FP8 tensor cores
+       Ampere (A100)    sm80  no FP8 tensor cores
+       Ada / Hopper /   sm89+ FP8 tensor cores at 2x the BF16 rate
+       Blackwell                                                            */
+  const FP8_BY_ARCH = {
+    't4-16': false, 'a100-40': false, 'a100-80': false,
+    'l4-24': true, 'l40s-48': true, 'rtx4090-24': true, 'rtx5090-32': true,
+    'rtx6000ada-48': true, 'rtxpro-96': true,
+    'h100-80': true, 'h200-141': true, 'b200-192': true,
+  };
+  assert.deepStrictEqual(Object.keys(FP8_BY_ARCH).sort(), Object.keys(GPU_TABLE).sort(),
+    'a catalog row was added or removed without deciding its FP8 support here');
+  for (const [slug, expected] of Object.entries(FP8_BY_ARCH)) {
+    assert.strictEqual(GPU_TABLE[slug].caps.fp8, expected,
+      `${slug}.caps.fp8 is ${GPU_TABLE[slug].caps.fp8}, but its architecture says ${expected}` +
+      ` — this flag halves the compute ceiling and prints a user-facing warning`);
+  }
+});
+test('the FP8 multiplier never reaches the single-stream figure', () => {
+  /* Single-stream decode is bandwidth-bound at batch 1 and is the one number
+     the tool matches measurements on closely. The compute ratio must not touch
+     it — and applying it there, symmetrically in both engines, passed every
+     other test in this suite: the band test cannot see it (the only measured
+     FP8 entry is batch-mode, both single-stream entries are q4) and the FP8
+     assertions above run on the A100, where the ratio is 1.0 anyway. */
+  for (const gpu of ['H100 80GB', 'B200 192GB', 'L40S 48GB']) {
+    const bf16 = computeInference(state({ gpu, bytesPerParam: 2, quantMethod: '' }));
+    const fp8 = computeInference(state({ gpu, bytesPerParam: 1, quantMethod: 'fp8' }));
+    assert.strictEqual(fp8.computeRatio, 2.0, `${gpu} should take the multiplier`);
+    /* Weights halve, so single-stream roughly doubles from bandwidth alone.
+       What it must not do is double *again*. The bound is derived from the
+       bandwidth model, not a literal: denominator is weights + one sequence's
+       KV, and only the weights term halves. */
+    const ratio = fp8.singleStreamTokS / bf16.singleStreamTokS;
+    assert.ok(ratio > 1 && ratio < 2.05,
+      `${gpu}: single-stream moved ${ratio.toFixed(2)}x under FP8. Above ~2x means the ` +
+      `compute ratio has leaked into the bandwidth path, which it must never touch.`);
+  }
+});
 test('a bare one-byte config is treated as FP8 by both the label and the maths', () => {
   /* generate_report.py's from_json() accepts {"bpp": 1} with no quant key, and
      PREC_LABELS already renders that as "FP8". If only the label knew, the PDF
@@ -1836,14 +1883,34 @@ test('every view that prints a compute figure says when FP8 has no tensor cores'
          card still carried their own. The requirement is derived instead: any
          surface that prints the aggregate figure is printing a number the
          compute ratio moved, so that surface has to carry the label. */
-      const aggText = formatTokensLike(c.aggregateTokS);
-      const printsAggregate = Object.entries(h.out).filter(([, t]) => t.includes(aggText));
-      assert.ok(printsAggregate.length > 0,
-        `no surface printed the aggregate figure (${aggText}) for ${slug} — the sweep is not reaching them`);
-      for (const [id, text] of printsAggregate) {
-        assert.ok(LABEL.test(text),
-          `${id} prints the aggregate figure for ${slug}, which has no FP8 tensor cores, ` +
-          `without saying so: ${text.slice(0, 220)}`);
+      /* Both figures the ratio multiplies, not just the aggregate. Deriving the
+         requirement from the aggregate alone left the TTFT tile's label
+         deletable in silence — and TTFT is the figure with no bandwidth cap,
+         so it is the one the ratio moves unconditionally. MODEL.md promises
+         the UI says so beside *both*. */
+      const targets = [
+        ['aggregate', formatTokensLike(c.aggregateTokS)],
+        ['TTFT', `${c.ttftMs} ms`],
+      ];
+      /* Per card, not per element. renderThroughput writes the aggregate tile
+         and the TTFT tile into the SAME element, so an element-level check is
+         satisfied by either one carrying the label — which is exactly how
+         deleting the TTFT caveat stayed green. Split on the card boundary the
+         renderers actually use and require the label inside the fragment that
+         prints the figure. */
+      for (const [what, needle] of targets) {
+        let found = 0;
+        for (const [id, text] of Object.entries(h.out)) {
+          for (const frag of text.split(/<div class="(?:reverse-card|compare-card|exec-row)"/)) {
+            if (!frag.includes(needle)) continue;
+            found++;
+            assert.ok(LABEL.test(frag),
+              `${id} prints the ${what} figure for ${slug}, which has no FP8 tensor cores, ` +
+              `in a card that does not say so: ${frag.slice(0, 220)}`);
+          }
+        }
+        assert.ok(found > 0,
+          `no card printed the ${what} figure (${needle}) for ${slug} — the sweep is not reaching it`);
       }
       flagged++;
     }
