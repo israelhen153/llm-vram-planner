@@ -16,4 +16,7 @@ python3 tests/report.test.py
 echo "== generated data blocks (tools/sync_data.py) =="
 python3 tests/sync.test.py
 
+echo "== published images (tools/make_assets.py) =="
+python3 tests/assets.test.py
+
 echo "All suites passed."
