@@ -174,6 +174,7 @@ data/gpus.json          GPU catalog — the authority both engines are generated
 benchmarks/data.json    Community benchmark data
 tools/sync_data.py      Bakes those two files into both engines
 tools/make_assets.py    Regenerates the README and social images from the tool
+tools/price_check.py    Repo-side job: re-reads published GPU prices, reports what moved
 docs/MODEL.md           Every formula, constant and limitation, explained
 docs/research/          Working notes behind catalog entries
 setup.sh                Fork setup — repoints analytics at your account, or strips it
@@ -182,6 +183,7 @@ tests/model.test.js     VRAM, throughput and TTFT math
 tests/parity.test.py    Checks index.html and generate_report.py agree
 tests/report.test.py    The PDF generator and the text it emits
 tests/sync.test.py      Generated blocks round-trip and cannot be poisoned
+tests/price_check.test.py  Per-source parsing/validation: a changed page shape must abort, not misfire
 tests/assets.test.py    The published images can still be regenerated
 CONTRIBUTING.md         How to add benchmarks
 ROADMAP.md              Version plan
