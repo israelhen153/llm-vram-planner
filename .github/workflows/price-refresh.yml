@@ -1,0 +1,123 @@
+# Repo-side price refresh — see tools/price_check.py.
+#
+# What this does: runs tools/price_check.py against a handful of public GPU
+# pricing sources, and if anything it validated CONFIRMED or MOVED (its
+# terms — see the tool's own docstring), opens a pull request with the
+# change. It never pushes to master (or any branch) directly, and never
+# merges anything — that is an absolute project rule, not just a habit:
+# the PR sits for the owner to review and merge by hand, the same as every
+# other change in this repo.
+#
+# This job needs no secrets: every source in tools/price_check.py's
+# SOURCE_MAP is queried unauthenticated (verified live while the tool was
+# built — see the PR that introduced it). If a source later requires a key
+# (e.g. Vast.ai under load, or GCP if that ever gets automated), add it as
+# a repo secret and reference it from tools/price_check.py directly; this
+# workflow does not need to change to pass one through.
+#
+# Scheduled workflows are disabled by default on forks until the fork owner
+# enables Actions there, so this does not silently start hitting the same
+# sources from a fork the moment someone forks the repo.
+name: Price refresh
+
+on:
+  schedule:
+    # Weekly, not daily: catalog prices move on the order of weeks, and the
+    # source research this tool is built on recommends staying a polite,
+    # low-volume, identified caller against unauthenticated (Azure, AWS,
+    # Vast) and undocumented (AWS's feed) endpoints — "one run per day or
+    # week, single-digit request counts per provider."
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch: {} # manual run, e.g. to check a single source sooner
+
+concurrency:
+  group: price-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  price-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to push the branch the PR step opens
+      pull-requests: write # to open (or update) that PR
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Fetch, validate, and (where confirmed or moved) apply
+        run: |
+          python3 tools/price_check.py --apply --report-out "$RUNNER_TEMP/price-check-report.md"
+        # Exits 0 for every *handled* outcome — a source whose shape changed,
+        # a move too large to auto-apply, a thin marketplace sample. Those are
+        # the point of the tool, not a job failure. A nonzero exit here means
+        # something the tool itself doesn't know how to classify, e.g. a
+        # SOURCE_MAP entry naming a catalog slug that no longer exists.
+
+      - name: Re-sync generated blocks from data/gpus.json
+        run: python3 tools/sync_data.py
+        # A no-op print if nothing was applied. If a price *was* applied, the
+        # GPU_TABLE blocks in index.html and generate_report.py must move
+        # with it — this is what "never hand-edit a generated block" already
+        # requires of any change to data/gpus.json, automated or not.
+
+      - name: Check whether there is anything to propose
+        id: diff
+        run: |
+          if git diff --quiet -- data/gpus.json index.html generate_report.py; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install tools/make_assets.py's own dependencies
+        if: steps.diff.outputs.changed == 'true'
+        run: pip install pillow websockets
+        # google-chrome-stable ships on the ubuntu-latest image already;
+        # these two do not, and only this maintenance path needs them (see
+        # tools/make_assets.py's own docstring — the planner and the test
+        # suite need neither).
+
+      - name: Regenerate published images (index.html changed)
+        if: steps.diff.outputs.changed == 'true'
+        run: python3 tools/make_assets.py
+
+      - name: Run the full suite before proposing anything
+        if: steps.diff.outputs.changed == 'true'
+        run: ./tests/run.sh
+
+      - name: Open a pull request (never pushes to master)
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "price-refresh: update catalog prices and provenance"
+          # A fixed branch name on purpose: if last week's PR is still open,
+          # this pushes new commits onto it instead of piling up a second
+          # one; if it was merged or closed, this starts a fresh one. That is
+          # this action's own documented behavior for a recurring bot PR.
+          branch: automation/price-refresh
+          delete-branch: true
+          title: "Price refresh: catalog prices moved"
+          body-path: ${{ runner.temp }}/price-check-report.md
+          add-paths: |
+            data/gpus.json
+            index.html
+            generate_report.py
+            assets/*.png
+
+      - name: Upload the report even when nothing changed
+        if: steps.diff.outputs.changed == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: price-check-report
+          path: ${{ runner.temp }}/price-check-report.md
+          retention-days: 90

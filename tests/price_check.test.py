@@ -1,0 +1,773 @@
+#!/usr/bin/env python3
+"""Verify tools/price_check.py's per-source parsing, validation and
+classification — the design constraint it exists to satisfy is "a provider
+page that changes shape must open NO PR rather than a wrong one", so most of
+this file is deliberately shape-breaking fixtures that must all abort.
+
+No test here makes a network call: tests/run.sh promises node + python3 and
+nothing else, so every fixture below is a canned response standing in for a
+live fetch — several are trimmed, real captures from the sources this tool
+targets (2026-09-16), not invented shapes. The one thing this file cannot
+exercise is "did I read the live schema correctly today" — that was done by
+hand while building this tool and is reported in the PR, not asserted here.
+
+Run:  python3 tests/price_check.test.py
+"""
+import contextlib
+import copy
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import price_check as pc
+
+pass_ct = fail_ct = 0
+
+
+def test(name, fn):
+    global pass_ct, fail_ct
+    try:
+        fn()
+        print(f"  ok   {name}")
+        pass_ct += 1
+    except Exception as e:
+        print(f"  FAIL {name}\n       {type(e).__name__}: {e}")
+        fail_ct += 1
+
+
+def raises(fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except pc.SourceError as e:
+        return str(e)
+    raise AssertionError(f"{fn.__name__} did not raise SourceError")
+
+
+@contextlib.contextmanager
+def fake_http_get(response):
+    """Monkeypatch price_check.http_get for the duration of the with-block,
+    then restore it. `response` is either a fixed (text, headers) tuple
+    returned regardless of the URL, or a callable(url, **kwargs) -> that
+    tuple for tests that need to branch on the URL."""
+    fn = response if callable(response) else (lambda url, **kw: response)
+    original = pc.http_get
+    pc.http_get = fn
+    try:
+        yield
+    finally:
+        pc.http_get = original
+
+
+# ===========================================================================
+# Absolute band / zero-is-not-a-price
+# ===========================================================================
+print("\n_check_band: the absolute floor every source shares")
+
+def check_band_rejects_zero():
+    msg = raises(pc._check_band, 0, "test")
+    assert "zero or negative" in msg
+
+test("a zero price is refused, never treated as a value", check_band_rejects_zero)
+
+
+def check_band_rejects_negative():
+    raises(pc._check_band, -1.5, "test")
+
+test("a negative price is refused", check_band_rejects_negative)
+
+
+def check_band_rejects_too_low():
+    msg = raises(pc._check_band, 0.001, "test")
+    assert "sane band" in msg
+
+test("a price below the absolute floor is refused (unit/divisor error)", check_band_rejects_too_low)
+
+
+def check_band_rejects_too_high():
+    raises(pc._check_band, 500.0, "test")
+
+test("a price above the absolute ceiling is refused", check_band_rejects_too_high)
+
+
+def check_band_accepts_in_range():
+    pc._check_band(6.16, "test")  # must not raise
+
+test("a sane per-GPU price passes the band check", check_band_accepts_in_range)
+
+
+# ===========================================================================
+# Azure — meterName exactness, the Windows-shares-meterName gotcha, zero rows
+# ===========================================================================
+print("\nfetch_azure: region+meterName+productName, all three, verified live 2026-09-16")
+
+# Trimmed, real shape captured live for Standard_ND96isr_H100_v5/eastus: Linux
+# and Windows share the SAME meterName, only productName differs.
+AZURE_H100_ITEMS = [
+    {"armRegionName": "eastus", "armSkuName": "Standard_ND96isr_H100_v5", "meterName": "ND96isrH100v5",
+     "productName": "Virtual Machines NDsr H100 v5 Series", "type": "Consumption",
+     "unitOfMeasure": "1 Hour", "currencyCode": "USD", "retailPrice": 98.32},
+    {"armRegionName": "eastus", "armSkuName": "Standard_ND96isr_H100_v5", "meterName": "ND96isrH100v5",
+     "productName": "Virtual Machines NDsr H100 v5 Series Windows", "type": "Consumption",
+     "unitOfMeasure": "1 Hour", "currencyCode": "USD", "retailPrice": 102.736},
+    {"armRegionName": "eastus", "armSkuName": "Standard_ND96isr_H100_v5", "meterName": "ND96isrH100v5 Spot",
+     "productName": "Virtual Machines NDsr H100 v5 Series", "type": "Consumption",
+     "unitOfMeasure": "1 Hour", "currencyCode": "USD", "retailPrice": 18.169536},
+    {"armRegionName": "eastus", "armSkuName": "Standard_ND96isr_H100_v5", "meterName": "ND96isrH100v5 Low Priority",
+     "productName": "Virtual Machines NDsr H100 v5 Series Windows", "type": "Consumption",
+     "unitOfMeasure": "1 Hour", "currencyCode": "USD", "retailPrice": 41.094},
+]
+
+
+def _azure_body(items):
+    return json.dumps({"BillingCurrency": "USD", "Items": items, "NextPageLink": None, "Count": len(items)})
+
+
+def check_azure_isolates_linux_ondemand():
+    with fake_http_get((_azure_body(AZURE_H100_ITEMS), {})):
+        r = pc.fetch_azure("Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5", 8)
+    assert abs(r.price_per_gpu - 98.32 / 8) < 1e-9, r.price_per_gpu
+    assert r.provider == "azure" and r.region == "eastus"
+
+test("Windows/Spot/Low-Priority rows are excluded even though Windows shares meterName with Linux",
+     check_azure_isolates_linux_ondemand)
+
+
+def check_azure_zero_rows_aborts():
+    with fake_http_get((_azure_body([]), {})):
+        msg = raises(pc.fetch_azure, "Standard_ND97_Nonexistent_v5", "eastus", "X", 8)
+    assert "expected exactly 1" in msg
+
+test("zero rows (e.g. no H200 SKU in a region, verified live) aborts rather than guessing",
+     check_azure_zero_rows_aborts)
+
+
+def check_azure_missing_envelope_key_aborts():
+    with fake_http_get((json.dumps({"NotItems": []}), {})):
+        msg = raises(pc.fetch_azure, "sku", "eastus", "m", 8)
+    assert "shape changed" in msg
+
+test("a response missing the Items/Count envelope keys aborts as a shape change",
+     check_azure_missing_envelope_key_aborts)
+
+
+def check_azure_ambiguous_rows_abort():
+    dup = [dict(AZURE_H100_ITEMS[0]), dict(AZURE_H100_ITEMS[0])]
+    with fake_http_get((_azure_body(dup), {})):
+        msg = raises(pc.fetch_azure, "Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5", 8)
+    assert "resolved to 2 rows" in msg
+
+test("two rows surviving the filter abort instead of picking one", check_azure_ambiguous_rows_abort)
+
+
+def check_azure_non_usd_aborts():
+    row = dict(AZURE_H100_ITEMS[0])
+    row["currencyCode"] = "EUR"
+    with fake_http_get((_azure_body([row]), {})):
+        raises(pc.fetch_azure, "Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5", 8)
+
+test("a non-USD currency aborts", check_azure_non_usd_aborts)
+
+
+# ===========================================================================
+# AWS — the compound-key trap this tool's own live check found
+# ===========================================================================
+print("\nfetch_aws_feed/select_aws: keys are compound strings, not the instance type")
+
+AWS_FEED_FIXTURE = {
+    "manifest": {"hawkFilePublicationDate": "2026-09-10T19:55:14Z"},
+    "regions": {
+        "US East (N. Virginia)": {
+            # The real, live-verified key shape: "<type> <region-ish> Linux", not "p5.48xlarge".
+            "p5 48xlarge US East N. Virginia Linux": {
+                "Instance Type": "p5.48xlarge", "Operating System": "Linux", "price": "55.0400000000"},
+            "p4d 24xlarge US East N. Virginia Linux": {
+                "Instance Type": "p4d.24xlarge", "Operating System": "Linux", "price": "21.9576420000"},
+        }
+    },
+}
+
+
+def check_aws_feed_shape_and_lookup():
+    with fake_http_get((json.dumps(AWS_FEED_FIXTURE), {})):
+        region_map, manifest = pc.fetch_aws_feed()
+    assert manifest["hawkFilePublicationDate"] == "2026-09-10T19:55:14Z"
+    # Confirms the trap this tool's own live check found: a bare-instance-type
+    # lookup into region_map would silently return nothing.
+    assert region_map.get("p5.48xlarge") is None
+    r = pc.select_aws(region_map, "p5.48xlarge", 8)
+    assert abs(r.price_per_gpu - 55.04 / 8) < 1e-9
+
+test("select_aws finds a row by its 'Instance Type' field, not by dict key",
+     check_aws_feed_shape_and_lookup)
+
+
+def check_aws_missing_top_level_keys_aborts():
+    with fake_http_get((json.dumps({"nope": True}), {})):
+        msg = raises(pc.fetch_aws_feed)
+    assert "shape changed" in msg
+
+test("a feed missing manifest/regions aborts as a shape change", check_aws_missing_top_level_keys_aborts)
+
+
+def check_aws_zero_matches_abort():
+    region_map, _ = AWS_FEED_FIXTURE["regions"]["US East (N. Virginia)"], None
+    msg = raises(pc.select_aws, region_map, "p9.999xlarge", 8)
+    assert "expected exactly 1" in msg
+
+test("an instance type with zero matches aborts", check_aws_zero_matches_abort)
+
+
+def check_aws_duplicate_matches_abort():
+    region_map = {
+        "a": {"Instance Type": "p5.48xlarge", "Operating System": "Linux", "price": "55.04"},
+        "b": {"Instance Type": "p5.48xlarge", "Operating System": "Linux", "price": "99.99"},
+    }
+    msg = raises(pc.select_aws, region_map, "p5.48xlarge", 8)
+    assert "2 rows matched" in msg
+
+test("two rows matching the same instance type abort instead of picking one",
+     check_aws_duplicate_matches_abort)
+
+
+def check_aws_non_linux_aborts():
+    region_map = {"a": {"Instance Type": "p5.48xlarge", "Operating System": "Windows", "price": "70.00"}}
+    raises(pc.select_aws, region_map, "p5.48xlarge", 8)
+
+test("a non-Linux row aborts", check_aws_non_linux_aborts)
+
+
+def check_aws_non_numeric_price_aborts():
+    region_map = {"a": {"Instance Type": "p5.48xlarge", "Operating System": "Linux", "price": "call us"}}
+    msg = raises(pc.select_aws, region_map, "p5.48xlarge", 8)
+    assert "non-numeric" in msg
+
+test("a non-numeric price aborts", check_aws_non_numeric_price_aborts)
+
+
+# ===========================================================================
+# Lambda — data-plan rows, the escaped-duplicate exclusion, scale pinned by vCPUs
+# ===========================================================================
+print("\nLambda: PRICE/GPU/HR rows, JSON-escaped duplicates excluded by construction")
+
+LAMBDA_HTML = '''
+<table><tbody>
+<tr class="_row_1" data-plan="NVIDIA H100 SXM"><th data-label="Plan">NVIDIA H100 SXM</th><td data-label="VRAM/GPU">80 GB</td><td data-label="vCPUs">208</td><td data-label="PRICE/GPU/HR*">$3.99</td></tr>
+<tr class="_row_1" data-plan="NVIDIA H100 SXM"><th data-label="Plan">NVIDIA H100 SXM</th><td data-label="VRAM/GPU">80 GB</td><td data-label="vCPUs">26</td><td data-label="PRICE/GPU/HR*">$4.29</td></tr>
+<tr class="_row_1" data-plan="NVIDIA V100"><th data-label="Plan">NVIDIA V100</th><td data-label="VRAM/GPU">16 GB</td><td data-label="vCPUs">90</td><td data-label="PRICE/GPU/HR*">\u2014</td></tr>
+</tbody></table>
+<script>var hydration = "...\\u003Ctr class=\\"_row_1\\" data-plan=\\"NVIDIA H100 SXM\\"\\u003E...data-label=\\"PRICE/GPU/HR*\\"\\u003E$99.99...";</script>
+'''
+
+
+def check_lambda_anchor_required():
+    with fake_http_get(("<html>no pricing here</html>", {})):
+        raises(pc.fetch_lambda_page)
+
+test("a page missing the PRICE/GPU/HR anchor aborts before parsing", check_lambda_anchor_required)
+
+
+def check_lambda_escaped_duplicate_excluded():
+    rows = pc.parse_lambda_rows(LAMBDA_HTML)
+    # Exactly the 3 plain rows — the JSON-escaped $99.99 duplicate contributes nothing.
+    assert len(rows) == 3, rows
+    assert all(r["price_text"] != "$99.99" for r in rows)
+
+test("the JSON-escaped duplicate table never reaches parse_lambda_rows's output",
+     check_lambda_escaped_duplicate_excluded)
+
+
+def check_lambda_selects_by_plan_vram_and_vcpus():
+    rows = pc.parse_lambda_rows(LAMBDA_HTML)
+    r = pc.select_lambda(rows, "NVIDIA H100 SXM", "80 GB", "208")
+    assert r.price_per_gpu == 3.99
+    # The 1x row (26 vCPUs) for the same plan/vram must NOT match a query pinned to 208.
+    r2 = pc.select_lambda(rows, "NVIDIA H100 SXM", "80 GB", "26")
+    assert r2.price_per_gpu == 4.29
+
+test("vCPUs pins the node-scale row (8x vs 1x) when plan+VRAM alone is ambiguous",
+     check_lambda_selects_by_plan_vram_and_vcpus)
+
+
+def check_lambda_missing_price_aborts():
+    rows = pc.parse_lambda_rows(LAMBDA_HTML)
+    msg = raises(pc.select_lambda, rows, "NVIDIA V100", "16 GB", "90")
+    assert "no price listed" in msg
+
+test("an em-dash price cell aborts rather than being read as zero", check_lambda_missing_price_aborts)
+
+
+def check_lambda_zero_matches_abort():
+    rows = pc.parse_lambda_rows(LAMBDA_HTML)
+    msg = raises(pc.select_lambda, rows, "NVIDIA H100 SXM", "40 GB", "208")
+    assert "expected exactly 1" in msg
+
+test("a plan/VRAM/vCPUs combination with no row aborts", check_lambda_zero_matches_abort)
+
+
+def check_lambda_ambiguous_matches_abort():
+    dup_html = LAMBDA_HTML.replace(
+        '<tr class="_row_1" data-plan="NVIDIA V100">',
+        '<tr class="_row_1" data-plan="NVIDIA H100 SXM"><th data-label="Plan">NVIDIA H100 SXM</th>'
+        '<td data-label="VRAM/GPU">80 GB</td><td data-label="vCPUs">208</td>'
+        '<td data-label="PRICE/GPU/HR*">$3.79</td></tr>\n<tr class="_row_1" data-plan="NVIDIA V100">')
+    rows = pc.parse_lambda_rows(dup_html)
+    msg = raises(pc.select_lambda, rows, "NVIDIA H100 SXM", "80 GB", "208")
+    assert "2 rows matched" in msg
+
+test("two rows for the same plan/VRAM/vCPUs abort instead of picking one",
+     check_lambda_ambiguous_matches_abort)
+
+
+def check_lambda_zero_rows_total_aborts():
+    msg = raises(pc.parse_lambda_rows, "<html>data-label=\"PRICE/GPU/HR*\" but no rows</html>")
+    assert "zero pricing rows" in msg
+
+test("an anchor present but zero parseable rows aborts (structure changed)",
+     check_lambda_zero_rows_total_aborts)
+
+
+# ===========================================================================
+# CoreWeave — duplicated blocks, spot never trusted, GPU Count / divisor cross-check
+# ===========================================================================
+print("\nCoreWeave: duplicated DOM blocks, on-demand must agree, spot is never read")
+
+def _coreweave_block(slug, name, gpu_count, vram, on_demand, spot, per_gpu=None):
+    per_gpu_span = (f'<span class="inference-price">Inference Single CPU Price: '
+                     f'<span class="item-value">${per_gpu:.2f}</span> / Hour</span>') if per_gpu is not None else \
+                    '<span class="inference-price">Inference Single CPU Price: <span class="item-value"></span> / Hour</span>'
+    od_span = (f'<span class="item-value">${on_demand:.2f}</span>' if on_demand is not None
+               else '<span class="item-value"></span>')
+    spot_span = (f'<span class="item-value">${spot:.2f}</span>' if spot is not None
+                 else '<span class="item-value">N/A</span>')
+    return f'''
+<h3 data-product="{slug}" class="table-model-name">{name}</h3>
+<div class="table-cell-column table-cell-column-left">
+  <div class="table-meta-text"><div class="table-meta-value">
+    <span class="instance-price">On-Demand Price: {od_span} / Hour<br/></span>
+    <span class="spot-price">Spot Price: {spot_span} / Hour<br/></span>
+    {per_gpu_span}
+  </div></div>
+</div>
+<div class="table-cell-column table-cell-column-right"><div class="table-cell-column-contents">
+  <div class="table-meta-text table-meta-text-right"><div class="table-meta-value">{gpu_count}</div><div>GPU Count</div></div>
+  <div class="table-meta-text table-meta-text-right"><div class="table-meta-value">{vram}</div><div>VRAM</div></div>
+</div></div>
+'''
+
+
+def check_coreweave_happy_path():
+    html = _coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.71, per_gpu=6.16)
+    r = pc.select_coreweave(html, "hgx-h100", "NVIDIA HGX H100", "80", 8)
+    assert abs(r.price_per_gpu - 6.16) < 1e-9
+    assert "spot" not in r.sku.lower()
+
+test("the page's own per-GPU figure is used when it agrees with on-demand/count within 1%",
+     check_coreweave_happy_path)
+
+
+def check_coreweave_spot_disagreement_is_ignored():
+    # Reproduces what this tool's own live check found today: the SAME product's
+    # spot price differs between duplicated blocks in one fetch. On-demand agrees.
+    html = (_coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.71, per_gpu=6.16)
+            + _coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.51, per_gpu=6.16))
+    r = pc.select_coreweave(html, "hgx-h100", "NVIDIA HGX H100", "80", 8)
+    assert abs(r.price_per_gpu - 6.16) < 1e-9  # succeeds despite the spot mismatch
+
+test("disagreeing spot figures across duplicated blocks never abort the run (spot is unused)",
+     check_coreweave_spot_disagreement_is_ignored)
+
+
+def check_coreweave_on_demand_disagreement_aborts():
+    html = (_coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.71, per_gpu=6.16)
+            + _coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 51.00, 19.71, per_gpu=6.16))
+    msg = raises(pc.select_coreweave, html, "hgx-h100", "NVIDIA HGX H100", "80", 8)
+    assert "disagreed" in msg
+
+test("disagreeing on-demand figures across duplicated blocks abort — never guess which copy is right",
+     check_coreweave_on_demand_disagreement_aborts)
+
+
+def check_coreweave_contact_sales_aborts():
+    html = _coreweave_block("nvidia-gb300-nvl72", "NVIDIA GB300 NVL72", 4, "279", None, None, per_gpu=None)
+    msg = raises(pc.select_coreweave, html, "nvidia-gb300-nvl72", "NVIDIA GB300 NVL72", "279", 4)
+    assert "Contact sales" in msg or "no On-Demand price" in msg
+
+test("a 'Contact sales' row (no price at all) aborts, never reads as zero",
+     check_coreweave_contact_sales_aborts)
+
+
+def check_coreweave_vram_mismatch_aborts():
+    html = _coreweave_block("nvidia-b200", "NVIDIA HGX B200", 8, "180", 68.80, 34.11, per_gpu=8.60)
+    # Configured for 192 (a catalog value) when the page says 180 — must abort,
+    # not silently accept a board whose VRAM doesn't match what was pinned.
+    msg = raises(pc.select_coreweave, html, "nvidia-b200", "NVIDIA HGX B200", "192", 8)
+    assert "VRAM" in msg
+
+test("a VRAM mismatch against the configured anchor aborts", check_coreweave_vram_mismatch_aborts)
+
+
+def check_coreweave_divisor_mismatch_aborts():
+    html = _coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.71, per_gpu=6.16)
+    msg = raises(pc.select_coreweave, html, "hgx-h100", "NVIDIA HGX H100", "80", 4)
+    assert "divisor" in msg
+
+test("the page's own GPU Count disagreeing with the configured divisor aborts",
+     check_coreweave_divisor_mismatch_aborts)
+
+
+def check_coreweave_cross_check_mismatch_aborts():
+    # On-demand/GPU-count = 49.24/8 = 6.155, more than 1% away from a page figure of 7.00.
+    html = _coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.71, per_gpu=7.00)
+    msg = raises(pc.select_coreweave, html, "hgx-h100", "NVIDIA HGX H100", "80", 8)
+    assert "disagrees" in msg
+
+test("on-demand/GPU-count disagreeing with the page's own per-GPU figure by >1% aborts",
+     check_coreweave_cross_check_mismatch_aborts)
+
+
+def check_coreweave_no_title_aborts():
+    html = _coreweave_block("hgx-h100", "NVIDIA HGX H100", 8, "80", 49.24, 19.71, per_gpu=6.16)
+    msg = raises(pc.select_coreweave, html, "hgx-h200", "NVIDIA HGX H200", "141", 8)
+    assert "no row titled" in msg
+
+test("a product slug that no longer appears on the page aborts", check_coreweave_no_title_aborts)
+
+
+def check_coreweave_falls_back_to_division_without_page_figure():
+    html = _coreweave_block("nvidia-l40s", "NVIDIA L40S", 8, "48", 18.00, 7.88, per_gpu=None)
+    r = pc.select_coreweave(html, "nvidia-l40s", "NVIDIA L40S", "48", 8)
+    assert abs(r.price_per_gpu - 18.00 / 8) < 1e-9
+
+test("falls back to on-demand/GPU-count when the page carries no separate per-GPU figure",
+     check_coreweave_falls_back_to_division_without_page_figure)
+
+
+# ===========================================================================
+# Vast.ai — sample floor, median (never min), structured error envelope
+# ===========================================================================
+print("\nVast.ai: sample-size floor, median over min, the error envelope")
+
+def _vast_body(dph_list, success=True):
+    if not success:
+        return json.dumps({"success": False, "error": "bad_request", "msg": "q must be valid JSON"})
+    return json.dumps({"offers": [{"dph_total": d} for d in dph_list], "truncated": False})
+
+
+def check_vast_uses_median_not_min():
+    with fake_http_get((_vast_body([2.74, 3.03, 3.35, 4.09, 4.57]), {})):
+        r = pc.fetch_vast("H100 SXM")
+    assert r.price_per_gpu == 3.35, r.price_per_gpu  # the median, not 2.74 (the min)
+
+test("the median is used, never the minimum offer", check_vast_uses_median_not_min)
+
+
+def check_vast_even_sample_averages_middle_two():
+    with fake_http_get((_vast_body([1.0, 2.0, 3.0, 4.0]), {})):
+        r = pc.fetch_vast("X", min_sample=4)
+    assert r.price_per_gpu == 2.5
+
+test("an even-sized sample averages the middle two", check_vast_even_sample_averages_middle_two)
+
+
+def check_vast_thin_sample_aborts():
+    with fake_http_get((_vast_body([2.74, 3.03, 3.35]), {})):
+        msg = raises(pc.fetch_vast, "H100 SXM")  # default min_sample=5, only 3 offered
+    assert "thin sample" in msg
+
+test("fewer offers than the sample floor aborts rather than trusting a thin median",
+     check_vast_thin_sample_aborts)
+
+
+def check_vast_error_envelope_aborts():
+    with fake_http_get((_vast_body([], success=False), {})):
+        msg = raises(pc.fetch_vast, "H100 SXM")
+    assert "error envelope" in msg
+
+test("a {success: false} error envelope aborts with the API's own message",
+     check_vast_error_envelope_aborts)
+
+
+def check_vast_missing_offers_key_aborts():
+    with fake_http_get((json.dumps({"nope": []}), {})):
+        raises(pc.fetch_vast, "H100 SXM")
+
+test("a response missing the 'offers' key aborts as a shape change",
+     check_vast_missing_offers_key_aborts)
+
+
+def check_vast_num_gpus_divides():
+    with fake_http_get((_vast_body([8.0, 9.0, 10.0, 11.0, 12.0]), {})):
+        r = pc.fetch_vast("8x thing", num_gpus=4)
+    assert r.price_per_gpu == 2.5  # 10.0 (median dph_total) / 4
+
+test("dph_total is divided by num_gpus before the median is taken",
+     check_vast_num_gpus_divides)
+
+
+# ===========================================================================
+# Classification: CONFIRMED / MOVED / FLAGGED thresholds
+# ===========================================================================
+print("\n_classify: the 1% confirm floor and the 40% flag ceiling")
+
+def check_classify_tiny_delta_confirms():
+    status, proposed = pc._classify(12.3, 12.31)
+    assert status == "CONFIRMED" and proposed == 12.3
+
+test("a sub-1% delta confirms without changing the stored value", check_classify_tiny_delta_confirms)
+
+
+def check_classify_mid_delta_moves():
+    status, proposed = pc._classify(10.0, 11.0)  # +10%
+    assert status == "MOVED" and proposed == 11.0
+
+test("a delta between 1% and 40% proposes the new (rounded) value", check_classify_mid_delta_moves)
+
+
+def check_classify_large_delta_flags_and_withholds():
+    status, proposed = pc._classify(10.0, 20.0)  # +100%
+    assert status == "FLAGGED" and proposed is None
+
+test("a delta over 40% flags for human review and proposes nothing",
+     check_classify_large_delta_flags_and_withholds)
+
+
+def check_classify_boundary_is_exclusive_on_flag():
+    status, _ = pc._classify(10.0, 14.0)  # exactly +40%
+    assert status == "MOVED", "exactly the flag threshold must not itself flag"
+    status, _ = pc._classify(10.0, 14.0001)
+    assert status == "FLAGGED"
+
+test("the 40% boundary itself still proposes a value; only strictly past it flags",
+     check_classify_boundary_is_exclusive_on_flag)
+
+
+def check_classify_rounds_proposed_value():
+    status, proposed = pc._classify(1.0, 1.23456)
+    assert proposed == 1.23
+
+test("a proposed value is rounded to 2 decimal places, matching the catalog's own style",
+     check_classify_rounds_proposed_value)
+
+
+# ===========================================================================
+# apply_outcomes / apply_to_text — never touches an untouched row
+# ===========================================================================
+print("\napply_outcomes / apply_to_text: only CONFIRMED and MOVED rows change, nothing else does")
+
+def _reading(provider="azure", sku="SKU", region="eastus", price=1.0, date="2026-09-16"):
+    return pc.Reading(provider=provider, sku=sku, region=region, price_per_gpu=price,
+                       date=date, evidence="test")
+
+
+def check_apply_confirmed_only_touches_price_source():
+    gpus = {"x": {"hyper": 5.0, "spec": 2.0, "spot": 1.0}}
+    oc = pc.Outcome("x", "hyper", "CONFIRMED", current=5.0, proposed=5.0, reading=_reading(price=5.0))
+    changed = pc.apply_outcomes(gpus, [oc])
+    assert changed is True
+    assert gpus["x"]["hyper"] == 5.0  # unchanged
+    assert gpus["x"]["priceSource"]["hyper"]["provider"] == "azure"
+
+test("CONFIRMED refreshes priceSource but never rewrites the price",
+     check_apply_confirmed_only_touches_price_source)
+
+
+def check_apply_moved_rewrites_price_and_source():
+    gpus = {"x": {"hyper": 5.0}}
+    oc = pc.Outcome("x", "hyper", "MOVED", current=5.0, proposed=4.2, reading=_reading(price=4.2))
+    pc.apply_outcomes(gpus, [oc])
+    assert gpus["x"]["hyper"] == 4.2
+    assert gpus["x"]["priceSource"]["hyper"]["sku"] == "SKU"
+
+test("MOVED rewrites both the price and priceSource", check_apply_moved_rewrites_price_and_source)
+
+
+def check_apply_flagged_aborted_manual_never_touch_row():
+    gpus = {"x": {"hyper": 5.0}}
+    original = copy.deepcopy(gpus)
+    outcomes = [
+        pc.Outcome("x", "hyper", "FLAGGED", current=5.0, proposed=None, reading=_reading(price=50.0)),
+        pc.Outcome("x", "hyper", "ABORTED", current=5.0, note="boom"),
+        pc.Outcome("x", "hyper", "MANUAL", current=5.0, note="no source"),
+    ]
+    changed = pc.apply_outcomes(gpus, outcomes)
+    assert changed is False
+    assert gpus == original
+
+test("FLAGGED, ABORTED and MANUAL outcomes never mutate the row",
+     check_apply_flagged_aborted_manual_never_touch_row)
+
+
+def check_apply_to_text_only_changes_named_rows():
+    raw = (
+        '{\n'
+        '  "_meta": {\n    "last_updated": "2026-08-24"\n  },\n'
+        '  "data": {\n'
+        '    "a100-80": { "gb": 80, "hyper": 4.5 },\n'
+        '    "h100-80": { "gb": 80, "hyper": 12.3 }\n'
+        '  }\n'
+        '}\n'
+    )
+    gpus = {"a100-80": {"gb": 80, "hyper": 4.5}, "h100-80": {"gb": 80, "hyper": 12.29}}
+    new_text = pc.apply_to_text(raw, gpus, ["h100-80"], "2026-09-16")
+    parsed = json.loads(new_text)
+    assert parsed["data"]["h100-80"]["hyper"] == 12.29
+    assert parsed["data"]["a100-80"] == {"gb": 80, "hyper": 4.5}, "untouched row must not move"
+    assert parsed["_meta"]["last_updated"] == "2026-09-16"
+    # The untouched row's exact original line must still be present, byte for byte.
+    assert '"a100-80": { "gb": 80, "hyper": 4.5 },' in new_text
+
+test("apply_to_text rewrites only the named row's line and _meta.last_updated",
+     check_apply_to_text_only_changes_named_rows)
+
+
+def check_apply_to_text_no_changes_leaves_last_updated_alone():
+    raw = '{\n  "_meta": {\n    "last_updated": "2026-08-24"\n  },\n  "data": {\n    "x": { "hyper": 1.0 }\n  }\n}\n'
+    new_text = pc.apply_to_text(raw, {"x": {"hyper": 1.0}}, [], "2026-09-16")
+    assert new_text == raw
+
+test("no changed slugs means the file is byte-identical, last_updated included",
+     check_apply_to_text_no_changes_leaves_last_updated_alone)
+
+
+def check_apply_to_text_missing_row_errors_clearly():
+    raw = '{\n  "data": {\n    "x": { "hyper": 1.0 }\n  }\n}\n'
+    try:
+        pc.apply_to_text(raw, {"y": {"hyper": 1.0}}, ["y"], "2026-09-16")
+    except SystemExit as e:
+        assert "y" in str(e)
+        return
+    raise AssertionError("a slug missing from the raw text should have raised SystemExit")
+
+test("a slug that can't be found as a single line fails loudly, naming the slug",
+     check_apply_to_text_missing_row_errors_clearly)
+
+
+# ===========================================================================
+# run() orchestration
+# ===========================================================================
+print("\nrun(): manual/aborted/flagged wiring, secondary failures never blocking primary")
+
+def check_run_manual_entry_produces_manual_outcome():
+    gpus = {"x": {"hyper": 1.0, "spec": 1.0, "spot": 1.0}}
+    source_map = {"x": {"hyper": {"manual": "no hyperscaler rents this card"}}}
+    outcomes = pc.run(gpus, source_map, shared={})
+    hyper = next(o for o in outcomes if o.tier == "hyper")
+    assert hyper.status == "MANUAL" and "no hyperscaler" in hyper.note
+
+test("a manual config entry produces a MANUAL outcome with its reason",
+     check_run_manual_entry_produces_manual_outcome)
+
+
+def check_run_unconfigured_tier_is_also_manual():
+    gpus = {"x": {"hyper": 1.0, "spec": 1.0, "spot": 1.0}}
+    outcomes = pc.run(gpus, {}, shared={})  # nothing configured for slug "x" at all
+    assert all(o.status == "MANUAL" for o in outcomes)
+    assert all("no source configured" in o.note for o in outcomes)
+
+test("a slug/tier entirely absent from SOURCE_MAP is MANUAL, not a crash",
+     check_run_unconfigured_tier_is_also_manual)
+
+
+def check_run_primary_failure_aborts_and_skips_secondary():
+    gpus = {"x": {"hyper": 1.0}}
+    calls = []
+
+    def boom(spec, shared):
+        calls.append(spec["kind"])
+        raise pc.SourceError("boom")
+
+    original = pc._fetch_one
+    pc._fetch_one = boom
+    try:
+        source_map = {"x": {"hyper": {"primary": {"kind": "azure"}, "secondary": [{"kind": "aws"}]}}}
+        outcomes = pc.run(gpus, source_map, shared={})
+    finally:
+        pc._fetch_one = original
+    assert outcomes[0].status == "ABORTED"
+    assert calls == ["azure"], "secondary must never be fetched once the primary aborts"
+
+test("a failed primary aborts the tier and never attempts the secondary",
+     check_run_primary_failure_aborts_and_skips_secondary)
+
+
+def check_run_secondary_failure_does_not_affect_primary_status():
+    gpus = {"x": {"hyper": 5.0}}
+
+    def fake_fetch(spec, shared):
+        if spec["kind"] == "primary-kind":
+            return _reading(price=5.0)
+        raise pc.SourceError("secondary is down")
+
+    original = pc._fetch_one
+    pc._fetch_one = fake_fetch
+    try:
+        source_map = {"x": {"hyper": {"primary": {"kind": "primary-kind"},
+                                        "secondary": [{"kind": "secondary-kind"}]}}}
+        outcomes = pc.run(gpus, source_map, shared={})
+    finally:
+        pc._fetch_one = original
+    oc = outcomes[0]
+    assert oc.status == "CONFIRMED"
+    assert len(oc.secondary) == 1 and isinstance(oc.secondary[0], pc.SourceError)
+
+test("a failing secondary is recorded but never changes the primary's classification",
+     check_run_secondary_failure_does_not_affect_primary_status)
+
+
+def check_run_only_filter_excludes_a_kind():
+    gpus = {"x": {"hyper": 5.0}}
+    source_map = {"x": {"hyper": {"primary": {"kind": "azure"}}}}
+    outcomes = pc.run(gpus, source_map, shared={}, only={"aws"})  # azure not in the allowed set
+    assert outcomes[0].status == "MANUAL"
+    assert "--only" in outcomes[0].note
+
+test("--only excluding a tier's configured kind reports it as manual for this run",
+     check_run_only_filter_excludes_a_kind)
+
+
+# ===========================================================================
+# SOURCE_MAP integrity — the config itself, checked the way main() checks it
+# ===========================================================================
+print("\nSOURCE_MAP: every slug matches the real catalog, every entry is well-formed")
+
+def check_source_map_matches_real_catalog():
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        catalog_slugs = set(json.load(f)["data"])
+    assert set(pc.SOURCE_MAP) == catalog_slugs, (
+        f"SOURCE_MAP and data/gpus.json have drifted: "
+        f"map-only={set(pc.SOURCE_MAP) - catalog_slugs}, catalog-only={catalog_slugs - set(pc.SOURCE_MAP)}")
+
+test("SOURCE_MAP covers exactly the slugs data/gpus.json has, no more and no fewer",
+     check_source_map_matches_real_catalog)
+
+
+def check_source_map_entries_well_formed():
+    known_kinds = {"azure", "aws", "lambda", "coreweave", "vast"}
+    for slug, tiers in pc.SOURCE_MAP.items():
+        for tier, cfg in tiers.items():
+            assert tier in ("hyper", "spec", "spot"), f"{slug}: unknown tier {tier!r}"
+            is_manual = "manual" in cfg
+            is_configured = "primary" in cfg
+            assert is_manual != is_configured, (
+                f"{slug}/{tier}: must be exactly one of manual or primary-configured")
+            if is_manual:
+                assert isinstance(cfg["manual"], str) and cfg["manual"], f"{slug}/{tier}: empty manual reason"
+            else:
+                for spec in [cfg["primary"]] + cfg.get("secondary", []):
+                    assert spec["kind"] in known_kinds, f"{slug}/{tier}: unknown kind {spec['kind']!r}"
+
+test("every SOURCE_MAP entry is exactly one of manual-with-a-reason or primary-configured",
+     check_source_map_entries_well_formed)
+
+
+def check_needed_kinds_reflects_the_map():
+    kinds = pc._needed_kinds(pc.SOURCE_MAP)
+    assert kinds == {"azure", "aws", "lambda", "coreweave", "vast"}, kinds
+
+test("_needed_kinds sees every source kind actually used in SOURCE_MAP", check_needed_kinds_reflects_the_map)
+
+
+print(f"\n{pass_ct} passed, {fail_ct} failed\n")
+sys.exit(1 if fail_ct else 0)

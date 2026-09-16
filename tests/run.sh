@@ -16,6 +16,9 @@ python3 tests/report.test.py
 echo "== generated data blocks (tools/sync_data.py) =="
 python3 tests/sync.test.py
 
+echo "== price-refresh sanity checks (tools/price_check.py) =="
+python3 tests/price_check.test.py
+
 echo "== published images (tools/make_assets.py) =="
 python3 tests/assets.test.py
 

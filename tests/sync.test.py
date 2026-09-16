@@ -76,6 +76,96 @@ def check_gpu_py_round_trips():
 test("data/gpus.json survives rendering to Python and back", check_gpu_py_round_trips)
 
 
+print("\npriceSource is optional, nests an object, and is escaped like any other field")
+
+# No row in data/gpus.json carries priceSource yet (see _meta.schema.priceSource) — it
+# is exercised here with synthetic rows so the wiring is proven before tools/price_check.py
+# ever writes one for real.
+def check_price_source_round_trips_js():
+    rows = {
+        "8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+                       "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
+                       "form": "sxm", "caps": {"fp8": True},
+                       "priceSource": {"hyper": {"provider": "azure",
+                                                  "sku": "Standard_ND96isr_H100_v5",
+                                                  "region": "eastus", "date": "2026-09-16"}}},
+        # A second row with no priceSource at all: the optional field must not be
+        # required just because a sibling row happens to carry it.
+        "8b-a100-80": {"gb": 80, "bw": 2039, "hyper": 4.5, "spec": 1.79, "spot": 0.99,
+                       "tflops": 312, "name": "A100 80 GB", "vendor": "nvidia", "devices": 1,
+                       "form": "sxm", "caps": {"fp8": False}},
+    }
+    block = sync_data.render_gpu_js(rows)
+    body = "\n".join(l for l in block.splitlines() if not l.startswith("/*"))
+    assert js_eval(body, "GPU_TABLE") == rows, "priceSource did not round-trip through JS"
+
+test("a row with priceSource round-trips through JS beside a row without it",
+     check_price_source_round_trips_js)
+
+
+def check_price_source_round_trips_py():
+    rows = {
+        "8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+                       "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
+                       "form": "sxm", "caps": {"fp8": True},
+                       "priceSource": {"hyper": {"provider": "azure",
+                                                  "sku": "Standard_ND96isr_H100_v5",
+                                                  "region": "eastus", "date": "2026-09-16"},
+                                       "spec": {"provider": "lambda", "sku": "NVIDIA H100 SXM",
+                                                "region": "global", "date": "2026-09-16"}}},
+    }
+    block = sync_data.render_gpu_py(rows)
+    body = "\n".join(l for l in block.splitlines() if not l.startswith("#"))
+    ns = {}
+    exec(body, ns)
+    assert ns["GPUS"] == rows, "priceSource did not round-trip through Python"
+
+test("priceSource with multiple tiers round-trips through Python",
+     check_price_source_round_trips_py)
+
+
+def check_price_source_free_text_is_escaped():
+    # provider/sku/region ultimately come from a fetched page (a Lambda plan
+    # name, an Azure meterName): contributor-adjacent free text, same class as
+    # a benchmark note, sitting inside the same <script> element in index.html.
+    hostile = "</script><script>alert(1)</script>"
+    rows = {"8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+                           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
+                           "form": "sxm", "caps": {"fp8": True},
+                           "priceSource": {"hyper": {"provider": "azure", "sku": hostile,
+                                                      "region": "eastus", "date": "2026-09-16"}}}}
+    block = sync_data.render_gpu_js(rows)
+    body = "\n".join(l for l in block.splitlines() if not l.startswith("/*"))
+    assert js_eval(body, "GPU_TABLE") == rows, "value changed in transit"
+    assert "</script" not in body.lower(), "rendered block can close its own script tag"
+
+test("a hostile priceSource sku cannot close the script tag",
+     check_price_source_free_text_is_escaped)
+
+
+def check_marker_text_nested_in_price_source_is_refused():
+    """The marker check stringifies the whole field value before searching it
+    (str(row[f])), which is what lets it see into a nested dict at all —
+    caps never carries free text, so priceSource is the first field where a
+    marker hiding inside a *nested* value, not the top-level field, matters."""
+    poisoned = "see the GPU_TABLE:END marker in tools/sync_data.py"
+    rows = {"8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+                           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
+                           "form": "sxm", "caps": {"fp8": True},
+                           "priceSource": {"hyper": {"provider": "azure", "sku": poisoned,
+                                                      "region": "eastus", "date": "2026-09-16"}}}}
+    try:
+        sync_data.render_gpu_js(rows)
+    except SystemExit as e:
+        assert "8b-h100-80" in str(e) and "priceSource" in str(e), \
+            f"error names neither the row nor the field: {e}"
+        return
+    raise AssertionError("a marker hidden inside a nested priceSource value rendered anyway")
+
+test("a block marker nested inside priceSource is refused, naming the row and field",
+     check_marker_text_nested_in_price_source_is_refused)
+
+
 print("\nContributor free text cannot escape the literal it is written into")
 
 # A benchmark note is prose from a pull request. Each of these ends the string,

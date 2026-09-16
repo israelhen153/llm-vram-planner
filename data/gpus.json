@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0.0",
-    "last_updated": "2026-08-24",
+    "last_updated": "2026-09-16",
     "description": "GPU catalog for the VRAM/throughput planner — capacity, bandwidth, dense BF16 compute, and 3-tier hourly pricing. Keyed by slug (t4-16, a100-80, ...), the same convention benchmarks/data.json's GPU half of each key uses. index.html's GPU_TABLE and generate_report.py's GPUS are generated from this file by tools/sync_data.py, between 'GPU_TABLE:BEGIN'/'GPU_TABLE:END' marker comments in each — edit this file, then re-run that script; do not hand-edit the generated blocks. The row schema carries what both engines read plus the structural fields the v1.1 work needs (vendor, devices, form, caps). It is designed to grow — a vendor tag, a per-board device count, a fabric/interconnect tier are all expected to land on this same table in later commits — so a new column is the likely shape of that change, not a new table.",
     "schema": {
       "gb": "VRAM per card, in GiB. Matches the manufacturer's marketing number, which is already GiB in practice — nvidia-smi reports an '80 GB' H100 as 79.6 GiB, not 80/1e9*2^30 worth of decimal GB.",
@@ -15,7 +15,8 @@
       "devices": "How many independent accelerator devices one board presents to the runtime. 1 for every card here. Multi-GCD boards — MI250X is one OAM containing two GCDs — are one catalog row with devices:2, because that is how they are bought and priced, and the engine multiplies rather than the catalog duplicating a row.",
       "form": "Board form factor: 'sxm', 'pcie' or 'consumer'. Read today as the NVLink gate — only sxm boards here carry it — and the prerequisite for the fabric/domain tier a later commit adds.",
       "caps": "Architecture-determined capability flags. caps.fp8 is FP8 tensor-core support: false on Turing (T4) and Ampere (A100), true from Ada and Hopper on.",
-      "default": "Present and true on exactly one row: the card the tool selects when nothing else is specified. Derived by both engines instead of each hardcoding a slug."
+      "default": "Present and true on exactly one row: the card the tool selects when nothing else is specified. Derived by both engines instead of each hardcoding a slug.",
+      "priceSource": "Provenance for hyper/spec/spot, written by tools/price_check.py — not read by index.html or generate_report.py, so it never reaches the generated GPU_TABLE blocks and carries no runtime cost. Optional object keyed by tier name ('hyper'/'spec'/'spot'); a tier key is present only once that tier's price has been confirmed against a live source, as { provider, sku, region, date }: provider is the source ('azure'/'aws'/'lambda'/'coreweave'/'vast'), sku is that provider's own SKU/instance-type/meter/plan name (verbatim, e.g. 'Standard_ND96isr_H100_v5'), region is the provider's region ('eastus') or 'global' for sources with no regional pricing, and date ('YYYY-MM-DD', UTC) is when it was read. A tier missing from priceSource — or the whole key absent, true of every row today — means no automated provenance is recorded: either the price predates this tracking (all twelve rows do; their original sourcing is not reliably known, see tmp/research/price-sources.md's own UNVERIFIED section, and is not guessed at here) or no automatable source exists for that tier (tools/price_check.py's SOURCE_MAP says which, and why, per slug). Absence is not an error, and the tool never invents a value to fill it."
     }
   },
   "data": {

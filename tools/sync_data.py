@@ -73,10 +73,13 @@ def load_benchmarks():
 # are written only on the rows that carry them: `default` marks exactly one
 # card, and a `default: false` on the other eleven would be a value nobody
 # wrote in data/gpus.json. Same for `estimated`, which benchmarks/data.json
-# documents as "omit or false for real measurements".
+# documents as "omit or false for real measurements". `priceSource` is the
+# same shape of optional: no row carries it yet (see _meta.schema.priceSource),
+# but it is declared here now so that the day tools/price_check.py writes one,
+# it renders correctly instead of being silently dropped by row_fields().
 GPU_FIELDS = ("gb", "bw", "hyper", "spec", "spot", "tflops", "name",
               "vendor", "devices", "form", "caps")
-GPU_OPTIONAL = ("default",)
+GPU_OPTIONAL = ("default", "priceSource")
 
 # Every field benchmarks/data.json documents. The inline copy carried four of
 # them — tokS, src, note, prec — so `mode` fell back to 'batch' for entries
