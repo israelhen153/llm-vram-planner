@@ -923,6 +923,13 @@ function readInputState() {
        fallback. It is the card's own vendor, never a user input: constants that
        do not match the hardware are worse than a missing card. */
     vendor: gpu.vendor,
+    /* FP8 tensor-core support, from the catalog's caps. This field existed on
+       every row and reached nothing: getGpuSpec() passed it through and this
+       function dropped it, so the engine could not see it and generate_report.py
+       never read it at all. It gates the FP8 compute multiplier — FP8 weights
+       are half-size on any card that can load them, but only Ada and later can
+       run the GEMM at the FP8 rate. */
+    gpuFp8: !!(gpu.caps && gpu.caps.fp8),
     // A card without NVLink cannot have it selected, whatever the control says
     // — a shared URL carrying nv=1 lands here too.
     hasNVLink: supportsNVLink(gpu) && !!getVal('interconnect'),
@@ -944,7 +951,7 @@ function readInputState() {
    means and how it was chosen. Mirrored in generate_report.py; the parity suite
    enforces it, and both engines must move together when a value changes. */
 const PERF = {
-  nvidia: { mbu: 0.70, mfuDecode: 0.35, mfuPrefill: 0.45, obsLo: 0.43, obsHi: 0.91 },
+  nvidia: { mbu: 0.70, mfuDecode: 0.35, mfuPrefill: 0.45, obsLo: 0.40, obsHi: 0.91, fp8ComputeRatio: 2.0 },
 };
 
 function computeInference(state) {
@@ -952,7 +959,8 @@ function computeInference(state) {
           sharedExperts, contextLength, concurrency, gpuCount, gpuGB, gpuDevices = 1,
           gpuBandwidth, gpuTFLOPS, gpuHyperCost, gpuSpecCost, gpuSpotCost, hasNVLink, kvBytesPerValue,
           attnMode = 'standard', swaWindow = 0, swaLocalLayers = 0, mlaLatentDim = 0,
-          modelMaxCtx = 131072, sharedPrefix = 0, prefixCaching = true } = state;
+          modelMaxCtx = 131072, sharedPrefix = 0, prefixCaching = true,
+          quantMethod = '', gpuFp8 = false } = state;
 
   /* Catalog values are per *board*, because that is the unit you buy, price and
      rack. The runtime sees devices: an MI250X is one OAM presenting two GCDs,
@@ -1217,8 +1225,33 @@ function computeInference(state) {
     ? Math.max(Math.floor((freeForKVCache * GIB - sharedBytes) / marginalSeqBytes), 0)
     : concurrency;
   const effectiveBatch = Math.max(Math.min(concurrency, maxBatchByKV), 1);
+  /* The compute figures below run on the catalog's dense BF16 TFLOPS, which is
+   * the rate only if the GEMM itself runs in 16 bits. FP8 is W8A8 — real 8-bit
+   * tensor-core math, and every FP8-capable card here doubles: H100 SXM is
+   * 1,979 TFLOPS BF16 against 3,958 FP8 (dense 989.5 / 1979).
+   *
+   * Keyed on the *compute* dtype, never on bytesPerParam, and that distinction
+   * is the whole point. AWQ and GPTQ are W4A16: the kernel dequantizes weights
+   * to FP16 and runs a 16-bit GEMM, so 4-bit buys memory traffic and no compute
+   * — published measurements put the dequant step at 40-80% of W4A16 latency,
+   * which makes it slower than FP16, not 4x faster. Scaling by 1/bytesPerParam
+   * is the intuitive fix and would hand AWQ a 4x ceiling it does not have. GGUF
+   * dequantizes the same way. INT4's real win is already booked, once, in
+   * activeWeightBytes above.
+   *
+   * Gated on the card: FP8 weights are half-size on anything that can load
+   * them, so the bandwidth win above is right everywhere, but Turing and
+   * Ampere have no FP8 tensor cores and run the GEMM at FP16 rate.
+   *
+   * The quant string is the real signal, but a caller can supply bytesPerParam
+   * of 1 with no quantMethod — generate_report.py's from_json() accepts exactly
+   * that, and already labels such a config FP8. Both engines read both, or they
+   * would disagree on a case the parity suite drives from one set of inputs.
+   * No GGUF level is exactly 1.0 (Q8_0 is 1.1). */
+  const isFp8 = quantMethod === 'fp8' || bytesPerParam === 1;
+  const computeRatio = (isFp8 && gpuFp8) ? P.fp8ComputeRatio : 1.0;
   const computeCeiling = totalActiveParams > 0
-    ? (P.mfuDecode * deviceTFLOPS * 1e12 * deviceCount * interconnectPenalty) / (2 * totalActiveParams * 1e9)
+    ? (P.mfuDecode * deviceTFLOPS * 1e12 * deviceCount * interconnectPenalty * computeRatio) / (2 * totalActiveParams * 1e9)
     : 0;
 
   const singleStreamTokS = Math.round(decodeAt(1));
@@ -1236,7 +1269,7 @@ function computeInference(state) {
   const saturatedTokS = Math.round(Math.min(decodeAt(saturatedBatch), computeCeiling));
 
   /* The aggregate is a roofline — an upper bound. Measured batch benchmarks land at
-   * 43-91% of it (the documented 1.1-2.3x optimism, inverted), so the UI shows that
+   * 40-91% of it (the documented 1.1-2.5x optimism, inverted), so the UI shows that
    * band alongside the ceiling. The constants are hardcoded for the offline file;
    * a test re-derives them from benchmarks/data.json and fails if new measured
    * entries fall outside — update both engines together when it does. */
@@ -1247,7 +1280,7 @@ function computeInference(state) {
    * processed in one parallel pass at ~2 FLOPs per active parameter per token.
    * (Decode speed is irrelevant here; using it understates TTFT by ~10x.
    * MFU_PREFILL, not MFU_DECODE: dense GEMMs, not decode's starved ones.) */
-  const achievedPrefillFlops = P.mfuPrefill * deviceTFLOPS * 1e12 * deviceCount * interconnectPenalty;
+  const achievedPrefillFlops = P.mfuPrefill * deviceTFLOPS * 1e12 * deviceCount * interconnectPenalty * computeRatio;
   const prefillFlopsFor = (tokens) => 2 * totalActiveParams * 1e9 * Math.max(tokens, 0);
   const ttftFor = (tokens) => achievedPrefillFlops > 0
     ? Math.round((prefillFlopsFor(tokens) / achievedPrefillFlops) * 1000) : 0;
@@ -1286,7 +1319,11 @@ function computeInference(state) {
     // it without re-reading PERF and drifting. The parity suite compares these,
     // which pins the two engines to the same values as executed.
     perfMbu: P.mbu, perfMfuDecode: P.mfuDecode, perfMfuPrefill: P.mfuPrefill,
-    perfObsLo: P.obsLo, perfObsHi: P.obsHi,
+    perfObsLo: P.obsLo, perfObsHi: P.obsHi, perfFp8Ratio: P.fp8ComputeRatio,
+    /* computeRatio is the multiplier actually applied; fp8NoTensorCores is the
+       case the renderers caption. They are not inverses — a BF16 run on an
+       A100 has ratio 1.0 and nothing to say about it. */
+    computeRatio, fp8NoTensorCores: isFp8 && !gpuFp8,
     maxBatchByKV, batchLimitedByKV, computeBound, ttftMs, ttftColdMs, ttftWarmMs,
     kvSavedByPrefixGB, effectivePrefix, totalTokens,
     saturatedBatch, saturatedTokS,
@@ -1626,10 +1663,22 @@ function renderThroughput(state, computed) {
       `<span style="color:var(--warning-text)"> — the interconnect factor behind this number is a heuristic, and so is the ${computed.tp}×${computed.dp} split it is priced on</span>`
     : '';
 
+  /* FP8 selected on a card with no FP8 tensor cores. Deliberately not on the
+     single-stream figure: that one is bandwidth-bound, the weights really are
+     half-size on Ampere, and the speed-up there is genuine. What does not
+     happen is the compute speed-up, so this rides the two figures the compute
+     ratio multiplies — the aggregate ceiling and TTFT. Wording is deliberately
+     unlike the fabric note's: the caveat sweep asserts that one is *absent*
+     below nine devices, and this one fires at any device count. */
+  const fp8Note = computed.fp8NoTensorCores
+    ? ` · <span style="color:var(--warning-text);font-weight:500">No FP8 tensor cores</span>` +
+      `<span style="color:var(--warning-text)"> — ${state.gpuName} stores FP8 weights but runs the GEMM at FP16 rate, so this is the FP16 ceiling</span>`
+    : '';
+
   // Two separate numbers. Per-user speed is what a human waiting on tokens feels;
   // aggregate is what the server delivers across the whole batch. Never compare them.
-  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${bandwidthLabel(computed.deviceBandwidth)} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU${fabricNote}</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}${fabricNote}</p></div></div>`;
-  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}${fabricNote}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
+  let html = `<div class="reverse-grid"><div class="reverse-card"><p class="label">Single-stream decode (1 user)</p><p class="value">~${formatTokens(perUser)} tok/s</p><div class="throughput-bar"><div style="width:${barPct.toFixed(1)}%;background:${barColor}"></div></div><p class="sub">Bandwidth-bound · ${state.gpuName} @ ${bandwidthLabel(computed.deviceBandwidth)} GB/s${state.gpuDevices > 1 ? ' per device' : ''} × ${Math.round(computed.perfMbu * 100)}% MBU${fabricNote}</p></div><div class="reverse-card"><p class="label">Aggregate ceiling @ ${computed.effectiveBatch} concurrent</p><p class="value">~${formatTokens(computed.aggregateTokS)} tok/s</p><p class="sub">Ceiling · observed range ~${formatTokens(computed.aggregateObservedLoTokS)}–${formatTokens(computed.aggregateObservedHiTokS)} in practice · ${computed.perUserAtLoadTokS} tok/s per user under load${computed.computeBound ? ' · compute-bound' : ''}${fabricNote}${fp8Note}</p></div></div>`;
+  html += `<div class="reverse-grid" style="margin-top:0"><div class="reverse-card"><p class="label">TTFT estimate</p><p class="value">~${computed.ttftMs || 'N/A'} ms</p><p class="sub">${computed.effectivePrefix > 0 && state.prefixCaching ? `Warm cache · ~${computed.ttftColdMs} ms cold (first request)` : `Compute-bound prefill at ${formatContext(state.contextLength)} context`}${fabricNote}${fp8Note}</p></div><div class="reverse-card"><p class="label">Max batch at this context</p><p class="value">${computed.maxBatchByKV} seq</p><p class="sub">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div></div>`;
 
   if (computed.batchLimitedByKV) {
     html += `<div class="verdict" style="background:var(--warning-bg);color:var(--warning-text);margin:8px 0"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> You asked for ${state.concurrency} concurrent users but KV cache only fits ${computed.maxBatchByKV} at ${formatContext(state.contextLength)}. vLLM will queue the rest — aggregate throughput above reflects the batch that actually runs.</div>`;
@@ -1863,7 +1912,7 @@ function renderComparisons() {
        of them above a domain. This surface printed both figures bare at any
        device count — it was not on the list the caveat test enumerated, which
        is why that test now derives its own set instead of naming three. */
-    html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s${c.dp > 1 ? '<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">unmeasured above 2 devices</span>' : ''}</span></div>`;
+    html += `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s${c.dp > 1 ? '<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">unmeasured above 2 devices</span>' : ''}${c.fp8NoTensorCores ? '<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">no FP8 tensor cores — aggregate is the FP16 ceiling</span>' : ''}</span></div>`;
     html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}</span></div></div>`;
   });
   html += '</div>';
@@ -1978,8 +2027,16 @@ function renderExecutiveSummary(state, computed) {
   const execCaveat = computed.dp > 1
     ? ` <span style="color:var(--warning-text);font-weight:500">· unmeasured above 2 devices</span>`
     : '';
+  /* Same reasoning as renderThroughput's: the compute ratio moves the server
+     total, not the per-user figure, so this rides only the former. Exec mode
+     omitting it would defeat the ruling that lets FP8 be offered on Ampere at
+     all — the number is right for memory and wrong for compute, and the reader
+     of this view is the least likely to know the difference. */
+  const execFp8 = computed.fp8NoTensorCores
+    ? ` <span style="color:var(--warning-text);font-weight:500">· no FP8 tensor cores, FP16 rate</span>`
+    : '';
   html += `<div class="exec-row"><span class="exec-label">Speed per user</span><span class="exec-value">~${formatTokens(computed.singleStreamTokS)} tokens/sec${execCaveat}</span></div>`;
-  html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec${execCaveat}</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Total server throughput</span><span class="exec-value">~${formatTokens(computed.aggregateTokS)} tokens/sec${execCaveat}${execFp8}</span></div>`;
   html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
   html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
   if (computed.dp > 1) html += `<div style="margin-top:10px;font-size:12px;color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Across ${computed.deviceCount} devices the tool picks TP=${computed.tp} × DP=${computed.dp} by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured, so treat the throughput figures as a ceiling to test, not a quote.</div>`;

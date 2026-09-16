@@ -191,8 +191,13 @@ PERF = {
         "mbu": 0.70,          # achieved / peak HBM bandwidth during decode
         "mfuDecode": 0.35,    # achieved / peak dense FLOPS at large batch
         "mfuPrefill": 0.45,   # prefill GEMMs are dense; published utilisation ~40-55%
-        "obsLo": 0.43,        # measured/ceiling ratio floor across batch benchmarks
+        "obsLo": 0.40,        # measured/ceiling ratio floor across batch benchmarks
         "obsHi": 0.91,        # measured/ceiling ratio ceiling across batch benchmarks
+        # FP8 tensor-core throughput relative to the catalog's dense BF16 figure.
+        # H100 SXM: 1,979 TFLOPS BF16 vs 3,958 FP8 (dense 989.5 / 1979), and the
+        # ratio holds across every FP8-capable row here. Applied only where the
+        # GEMM runs in 8 bits — see the comment at the compute ceiling below.
+        "fp8ComputeRatio": 2.0,
     },
 }
 
@@ -201,6 +206,12 @@ def compute(cfg):
     params = cfg["params"]
     active_pct = cfg["active"]
     bpp = cfg["bpp"]
+    # Whether the GEMM runs in 8 bits. The quant string is the real signal, but
+    # from_json() accepts a bare {"bpp": 1} with no "quant" key, and that config
+    # already renders as "FP8" through PREC_LABELS — so deriving the flag from
+    # bpp as well is what stops the label and the arithmetic disagreeing. No
+    # GGUF level is exactly 1.0 (Q8_0 is 1.1), so the test is unambiguous.
+    is_fp8 = cfg.get("quant", "") == "fp8" or bpp == 1
     layers = cfg["layers"]
     kv_heads = cfg["kv_heads"]
     h_dim = cfg["h_dim"]
@@ -407,8 +418,17 @@ def compute(cfg):
     max_batch_kv = (max(int((free_kv * GIB - shared_bytes) / marginal_seq_bytes), 0)
                     if kv_bytes_per_seq > 0 else conc)
     eff_batch = max(min(conc, max_batch_kv), 1)
+    # The compute figures run on the catalog's dense BF16 TFLOPS, which is the
+    # rate only if the GEMM runs in 16 bits. FP8 is W8A8 and doubles on capable
+    # silicon; AWQ/GPTQ are W4A16, dequantizing to FP16 before the GEMM, so they
+    # buy memory traffic and no compute — scaling by 1/bpp would hand 4-bit a 4x
+    # ceiling it does not have. That win is already booked in active_weight_bytes.
+    # Gated on caps.fp8: Turing and Ampere load FP8 weights but run FP16 math.
+    # Mirrors index.html; the parity suite compares the applied ratio.
+    gpu_fp8 = bool(gpu.get("caps", {}).get("fp8", False))
+    compute_ratio = P["fp8ComputeRatio"] if (is_fp8 and gpu_fp8) else 1.0
     compute_ceiling = (
-        (P["mfuDecode"] * device_tflops * 1e12 * device_count * nv_penalty) / (2 * total_active_p * 1e9)
+        (P["mfuDecode"] * device_tflops * 1e12 * device_count * nv_penalty * compute_ratio) / (2 * total_active_p * 1e9)
         if total_active_p > 0 else 0
     )
     single_tok = round(decode_at(1))
@@ -418,8 +438,8 @@ def compute(cfg):
     sat_batch = max(max_batch_kv, 1)
     sat_tok = round(min(decode_at(sat_batch), compute_ceiling))
     per_user_load = round(agg_tok / eff_batch) if eff_batch else 0
-    # The ceiling's observed discount: measured batch benchmarks land at 43-91% of
-    # the roofline (the 1.1-2.3x optimism inverted). Mirrors index.html; the JS test
+    # The ceiling's observed discount: measured batch benchmarks land at 40-91% of
+    # the roofline (the 1.1-2.5x optimism inverted). Mirrors index.html; the JS test
     # suite re-derives the band from benchmarks/data.json to keep it honest.
     agg_obs_lo = round(agg_tok * P["obsLo"])
     agg_obs_hi = round(agg_tok * P["obsHi"])
@@ -427,7 +447,7 @@ def compute(cfg):
 
     # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
     # understated TTFT by roughly 10x. MFU_PREFILL, not MFU_DECODE: dense GEMMs.
-    achieved_prefill_flops = P["mfuPrefill"] * device_tflops * 1e12 * device_count * nv_penalty
+    achieved_prefill_flops = P["mfuPrefill"] * device_tflops * 1e12 * device_count * nv_penalty * compute_ratio
 
     def ttft_for(tokens):
         flops = 2 * total_active_p * 1e9 * max(tokens, 0)
@@ -462,6 +482,11 @@ def compute(cfg):
         "perf_mbu": P["mbu"], "perf_mfu_decode": P["mfuDecode"],
         "perf_mfu_prefill": P["mfuPrefill"],
         "perf_obs_lo": P["obsLo"], "perf_obs_hi": P["obsHi"],
+        "perf_fp8_ratio": P["fp8ComputeRatio"],
+        # The multiplier actually applied, and the case the PDF captions. Not
+        # inverses: a BF16 run on an A100 has ratio 1.0 and nothing to caption.
+        "compute_ratio": compute_ratio,
+        "fp8_no_tensor_cores": is_fp8 and not gpu_fp8,
         "eff_batch": eff_batch, "max_batch_kv": max_batch_kv, "batch_limited": batch_limited,
         "ttft_ms": ttft_ms, "ttft_cold_ms": ttft_cold_ms, "ttft_warm_ms": ttft_warm_ms,
         "kv_saved_by_prefix_gb": kv_saved_by_prefix_gb, "eff_prefix": eff_prefix, "sat_batch": sat_batch, "sat_tok": sat_tok, "hourly_hyper": hourly_hyper, "hourly_spec": hourly_spec, "hourly_spot": hourly_spot,
@@ -982,6 +1007,16 @@ class ReportCard:
             # is computed against the deployment it prints. What is left is the
             # divisor each quantity used, the MoE exception, and the fact that
             # the split itself is a heuristic.
+            # FP8 asked for on silicon that has no FP8 tensor cores. The weights
+            # really are half-size there and the bandwidth figure is right; what
+            # is absent is the compute speed-up, so the ceiling and TTFT above
+            # are the FP16 ones. Said here because the PDF is the surface that
+            # gets forwarded to someone who did not choose the hardware.
+            if c.get("fp8_no_tensor_cores"):
+                notes.append(f"FP8 was selected, but {cfg['gpu']['name']} has no FP8 tensor cores. The weights "
+                             f"still store at 8 bits, so the memory and single-stream figures above hold. The "
+                             f"aggregate ceiling and TTFT do not gain from it: the kernel dequantizes to FP16 and "
+                             f"the GEMM runs at the FP16 rate, so both are the FP16 numbers.")
             if c["is_moe"]:
                 notes.append(f"Per-device weights above is divided by all {device_count_for(cfg)} devices. Under "
                              f"--enable-expert-parallel the routed experts do spread that way, but attention, "

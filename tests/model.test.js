@@ -84,6 +84,10 @@ const state = (o = {}) => {
     gpuGB: gpu.gb, gpuBandwidth: gpu.bw, gpuTFLOPS: gpu.tflops,
     gpuHyperCost: gpu.hyper, gpuSpecCost: gpu.spec, gpuSpotCost: gpu.spot,
     gpuName: o.gpu || 'H100 80GB',
+    /* Read off the row, as readInputState() does. Defaulting this to false here
+       would put every test on the ungated path and hide a gate that only ever
+       fires on real hardware flags. */
+    gpuFp8: !!(gpu.caps && gpu.caps.fp8),
     ...o,
   };
 };
@@ -607,6 +611,67 @@ test('TTFT uses the prefill MFU, not decode\'s', () => {
     'ttftMs vs the prefill-MFU formula');
 });
 
+console.log('\nThe compute roofline knows what dtype the GEMM runs in');
+/* The catalog's tflops is dense BF16, and both compute figures ran on it
+   regardless of the selected precision — so FP8 was 2x understated on hardware
+   that has FP8 tensor cores. These pin the multiplier, and more importantly they
+   pin what it must NOT do: 4-bit is W4A16, dequantized to FP16 before the GEMM,
+   so it buys memory traffic and no compute. Scaling by 1/bytesPerParam is the
+   intuitive fix and would give AWQ a 4x ceiling it does not have. */
+const ceilingOf = (s) => {
+  const c = computeInference(s);
+  // Recovered rather than returned: aggregateTokS takes a min() against the
+  // bandwidth roofline, so it does not expose the ceiling on its own.
+  return (PERF.nvidia.mfuDecode * s.gpuTFLOPS * 1e12 * c.computeRatio) / (2 * s.params * 1e9);
+};
+test('FP8 on an FP8-capable card doubles the compute ceiling and halves TTFT', () => {
+  const bf16 = computeInference(state({ bytesPerParam: 2, quantMethod: '' }));
+  const fp8 = computeInference(state({ bytesPerParam: 1, quantMethod: 'fp8' }));
+  assert.strictEqual(fp8.computeRatio, 2.0, 'H100 has FP8 tensor cores');
+  assert.strictEqual(bf16.computeRatio, 1.0, 'BF16 runs at the BF16 rate');
+  between(fp8.ttftMs, bf16.ttftMs * 0.49, bf16.ttftMs * 0.51,
+    `TTFT should halve under FP8: ${bf16.ttftMs} -> ${fp8.ttftMs}`);
+});
+test('FP8 on a card without FP8 tensor cores gets no compute multiplier', () => {
+  /* A100 is the case that makes the gate worth having. vLLM's fp8_marlin runs
+     there and the weights genuinely halve, so the bandwidth win is real — but
+     Ampere has no FP8 tensor cores and dequantizes to FP16, so the GEMM rate is
+     unchanged. Memory yes, compute no. */
+  const bf16 = computeInference(state({ gpu: 'A100 80GB', bytesPerParam: 2, quantMethod: '' }));
+  const fp8 = computeInference(state({ gpu: 'A100 80GB', bytesPerParam: 1, quantMethod: 'fp8' }));
+  assert.strictEqual(fp8.computeRatio, 1.0, 'A100 has no FP8 tensor cores');
+  assert.strictEqual(fp8.ttftMs, bf16.ttftMs, 'TTFT is compute-bound and must not move on Ampere');
+  assert.ok(fp8.singleStreamTokS > bf16.singleStreamTokS,
+    'but the bandwidth win from half-size weights is real and must survive');
+  assert.strictEqual(fp8.fp8NoTensorCores, true, 'and the config must be flagged for the caveat');
+});
+test('4-bit weights buy memory traffic and no compute at all', () => {
+  const bf16 = computeInference(state({ bytesPerParam: 2, quantMethod: '' }));
+  for (const q of ['awq', 'gptq']) {
+    const c = computeInference(state({ bytesPerParam: 0.5, quantMethod: q }));
+    assert.strictEqual(c.computeRatio, 1.0, `${q} is W4A16 — the GEMM still runs at FP16`);
+    assert.strictEqual(c.ttftMs, bf16.ttftMs, `${q} must not move TTFT`);
+    assert.strictEqual(Math.round(ceilingOf(state({ bytesPerParam: 0.5, quantMethod: q }))),
+      Math.round(ceilingOf(state({ bytesPerParam: 2, quantMethod: '' }))),
+      `${q} must not move the compute ceiling`);
+    assert.ok(c.singleStreamTokS > bf16.singleStreamTokS,
+      `${q} must still win on bandwidth`);
+  }
+});
+test('GGUF Q8_0 is not FP8, despite being close to one byte', () => {
+  // 1.1 B/param. The bpp==1 fallback that catches a bare {"bpp": 1} config must
+  // not spill onto the GGUF level sitting next to it.
+  const c = computeInference(state({ bytesPerParam: 1.1, quantMethod: 'gguf' }));
+  assert.strictEqual(c.computeRatio, 1.0, 'Q8_0 dequantizes like every other GGUF level');
+});
+test('a bare one-byte config is treated as FP8 by both the label and the maths', () => {
+  /* generate_report.py's from_json() accepts {"bpp": 1} with no quant key, and
+     PREC_LABELS already renders that as "FP8". If only the label knew, the PDF
+     would say FP8 over BF16 arithmetic. Both engines read bpp as well as quant. */
+  const c = computeInference(state({ bytesPerParam: 1, quantMethod: '' }));
+  assert.strictEqual(c.computeRatio, 2.0, 'bpp of exactly 1 is FP8 on an FP8-capable card');
+});
+
 console.log('\nAgreement with published benchmarks');
 // The point of the rewrite: compare each estimate against the matching mode.
 // Order-of-magnitude agreement (0.25x-4x) is the bar for a planning tool.
@@ -948,6 +1013,8 @@ const asState = (card, count, extra = {}) => ({
   hasNVLink: true, kvBytesPerValue: 2, modelMaxCtx: 1048576, vendor: card.vendor,
   gpuGB: card.gb, gpuBandwidth: card.bw, gpuTFLOPS: card.tflops, gpuDevices: card.devices,
   gpuHyperCost: card.hyper, gpuSpecCost: card.spec, gpuSpotCost: card.spot,
+  // Off the row, as readInputState() does — see the same line in state() above.
+  gpuFp8: !!(card.caps && card.caps.fp8),
   gpuName: card.name, ...extra,
 });
 // The same silicon described as one dual-device board, or as two single-device
@@ -1709,6 +1776,69 @@ test('every view that prints a throughput figure above one domain carries the ca
   assert.ok(surfaces.size >= 3,
     `only ${surfaces.size} surfaces print throughput at all (${[...surfaces].join(', ')}) — ` +
     `the sweep has stopped reaching them`);
+});
+
+test('every view that prints a compute figure says when FP8 has no tensor cores', () => {
+  /* Same discovery approach as the sweep above, and for the same reason: an
+     enumerated list of call sites is what this suite is supposed to be immune
+     to. FP8 on Ampere is a real configuration — vLLM's fp8_marlin runs there and
+     the weights genuinely halve — so the tool offers it. What it must not do is
+     let the compute figures read as FP8 ones when the GEMM runs at FP16.
+
+     Two-sided, like the fabric sweep: the label must be absent on a card that
+     does have FP8 tensor cores, or it would be noise on the common case. */
+  const COMPUTE = /tok\/s|tokens\/sec/;
+  const LABEL = /no FP8 tensor cores/i;
+  const params = {};
+  for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
+    params[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
+
+  let flagged = 0, clean = 0;
+  for (const slug of ['a100-80', 'a100-40', 't4-16', 'h100-80', 'l40s-48', 'b200-192']) {
+    /* A fresh harness per card: savedSnapshots accumulates, so one shared
+       harness would still be rendering the A100 cards when it reaches the H100
+       and the negative half of this test would fail on its own leftovers. */
+    const h = renderHarness();
+    const renderers = Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function');
+    const card = GPU_TABLE[slug];
+    const st = asState(card, 1, { params: 8, layers: 32, bytesPerParam: 1, quantMethod: 'fp8' });
+    const c = h.computeInference(st);
+    assert.strictEqual(c.fp8NoTensorCores, !card.caps.fp8,
+      `${slug}: caps.fp8 is ${card.caps.fp8} but fp8NoTensorCores is ${c.fp8NoTensorCores}`);
+    Object.keys(h.out).forEach(k => delete h.out[k]);
+    h.pushSnapshot(st, c);
+    for (const name of renderers) {
+      const args = params[name].map(pn => (pn === 'computed' ? c : pn === 'state' ? st : undefined));
+      try { h[name](...args); } catch (e) {
+        assert.fail(`${name}(${params[name].join(', ')}) threw: ${e.message}`);
+      }
+    }
+    for (const [id, text] of Object.entries(h.out)) {
+      if (!COMPUTE.test(text)) continue;
+      const labelled = LABEL.test(text);
+      if (card.caps.fp8) {
+        clean++;
+        assert.ok(!labelled,
+          `${id} labels ${slug} as lacking FP8 tensor cores, which it has: ${text.slice(0, 200)}`);
+      }
+    }
+    if (!card.caps.fp8) {
+      /* At least one surface has to carry it, and the aggregate ceiling is the
+         one that must: it is the figure the multiplier moves. Asserting "some
+         surface" rather than "every surface" is deliberate — single-stream is
+         bandwidth-bound and the FP8 win there is real, so a label on it would
+         be wrong, and requiring every throughput-bearing element would demand
+         exactly that. */
+      const labelledIds = Object.entries(h.out)
+        .filter(([, t]) => COMPUTE.test(t) && LABEL.test(t)).map(([id]) => id);
+      assert.ok(labelledIds.length > 0,
+        `${slug} has no FP8 tensor cores and no surface says so; ` +
+        `surfaces printing throughput: ${Object.keys(h.out).filter(k => COMPUTE.test(h.out[k])).join(', ')}`);
+      flagged++;
+    }
+  }
+  assert.ok(flagged >= 3 && clean > 0,
+    `reached ${flagged} cards without FP8 and ${clean} labelled-clean renders — need both regimes`);
 });
 
 test('the VRAM breakdown row adds up to the total it prints beside it', () => {

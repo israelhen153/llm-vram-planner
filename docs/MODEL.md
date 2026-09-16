@@ -108,10 +108,16 @@ Real decode kernels sustain roughly 60–80% of peak HBM bandwidth. Peak is a nu
 Decode costs about 2 FLOPs per active parameter per token, so aggregate throughput cannot exceed:
 
 ```
-ceiling = MFU_decode × peak_dense_FLOPS / (2 × active_params),   MFU_decode = 0.35
+ceiling = MFU_decode × peak_dense_FLOPS × compute_ratio / (2 × active_params),   MFU_decode = 0.35
 ```
 
-This rarely binds for decode — for an 8B on H100 it sits around 22,000 tok/s, above the measured 12,500 — but it stops the batch model growing without limit.
+This rarely binds for decode — for an 8B on H100 the raw ceiling is around 21,700 tok/s, and the tool reports 13,775 because the bandwidth roofline caps it first — but it stops the batch model growing without limit.
+
+**`compute_ratio` is about the dtype the GEMM runs in, not the size of the weights.** The catalog's TFLOPS is dense BF16, which is the right rate only for a 16-bit GEMM. FP8 is W8A8 — real 8-bit tensor-core math — and every FP8-capable card here doubles: H100 SXM is 1,979 TFLOPS BF16 against 3,958 FP8 (dense 989.5 / 1979). So `compute_ratio` is 2.0 for FP8 on Ada, Hopper and Blackwell, and 1.0 otherwise.
+
+It is gated on the card, not just the selection. Turing and Ampere have no FP8 tensor cores: vLLM's `fp8_marlin` will load FP8 weights there and the memory saving is real, but the kernel dequantizes to FP16 and the GEMM runs at the FP16 rate. Selecting FP8 on a T4 or an A100 therefore moves the bandwidth figures and not the compute ones, and the UI says so beside the two figures affected.
+
+Before this was modelled, both compute figures ran on the BF16 number regardless of precision, so FP8 was **2× understated** on capable hardware — and TTFT worse than that, since prefill is pure compute with no bandwidth roofline to cap it. The figure labelled a ceiling was not one: real FP8 serving exceeded it.
 
 **TFLOPS figures here are dense, not sparse.** NVIDIA datasheets headline the 2:4-structured-sparsity number: the H100 SXM's "1,979 teraFLOPS" carries a footnote reading *"With sparsity"*. LLM inference does not use structured sparsity, so the real dense figure is half that — 989.5. Using the headline number would overstate the ceiling 2×. This trips up a lot of secondary sources, and several web results during this project's research got it wrong.
 
@@ -124,6 +130,8 @@ ttft = 2 × active_params × prompt_tokens / (MFU_prefill × peak_FLOPS),   MFU_
 ```
 
 Deriving TTFT from decode speed — as if tokens were generated one at a time during prefill — understates it by roughly 10×. That was another real bug here.
+
+Prefill carries the same `compute_ratio` as the ceiling, and feels it more. The decode ceiling is one side of a `min()` against the bandwidth roofline, so correcting it often changes nothing; TTFT has no such cap, so on FP8-capable hardware it was a flat 2× overstatement for every FP8 configuration.
 
 Prefill also gets its own utilisation figure. Decode's 0.35 exists because decode GEMMs have poor arithmetic intensity; prefill is the opposite case — one parallel pass over the whole prompt is dense GEMM work, and published dense-prefill utilisation sits around 40–55%. An earlier version reused 0.35 here, which made TTFT ~1.3× pessimistic. The same constant cannot describe both a bandwidth-starved GEMV and a dense GEMM.
 
@@ -183,15 +191,20 @@ Keying it on the device count rather than on `TP` is known to be wrong and is le
 Worth being able to answer without hedging.
 
 **"Your throughput number is way off from my benchmark."**
-First question back: single-stream or aggregate? They differ by 50–100×. If aggregate, was the GPU saturated? The tool compares against benchmarks at full batch because that is how benchmarks are run. If it is still off, the roofline runs 1.1–2.3× optimistic against real batch serving — schedulers lose time that physics does not.
+First question back: single-stream or aggregate? They differ by 50–100×. If aggregate, was the GPU saturated? The tool compares against benchmarks at full batch because that is how benchmarks are run. If it is still off, the roofline runs 1.1–2.5× optimistic against real batch serving — schedulers lose time that physics does not.
 
 **"Why 70% MBU, 35% decode MFU and 45% prefill MFU?"**
 Observed ranges, not derived constants. MBU for decode sits at 60–80% across published measurements; MFU for batched decode is lower than training's 40–50% because decode GEMMs have poor arithmetic intensity; prefill MFU is higher than decode's for the same reason in reverse — dense GEMMs over the whole prompt, with published utilisation around 40–55%. They are the three least defensible numbers in the model, which is why the README states them explicitly rather than burying them.
 
+**"Why doesn't INT4 raise the compute ceiling, when FP8 does?"**
+Because AWQ and GPTQ are W4A16: the weights are stored 4-bit and the kernel dequantizes them to FP16 before the GEMM, so the matrix multiply still runs at the 16-bit rate. Published measurements put the dequantization step at 40–80% of W4A16 latency, which makes 4-bit *slower* than FP16 in the compute-bound regime, not four times faster. The same is true of every GGUF level. FP8 is different in kind, not degree — W8A8 is genuine 8-bit tensor-core math.
+
+Scaling the ceiling by `1 / bytes_per_param` is the intuitive version of this fix and it is wrong: it would hand AWQ a 4× compute ceiling it does not have. 4-bit's real win is memory traffic, and the model already books it — once — in the decode roofline's denominator.
+
 **"Isn't a roofline just an upper bound?"**
 Yes, and it is labelled as a ceiling in the UI. Single-stream lands within ~4% of measurements because at B=1 the model is genuinely bandwidth-bound and there is little else to lose. Aggregate runs optimistic because real scheduling, prefill interleaving and preemption are not modelled.
 
-The UI also shows the inverse of that optimism as an observed band: 43–91% of the ceiling, which is the 1.1–2.3× figure turned upside down. The band is not a promise — it is the spread of the measured batch entries in `benchmarks/data.json` against their matching saturated estimates, and the test suite re-derives it from that data so the displayed constants cannot drift from the evidence.
+The UI also shows the inverse of that optimism as an observed band: 40–91% of the ceiling, which is the 1.1–2.5× figure turned upside down. The band is not a promise — it is the spread of the measured batch entries in `benchmarks/data.json` against their matching saturated estimates, and the test suite re-derives it from that data so the displayed constants cannot drift from the evidence.
 
 Caveat on that ~4%: both single-stream entries in `benchmarks/data.json` (`8b-rtx4090-24`, `14b-rtx4090-24`) are llama.cpp numbers, not vLLM — their `note` fields say so. The agreement is evidence that the bandwidth roofline is right about B=1 decode, which is engine-independent physics. It is not evidence about vLLM specifically. Single-stream vLLM measurements are the most valuable contribution this dataset could receive.
 
