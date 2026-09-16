@@ -998,6 +998,17 @@ class ReportCard:
             notes.append(f"NCCL buffers add ~0.3 GB per device peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
+        # FP8 asked for on silicon with no FP8 tensor cores. The weights really
+        # are half-size there and the bandwidth figures are right; what is absent
+        # is the compute speed-up, so the ceiling and TTFT are the FP16 ones.
+        # Top-level, not inside the dp>1 block below: this is a property of the
+        # card and the precision, and the single-GPU A100 case is the commonest
+        # place it applies. It shipped nested by mistake and said nothing there.
+        if c.get("fp8_no_tensor_cores"):
+            notes.append(f"FP8 was selected, but {cfg['gpu']['name']} has no FP8 tensor cores. The weights "
+                         f"still store at 8 bits, so the memory and single-stream figures above hold. The "
+                         f"aggregate ceiling and TTFT do not gain from it: the kernel dequantizes to FP16 and "
+                         f"the GEMM runs at the FP16 rate, so both are the FP16 numbers.")
         if dp > 1:
             # Matches what index.html shows on screen (renderGPUCards' banner) —
             # repeated here because this PDF, not the screen, is the artifact
@@ -1007,16 +1018,6 @@ class ReportCard:
             # is computed against the deployment it prints. What is left is the
             # divisor each quantity used, the MoE exception, and the fact that
             # the split itself is a heuristic.
-            # FP8 asked for on silicon that has no FP8 tensor cores. The weights
-            # really are half-size there and the bandwidth figure is right; what
-            # is absent is the compute speed-up, so the ceiling and TTFT above
-            # are the FP16 ones. Said here because the PDF is the surface that
-            # gets forwarded to someone who did not choose the hardware.
-            if c.get("fp8_no_tensor_cores"):
-                notes.append(f"FP8 was selected, but {cfg['gpu']['name']} has no FP8 tensor cores. The weights "
-                             f"still store at 8 bits, so the memory and single-stream figures above hold. The "
-                             f"aggregate ceiling and TTFT do not gain from it: the kernel dequantizes to FP16 and "
-                             f"the GEMM runs at the FP16 rate, so both are the FP16 numbers.")
             if c["is_moe"]:
                 notes.append(f"Per-device weights above is divided by all {device_count_for(cfg)} devices. Under "
                              f"--enable-expert-parallel the routed experts do spread that way, but attention, "

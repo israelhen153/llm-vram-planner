@@ -1401,6 +1401,38 @@ def check_tp_dp_json_keys_are_inert():
             assert cmd == clean_cmd, (
                 f"{branch} branch: {poison} changed the emitted command:\n{cmd}")
 
+def check_fp8_note_rides_the_pdf():
+    """The PDF is the surface that gets forwarded to someone who did not pick
+    the hardware, and its FP8 note had no coverage at all — deleting it was
+    fully green, assets included. Two-sided: the note must be absent on silicon
+    that does have FP8 tensor cores, or it is noise on the common case."""
+    NOTE = "no FP8 tensor cores"
+    for slug, has_fp8 in (("a100-80", False), ("t4-16", False),
+                          ("h100-80", True), ("b200-192", True)):
+        card = dict(gr.GPUS[slug])
+        # bpp=1 with the quant string, the way the UI emits FP8.
+        cfg, text = report_strings(card, 1, bpp=1, quant="fp8")
+        blob = "\n".join(text)
+        comp = gr.compute(cfg)
+        assert comp["fp8_no_tensor_cores"] is (not has_fp8), (
+            f"{slug}: caps.fp8 is {has_fp8} but compute() says "
+            f"fp8_no_tensor_cores={comp['fp8_no_tensor_cores']}")
+        if has_fp8:
+            assert NOTE not in blob, (
+                f"{slug} has FP8 tensor cores, but the report says it does not")
+        else:
+            assert NOTE in blob, (
+                f"{slug} has no FP8 tensor cores and the report never says so. "
+                f"The compute ceiling and TTFT it prints are the FP16 ones.")
+            # And the note must name the card, not gesture at it — a reader of a
+            # forwarded PDF did not choose the hardware and may not know which it is.
+            assert card["name"].replace(" GB", "GB") in blob or card["name"] in blob, (
+                f"{slug}: the FP8 note does not name the card it is about")
+
+test("the PDF says when FP8 was asked for on silicon that cannot run it",
+     check_fp8_note_rides_the_pdf)
+
+
 test("tp and dp in a JSON config reach cfg and change nothing",
      check_tp_dp_json_keys_are_inert)
 
