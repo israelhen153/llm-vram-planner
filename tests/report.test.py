@@ -823,13 +823,24 @@ def dict_args(ns, **over):
 def check_every_builder_sets_perf_key():
     # Every catalog row, not one: the key is per row, and a builder that read it
     # from somewhere other than the selected card would agree with the right
-    # answer on whichever row it happened to copy.
-    for gpu_key, gpu in gr.GPUS.items():
-        for builder, cfg in builder_cfgs(gpu_key).items():
-            assert "perfKey" in cfg, f"{builder} on {gpu_key}: cfg carries no perfKey"
-            assert cfg["perfKey"] == gpu["perfKey"], (
-                f"{builder} on {gpu_key}: perfKey={cfg['perfKey']!r}, "
-                f"the card's is {gpu['perfKey']!r}")
+    # answer on whichever row it happened to copy. Plus a probe row whose vendor
+    # and perfKey differ, because on every real row both are "nvidia", and a
+    # builder that filled perfKey from vendor passed on all twelve.
+    probe = "__perf_key_probe"
+    gr.GPUS[probe] = dict(gr.GPUS["h100-80"], name="Probe 80 GB",
+                          vendor="acme", perfKey="acme-arch1")
+    try:
+        for gpu_key, gpu in gr.GPUS.items():
+            for builder, cfg in builder_cfgs(gpu_key).items():
+                assert "perfKey" in cfg, f"{builder} on {gpu_key}: cfg carries no perfKey"
+                assert cfg["perfKey"] == gpu["perfKey"], (
+                    f"{builder} on {gpu_key}: perfKey={cfg['perfKey']!r}, "
+                    f"the card's is {gpu['perfKey']!r}")
+                assert cfg["vendor"] == gpu["vendor"], (
+                    f"{builder} on {gpu_key}: vendor={cfg['vendor']!r}, "
+                    f"the card's is {gpu['vendor']!r}")
+    finally:
+        del gr.GPUS[probe]
 
 test("from_cli_args / from_json / raw JSON / interactive_mode all set cfg['perfKey'] to the card's",
      check_every_builder_sets_perf_key)

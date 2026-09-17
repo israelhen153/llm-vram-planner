@@ -1040,7 +1040,7 @@ const domStub = (gpuKey, interconnect) => {
   };
   return { getElementById: (id) => fields[id], fields };
 };
-const readInputStateFor = (gpuKey, interconnect) => {
+const readInputStateFor = (gpuKey, interconnect, table = GPU_TABLE) => {
   const dom = domStub(gpuKey, interconnect);
   // Up to the PERF declaration, which is where the state builder's
   // neighbourhood ends. Anchored on the code rather than on the comment above
@@ -1053,7 +1053,7 @@ const readInputStateFor = (gpuKey, interconnect) => {
     let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
     let currentModelMaxCtx = 131072, importedModelId = null;
     ${src}
-    return readInputState;`)(dom, GPU_TABLE);
+    return readInputState;`)(dom, table);
   return fn();
 };
 
@@ -2103,6 +2103,15 @@ test('the state carries the perfKey its constants are chosen by, for every row',
     // vendor still rides along — it selects nothing now, but it is the card's.
     assert.strictEqual(state.vendor, gpu.vendor, `${key}: state.vendor`);
   }
+  /* And a row whose two fields differ. On every real row both are 'nvidia', so
+     a state builder that filled perfKey from vendor passed the loop above — a
+     cold sabotage run showed exactly that. */
+  const table = { ...GPU_TABLE,
+    'probe-row': { ...GPU_TABLE['h100-80'], vendor: 'acme', perfKey: 'acme-arch1' } };
+  const probe = readInputStateFor('probe-row', '1', table);
+  assert.strictEqual(probe.perfKey, 'acme-arch1',
+    `a row with perfKey acme-arch1 reached the state as ${probe.perfKey}`);
+  assert.strictEqual(probe.vendor, 'acme', `a row with vendor acme reached the state as ${probe.vendor}`);
 });
 
 console.log('\nThe interconnect control follows the card');
