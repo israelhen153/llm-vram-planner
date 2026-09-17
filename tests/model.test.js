@@ -1248,6 +1248,26 @@ test('a single dual-GCD module still asks vLLM for tensor parallel 2', () => {
    board-vs-device fixes left the whole suite green, because nothing ever read
    what these functions actually produce. The compute core is diffed against a
    second implementation; the strings around it were diffed against nothing.  */
+/* The page's script, from the first helper the renderers need to the line that
+   boots the page. Everything before that boundary is a declaration, so the whole
+   of it can be evaluated without anything running; everything after it is the
+   three calls that start the tool.
+
+   Every `function render…` index.html declares is taken from that slice and
+   returned by the harness, rather than listed by hand. The hand-written list had
+   missed four — renderGpuOptions, renderSliderLabels, renderCountingToggle and
+   renderRestoreNotice — so whatever they put on the page was unread, and a
+   renderer added tomorrow would have been unread too. */
+const HARNESS_SLICE_START = html.indexOf('function getVal(id)');
+const HARNESS_SLICE_END = html.indexOf('\nrenderGpuOptions();');
+assert.ok(HARNESS_SLICE_START > 0 && HARNESS_SLICE_END > HARNESS_SLICE_START,
+  'index.html no longer has the boundaries the render harness slices on');
+const HARNESS_SLICE = html.slice(HARNESS_SLICE_START, HARNESS_SLICE_END);
+const namesIn = (src) => [...new Set([...src.matchAll(/^function (render\w+)\(/gm)].map(m => m[1]))].sort();
+const RENDER_NAMES = namesIn(HARNESS_SLICE);
+assert.deepStrictEqual(RENDER_NAMES, namesIn(html),
+  'index.html declares a render function outside the harness slice, so nothing renders it');
+
 const renderHarness = (inputs = {}) => {
   const out = {};
   const values = {
@@ -1271,8 +1291,23 @@ const renderHarness = (inputs = {}) => {
       get: (_, k) => (props[id] || {})[`data-${String(k)}`],
       set: (_, k, v) => { (props[id] = props[id] || {})[`data-${String(k)}`] = String(v); return true; },
     }),
+    /* innerText renders the same words as textContent and is a different
+       property: a harness that recorded one and not the other could be written
+       around by changing which one the renderer assigns. */
+    get innerText() { return (props[id] || {}).innerText || ''; },
+    set innerText(v) { (props[id] = props[id] || {}).innerText = String(v); },
+    /* Hiding an element withholds everything in it while leaving its innerHTML
+       byte-identical, so `hidden` and `style.display` are recorded per element
+       rather than into a per-call object nobody reads. "Collapse the empty
+       sections" keyed on the wrong flag looks exactly like this. */
+    get hidden() { return (props[id] || {}).hidden === 'true'; },
+    set hidden(v) { (props[id] = props[id] || {}).hidden = String(!!v); },
+    style: new Proxy({}, {
+      get: (_, k) => (props[id] || {})[`style.${String(k)}`] || '',
+      set: (_, k, v) => { (props[id] = props[id] || {})[`style.${String(k)}`] = String(v); return true; },
+    }),
     get value() { return values[id] !== undefined ? values[id] : ''; }, set value(v) { values[id] = v; },
-    style: {}, checked: true,
+    checked: true,
     /* The preset dropdown, so a state that names a preset renders the way the
        page renders it: the executive view and the copied report both read the
        selected option's label. */
@@ -1298,25 +1333,38 @@ const renderHarness = (inputs = {}) => {
     },
     querySelectorAll: () => [],
   };
-  const start = html.indexOf('function getVal(id)');
+  const start = HARNESS_SLICE_START;
   const before = [/^const GPU_TABLE = \{[\s\S]*?\n\};$/m, /^const BENCHMARK_DATA = \{[\s\S]*?\n\};$/m,
                   /^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m, /^const WORKLOAD_PROFILES = \{[\s\S]*?\n\};$/m]
     .map(re => html.match(re)[0]).filter(d => html.indexOf(d) < start).join('\n');
   const navigator = { clipboard: { writeText: () => Promise.resolve() } };
   const api = new Function('document', 'navigator', `
     let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
-    let currentModelMaxCtx = 131072, importedModelId = null, urlRestoreLost = [];
+    // urlRestoreLost is no longer declared here: index.html declares it inside
+    // the slice below, and declaring one name twice is a syntax error.
+    let currentModelMaxCtx = 131072, importedModelId = null;
     // The real name, declared before this slice begins. It was previously
     // spelled comparisonSnapshots — a name index.html does not contain — so
     // renderComparisons() threw on sight and no test could call it.
     let savedSnapshots = [];
     ${before}
-    ${html.slice(start, html.indexOf('function updateURLHash()'))}
-    return { renderVerdict, renderGPUCards, renderTraining, renderNotes, renderStrategyBadges,
-             renderExecutiveSummary, renderThroughput, renderCapacity, exportSummary, renderCommand,
-             renderMetrics, renderComparisons, renderCost, computeInference, buildVllmCommand,
-             boardsNeeded, boardsAdvice,
-             pushSnapshot: (s, c) => savedSnapshots.push({ state: s, computed: c, name: 'snap' }) };`)(document, navigator);
+    ${HARNESS_SLICE}
+    return { ${RENDER_NAMES.join(', ')},
+             exportSummary, computeInference, buildVllmCommand, boardsNeeded, boardsAdvice,
+             // The page's other naming path: a model imported by HuggingFace id
+             // rather than chosen from the presets.
+             setImportedModel: (v) => { importedModelId = v; },
+             /* The real saveSnapshot(), not a push that names the snapshot for
+                it. The name is built in there — from the preset dropdown, or the
+                imported id, or the parameter count — and a figure put in it
+                reaches the comparison view, which the harness never saw while it
+                was naming every snapshot "snap". Only where the state comes from
+                is stubbed, which is what this harness stubs everywhere. */
+             pushSnapshot: (s, c) => {
+               const realState = readInputState, realCompute = computeInference;
+               readInputState = () => s; computeInference = () => c;
+               try { saveSnapshot(); } finally { readInputState = realState; computeInference = realCompute; }
+             } };`)(document, navigator);
   return { ...api, out, shown, props };
 };
 
@@ -2314,12 +2362,14 @@ const piecesOf = (id, markup) => (id === '(copied report)'
   ? String(markup ?? '').split('\n')
   : String(markup ?? '').split(/(?=<div\b)|(?=<span class="badge")/));
 const sentencesOf = (text) => text.split(/(?<=[.!?])\s+/).filter(Boolean);
-const ATTRIBUTE = /\s(?:title|aria-label|alt|data-[\w-]+)="([^"]*)"/g;
+const ATTRIBUTE = /\s(?:title|aria-label|alt|data-[\w-]+)=(?:"([^"]*)"|'([^']*)')/g;
 const viewPieces = (views, id, st) => {
   const pieces = piecesOf(id, views.html[id]).map(raw => ({
     raw,
     texts: [...sentencesOf(seenText(raw, st)),
-            ...[...raw.matchAll(ATTRIBUTE)].map(m => seenText(m[1], st))].filter(Boolean),
+            // Either quoting: the page writes double quotes today, and a single
+            // quote is one keystroke away from hiding a value from this scan.
+            ...[...raw.matchAll(ATTRIBUTE)].map(m => seenText(m[1] ?? m[2], st))].filter(Boolean),
   }));
   /* Writes that never touch innerHTML: a textContent assignment, a title, a
      data-* attribute set on the element itself. */
@@ -2535,6 +2585,15 @@ test('without constants every view reads as it does with them, except where thro
     for (const id of new Set([...Object.keys(known.html), ...Object.keys(known.written),
                               ...Object.keys(known.props), ...Object.keys(unknown.html),
                               ...Object.keys(unknown.written), ...Object.keys(unknown.props)])) {
+      /* Before anything about the content: an element the reader cannot see
+         holds nothing, whatever its innerHTML says. Applied to every element,
+         the six allowed to differ included — withholding a whole panel is not
+         one of the differences they are allowed. */
+      const invisible = (v) => (v.props[id] || {}).hidden === 'true' ||
+                               (v.props[id] || {})['style.display'] === 'none';
+      assert.strictEqual(invisible(unknown), invisible(known),
+        `${label}: ${id} is ${invisible(unknown) ? 'hidden' : 'shown'} for the card with no ` +
+        `constants and ${invisible(known) ? 'hidden' : 'shown'} for the card with them`);
       if (!MAY_DIFFER.includes(id)) {
         assert.ok(unknown.html[id] === known.html[id],
           `${label}: ${id} changed when the constants went, ${firstDifference(known.html[id], unknown.html[id])}`);
@@ -2606,7 +2665,9 @@ test('without constants every view reads as it does with them, except where thro
   assert.deepStrictEqual([...differed].sort(), [...MAY_DIFFER].sort(),
     `allowed to differ, and never did: ${MAY_DIFFER.filter(id => !differed.has(id)).join(', ')}`);
   for (const id of ['gpu-cards', 'metrics-output', 'verdict-output', 'capacity-output', 'cost-output',
-                    'command-output', 'training-results'])
+                    'command-output', 'training-results',
+                    // and the four surfaces the hand-written renderer list had missed
+                    'gpu-model', 'gpu-count-display', 'counting-toggle', 'url-restore-warning'])
     assert.ok(held.has(id), `${id} was never rendered, so it was never held identical`);
   assert.ok(survived > 500 && checked > 500,
     `only ${survived} pieces were required to survive and ${checked} texts were accounted for`);
