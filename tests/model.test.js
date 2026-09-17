@@ -73,17 +73,16 @@ const gpuForKey = (key) => {
   return { params: Number(m[1]), slug: m[2], gpu: displayName(g), gb: g.gb };
 };
 
-const state = (o = {}) => {
-  const gpu = GPUS[o.gpu || 'H100 80GB'];
-  assert.ok(gpu, `unknown GPU ${o.gpu}`);
-  return {
+/* A state for one card, catalog row or not. state() below is this with a catalog
+   lookup in front, so a synthetic card gets a state built the same way. */
+const stateFor = (gpu, o = {}) => ({
     params: 8, activePercent: 100, bytesPerParam: 2, layers: 32, kvHeads: 8,
     headDim: 128, sharedExperts: 0, contextLength: 8192, concurrency: 1,
     gpuCount: 1, hasNVLink: true, kvBytesPerValue: 2, presetKey: '', hfModelId: null,
     modelMaxCtx: 1048576,
     gpuGB: gpu.gb, gpuBandwidth: gpu.bw, gpuTFLOPS: gpu.tflops,
     gpuHyperCost: gpu.hyper, gpuSpecCost: gpu.spec, gpuSpotCost: gpu.spot,
-    gpuName: o.gpu || 'H100 80GB',
+    gpuName: displayName(gpu),
     /* Read off the row, as readInputState() does. Defaulting this to false here
        would put every test on the ungated path and hide a gate that only ever
        fires on real hardware flags. */
@@ -93,7 +92,11 @@ const state = (o = {}) => {
        constants while its name said H100. */
     perfKey: gpu.perfKey,
     ...o,
-  };
+});
+const state = (o = {}) => {
+  const gpu = GPUS[o.gpu || 'H100 80GB'];
+  assert.ok(gpu, `unknown GPU ${o.gpu}`);
+  return stateFor(gpu, o);
 };
 
 let pass = 0, fail = 0;
@@ -730,8 +733,18 @@ const PREC_BYTES = { bf16: 2, fp8: 1, q4: 0.5, int4: 0.5 };
 
 for (const [key, b] of Object.entries(benchmarks.data)) {
   if (b.estimated) continue; // only score against real measurements
-  const { params, gpu } = gpuForKey(key);
+  const { params, gpu, slug } = gpuForKey(key);
   const gpuCount = key === '70b-h100-80' ? 2 : 1;
+  /* A measurement on hardware with no constants has no estimate to be scored
+     against. It is reported as such, not scored with another key's constants
+     and not dropped in silence. */
+  const perfKey = GPU_TABLE[slug].perfKey;
+  if (!Object.hasOwn(PERF, perfKey)) {
+    test(`${key} (${b.mode}) is not scored: ${perfKey} has no constants`, () => {
+      assert.strictEqual(computeInference(state({ gpu, params })).throughputModelled, false);
+    });
+    continue;
+  }
   // Benchmarks are run at short context with a full batch; mirror that.
   const s = state({
     gpu, params, gpuCount,
@@ -751,31 +764,75 @@ for (const [key, b] of Object.entries(benchmarks.data)) {
 }
 
 console.log('\nObserved-efficiency band');
-test('the declared band matches the measured spread, and is no wider', () => {
-  // Re-derive the band from the data so it cannot silently drift as entries land.
-  const ratios = [];
-  for (const [key, b] of Object.entries(benchmarks.data)) {
+/* The band belongs to one set of constants, so it is derived per perfKey: every
+   measured batch entry is scored on the key of its own card. A key PERF has no
+   entry for is skipped, not scored — its card has no estimate to divide by, and
+   borrowing PERF.nvidia's to make one is the fallback this suite keeps out. The
+   test this replaces read PERF.nvidia for every entry, whatever its card.
+
+   Takes the entries and the catalog as arguments, so the skip can be exercised
+   with a card the real catalog does not have yet. */
+const bandRatios = (entries, table) => {
+  const byKey = {}, skipped = [];
+  for (const [key, b] of Object.entries(entries)) {
     if (b.estimated || b.mode !== 'batch') continue;
-    const { params, gpu } = gpuForKey(key);
-    const s = state({
-      gpu, params, gpuCount: key === '70b-h100-80' ? 2 : 1,
+    const m = key.match(/^(\d+)b-(.+)$/);
+    assert.ok(m && Object.hasOwn(table, m[2]), `benchmark key "${key}" names no row in the catalog`);
+    const params = Number(m[1]), card = table[m[2]];
+    if (!Object.hasOwn(PERF, card.perfKey)) { skipped.push(key); continue; }
+    const s = stateFor(card, {
+      params, gpuCount: key === '70b-h100-80' ? 2 : 1,
       bytesPerParam: PREC_BYTES[b.prec] ?? 2,
       layers: params >= 60 ? 80 : params >= 20 ? 48 : 32,
       contextLength: 1024, concurrency: 1,
     });
-    ratios.push(b.tokS / computeInference(s).saturatedTokS);
+    (byKey[card.perfKey] = byKey[card.perfKey] || []).push(b.tokS / computeInference(s).saturatedTokS);
   }
-  assert.ok(ratios.length >= 3, `need >=3 measured batch entries, got ${ratios.length}`);
-  const lo = Math.min(...ratios), hi = Math.max(...ratios);
-  const { obsLo, obsHi } = PERF.nvidia;
-  // Two-sided deliberately. Asserting only that the data fits inside the band lets
-  // the band be widened to fit anything, and wider is the flattering direction:
-  // it makes the tool look like it predicted whatever was measured. README.md and
-  // MODEL.md both promise this band tracks the evidence, so pin both edges.
-  assert.ok(Math.abs(obsLo - lo) <= 0.02 && Math.abs(obsHi - hi) <= 0.02,
-    `measured/ceiling ratios span ${lo.toFixed(2)}-${hi.toFixed(2)} but PERF.nvidia declares ` +
-    `${obsLo}-${obsHi} — the band must track the data in both directions. Update obsLo/obsHi ` +
-    `in index.html and generate_report.py to match the measurements.`);
+  return { byKey, skipped };
+};
+test('each declared band matches its own measured spread, and is no wider', () => {
+  // Re-derive the bands from the data so they cannot silently drift as entries land.
+  const { byKey } = bandRatios(benchmarks.data, GPU_TABLE);
+  /* Both directions: a band with no measurements behind it is not evidence, and
+     measurements whose key declares no band would have nothing to track. */
+  assert.deepStrictEqual(Object.keys(byKey).sort(), Object.keys(PERF).sort(),
+    `PERF declares bands for [${Object.keys(PERF)}], measured batch entries exist for [${Object.keys(byKey)}]`);
+  for (const [perfKey, ratios] of Object.entries(byKey)) {
+    assert.ok(ratios.length >= 3, `${perfKey}: need >=3 measured batch entries, got ${ratios.length}`);
+    const lo = Math.min(...ratios), hi = Math.max(...ratios);
+    const { obsLo, obsHi } = PERF[perfKey];
+    // Two-sided deliberately. Asserting only that the data fits inside the band lets
+    // the band be widened to fit anything, and wider is the flattering direction:
+    // it makes the tool look like it predicted whatever was measured. README.md and
+    // MODEL.md both promise this band tracks the evidence, so pin both edges.
+    assert.ok(Math.abs(obsLo - lo) <= 0.02 && Math.abs(obsHi - hi) <= 0.02,
+      `measured/ceiling ratios on ${perfKey} span ${lo.toFixed(2)}-${hi.toFixed(2)} but ` +
+      `PERF.${perfKey} declares ${obsLo}-${obsHi} — the band must track the data in both ` +
+      `directions. Update obsLo/obsHi in index.html and generate_report.py to match the measurements.`);
+  }
+});
+test('a measurement on hardware with no constants is skipped by the band, never scored on nvidia', () => {
+  /* A synthetic card with no PERF entry, and a measured batch entry on it shaped
+     exactly like a real one. The catalog has no such row yet, so the case is
+     built rather than found. */
+  const probe = { ...GPU_TABLE['h100-80'], name: 'Unmeasured 80 GB', vendor: 'acme', perfKey: 'no-such-key' };
+  const entries = { ...benchmarks.data, '8b-probe-unmeasured': { ...benchmarks.data['8b-h100-80'] } };
+  assert.ok(!benchmarks.data['8b-h100-80'].estimated && benchmarks.data['8b-h100-80'].mode === 'batch',
+    'the entry the probe copies has to be one the band scores');
+  const real = bandRatios(benchmarks.data, GPU_TABLE);
+  const withProbe = bandRatios(entries, { ...GPU_TABLE, 'probe-unmeasured': probe });
+  assert.deepStrictEqual(withProbe.skipped, ['8b-probe-unmeasured'],
+    `the entry on a card without constants was not the one skipped: ${withProbe.skipped}`);
+  assert.ok(!Object.hasOwn(withProbe.byKey, 'no-such-key'), 'a key with no constants was given a band');
+  assert.deepStrictEqual(withProbe.byKey, real.byKey,
+    'a measurement on a card without constants changed a band it does not belong to');
+  /* Two-sided: the same entry on the same card with constants is scored, and
+     lands on that key's band. Without this the skip could be skipping
+     everything it is handed. */
+  const twin = bandRatios(entries, { ...GPU_TABLE, 'probe-unmeasured': { ...probe, perfKey: 'nvidia' } });
+  assert.deepStrictEqual(twin.skipped, [], 'an entry on a card with constants was skipped');
+  assert.strictEqual(twin.byKey.nvidia.length, real.byKey.nvidia.length + 1,
+    'an entry on a card with constants was not scored on its key');
 });
 test('the band scales the aggregate ceiling and nothing else', () => {
   const c = computeInference(state({ concurrency: 64 }));
