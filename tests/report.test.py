@@ -1178,17 +1178,55 @@ def report_strings(card, boards, **over):
     return cfg, story_strings(cfg)
 
 
-def story_strings(cfg):
-    """Every string generate() puts in the story for this cfg, by the walk
-    report_strings() describes. Separate so a test can hand over a whole cfg:
-    report_strings() fixes the preset and the interconnect."""
+class DrawSpy:
+    """A canvas that keeps the strings drawn on it and ignores everything else.
+
+    The header and the footer are not in the story: generate() hands them to
+    doc.build as callbacks and reportlab calls them with a canvas, so a spy that
+    walked the story alone never saw them. A figure printed in the footer of
+    every page was invisible to every test below."""
+
+    def __init__(self, seen):
+        self._seen = seen
+
+    def drawString(self, x, y, text, *a, **kw):
+        self._seen.append(str(text))
+
+    drawRightString = drawCentredString = drawCenteredString = drawAlignedString = drawString
+
+    def __getattr__(self, name):
+        return lambda *a, **kw: None
+
+
+class DocStub:
+    """What _header_footer reads off the document: the page number."""
+    page = 1
+
+
+def story_strings(cfg, comp=None):
+    """Every string this cfg puts in front of a reader: the story, the header and
+    footer drawn around it, and anything generate() prints while building it.
+
+    Separate from report_strings() so a test can hand over a whole cfg — that one
+    fixes the preset and the interconnect. `comp` substitutes the computed
+    figures, which is how a caller renders the same card with its throughput
+    figures moved.
+
+    The walk is the one report_strings() describes, plus two places a string can
+    hide from it: KeepTogether holds its flowables in `_content` rather than
+    `contents`, and a Paragraph's bullet is `bulletText`, not part of `text`."""
     obj = gr.ReportCard(cfg, output_path=os.devnull)
+    if comp is not None:
+        obj.comp = comp
     seen = []
 
     def harvest(item):
         text = getattr(item, "text", None)
         if text:
             seen.append(text)
+        bullet = getattr(item, "bulletText", None)
+        if bullet:
+            seen.append(str(bullet))
         for line in getattr(item, "lines", None) or []:
             seen.append(line if isinstance(line, str) else str(line))
         for row in getattr(item, "_cellvalues", []):
@@ -1197,16 +1235,22 @@ def story_strings(cfg):
                     else seen.append(str(cell))
         for child in getattr(item, "contents", []) or []:
             harvest(child)
+        for child in getattr(item, "_content", []) or []:
+            harvest(child)
 
     real_build = gr.SimpleDocTemplate.build
     captured = {}
+    printed = io.StringIO()
     try:
         gr.SimpleDocTemplate.build = lambda self, story, **kw: captured.__setitem__("story", story)
-        obj.generate()
+        with contextlib.redirect_stdout(printed):
+            obj.generate()
         for item in captured.get("story", []):
             harvest(item)
     finally:
         gr.SimpleDocTemplate.build = real_build
+    obj._header_footer(DrawSpy(seen), DocStub())
+    seen.extend(line for line in printed.getvalue().splitlines() if line.strip())
     return seen
 
 
@@ -1568,37 +1612,103 @@ NAMED_SUPPRESSED = {"single_tok", "agg_tok", "sat_tok", "per_user_load", "agg_ob
                     "perf_obs_hi", "perf_fp8_ratio"}
 
 
+# Every row in the catalog is a single-device board, and the AMD rows to come
+# mostly will be, so a grid built on the dual-GCD fixture alone would never
+# render the shape the tool actually ships. generate() could print an estimate,
+# or withhold a row, on `devices == 1` — or on the KV dtype, or on an attention
+# mode, or on a preset having named the model — and nothing here would look. So
+# the grid runs real catalog rows beside the fixture and rotates what the
+# document can branch on.
+PROBE_CARDS = [
+    ("H100 80GB (FP8 cores)", gr.GPUS["h100-80"]),
+    ("A100 80GB (no FP8 cores)", gr.GPUS["a100-80"]),
+    ("RTX 4090 (consumer, PCIe)", gr.GPUS["rtx4090-24"]),
+    ("T4 16GB (no FP8 cores)", gr.GPUS["t4-16"]),
+    ("B200 192GB", gr.GPUS["b200-192"]),
+    ("dual-GCD board (2 devices)", DUAL),
+]
+PROBE_PRESETS = [("8B dense", "llama31-8b"), ("70B dense", "llama31-70b"),
+                 ("30B MoE", "qwen3-30b"), ("26B SWA", "gemma4-26b"), ("671B MLA", "dsr1-671b")]
+PROBE_PRECISIONS = [("bf16", {"bpp": 2}), ("fp8", {"bpp": 1, "quant": "fp8"}),
+                    ("awq", {"bpp": 0.5, "quant": "awq"})]
+PROBE_LOADS = [
+    ("16 at 8K", {"ctx": 8192, "conc": 16}),
+    ("256 at 1K", {"ctx": 1024, "conc": 256}),
+    ("4 at 32K behind an 8K prefix",
+     {"ctx": 32768, "conc": 4, "shared_prefix": 8192, "prefix_caching": True}),
+]
+
+
 def absent_pairs():
-    """(label, cfg with constants, the same cfg without). Dense and MoE, over and
-    under the fit, one device to past a domain, both interconnects, FP8 with and
-    without tensor cores, a shared prefix, and a saturated short context that
-    sits on the compute ceiling."""
+    """(label, cfg with constants, the same cfg without), over the axes above:
+    one device and two per board, one board to past an NVLink domain and past a
+    data-parallel split, dense / MoE / SWA / MLA, three weight precisions, both
+    KV dtypes, both interconnects, three loads including a shared prefix and a
+    saturated short context on the compute ceiling, cards with and without FP8
+    tensor cores, and a model the preset named against one it did not."""
     pairs = []
-    for fp8 in (True, False):
-        known = dict(DUAL, caps={"fp8": fp8})
-        unknown = dict(known, perfKey="no-such-key")
-        for preset, boards, over in (
-                ("llama31-70b", 1, {}),
-                ("llama31-8b", 1, {}),
-                ("llama31-70b", 8, {"bpp": 0.5, "nvlink": False}),
-                ("qwen3-30b", 1, {}),
-                ("llama31-8b", 2, {"bpp": 1, "quant": "fp8", "nvlink": False}),
-                ("llama31-8b", 2, {"ctx": 256, "conc": 1024}),
-                ("llama31-8b", 1, {"ctx": 32768, "shared_prefix": 8192, "prefix_caching": True}),
-                ("llama31-70b", 5, {"bpp": 0.5})):
+    i = 0
+    for card_name, card in PROBE_CARDS:
+        for boards in (1, 2, 5, 16):
+            model_name, preset = PROBE_PRESETS[i % len(PROBE_PRESETS)]
+            prec_name, prec = PROBE_PRECISIONS[(i // 2) % len(PROBE_PRECISIONS)]
+            load_name, load = PROBE_LOADS[(i // 4) % len(PROBE_LOADS)]
+            kv_bpp = 1 if i % 2 else 2
+            nvlink = i % 3 != 0
+            named = i % 4 == 1
+            unknown_card = dict(card, perfKey="no-such-key")
             base = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=2, ctx=8192, conc=16,
-                        n_gpu=boards, nvlink=True, kv_bpp=2, hf_model="m", model_name="M")
-            base.update(over)
-            pairs.append((f"{preset} on {boards} board(s), caps.fp8 {fp8}, {over}",
-                          dict(base, gpu=known, vendor=known["vendor"], perfKey=known["perfKey"]),
-                          dict(base, gpu=unknown, vendor=unknown["vendor"], perfKey=unknown["perfKey"])))
+                        n_gpu=boards, nvlink=nvlink, kv_bpp=kv_bpp,
+                        # Both come from a preset or from the raw defaults every
+                        # builder falls back to; a hand-built cfg with neither is
+                        # not a state the tool can reach.
+                        hf_model=gr.PRESETS[preset]["hf"] if named else "/opt/models/YourModel",
+                        model_name=gr.PRESETS[preset]["name"] if named
+                        else f"{gr.arch_fields(gr.PRESETS[preset])['params']}B model")
+            base.update(prec)
+            base.update(load)
+            pairs.append((
+                f"{card_name} x{boards}, {model_name}, {prec_name}, {load_name}, "
+                f"KV {'FP8' if kv_bpp < 2 else 'BF16'}, {'NVLink' if nvlink else 'PCIe'}"
+                f"{', preset named' if named else ''}",
+                dict(base, gpu=card, vendor=card["vendor"], perfKey=card["perfKey"]),
+                dict(base, gpu=unknown_card, vendor=unknown_card["vendor"],
+                     perfKey=unknown_card["perfKey"])))
+            i += 1
     return pairs
 
 
 def check_without_constants_only_the_figures_that_need_them_go():
     over = bound = False
+    # Every axis the grid claims to cover, counted while it runs. A grid that
+    # quietly stops rendering single-device boards, or FP8 KV, or MLA, says
+    # nothing about those shapes, and the tests below would still be green — so
+    # the claim is checked rather than written in a docstring.
+    axes = {"a single-device board": 0, "two devices on one board": 0, "one board": 0,
+            "past an NVLink domain": 0, "a data-parallel split": 0, "FP8 KV cache": 0,
+            "BF16 KV cache": 0, "NVLink": 0, "PCIe": 0, "sliding-window attention": 0,
+            "MLA": 0, "a mixture of experts": 0, "FP8 on silicon without FP8 cores": 0,
+            "a model the preset named": 0, "a model it did not": 0, "a shared prefix": 0}
     for label, kcfg, ucfg in absent_pairs():
         known, unknown = gr.compute(kcfg), gr.compute(ucfg)
+        devices = kcfg["gpu"].get("devices", 1) or 1
+        axes["a single-device board"] += devices == 1
+        axes["two devices on one board"] += devices > 1
+        axes["one board"] += kcfg["n_gpu"] == 1
+        axes["past an NVLink domain"] += gr.device_count_for(kcfg) > 8
+        axes["a data-parallel split"] += known["dp"] > 1
+        axes["FP8 KV cache"] += kcfg.get("kv_bpp", 2) < 2
+        axes["BF16 KV cache"] += kcfg.get("kv_bpp", 2) == 2
+        axes["NVLink"] += bool(kcfg.get("nvlink"))
+        axes["PCIe"] += not kcfg.get("nvlink")
+        axes["sliding-window attention"] += kcfg.get("attn") == "swa"
+        axes["MLA"] += kcfg.get("attn") == "mla"
+        axes["a mixture of experts"] += known["is_moe"]
+        axes["FP8 on silicon without FP8 cores"] += bool(known.get("fp8_no_tensor_cores"))
+        named = kcfg["model_name"] != f"{kcfg['params']}B model"
+        axes["a model the preset named"] += named
+        axes["a model it did not"] += not named
+        axes["a shared prefix"] += bool(kcfg.get("shared_prefix"))
         assert known["throughput_modelled"] is True, f"{label}: the card with constants is not modelled"
         assert unknown["throughput_modelled"] is False, f"{label}: a perfKey with no entry is modelled"
         assert set(known) == set(unknown), f"{label}: the two results carry different fields"
@@ -1627,6 +1737,8 @@ def check_without_constants_only_the_figures_that_need_them_go():
         bound = bound or faster["sat_tok"] == known["sat_tok"]
     assert over, "every probe fits, so the board recommendation was never compared"
     assert bound, "no probe sits on the compute ceiling, so the decode MFU path was never suppressed"
+    missing = sorted(k for k, n in axes.items() if not n)
+    assert not missing, f"the probe grid no longer renders: {', '.join(missing)}"
 
 test("with no constants, every figure that needs one is None and nothing else moves, command included",
      check_without_constants_only_the_figures_that_need_them_go)
@@ -1676,6 +1788,79 @@ def in_order_within(few, many):
     return all(any(x == y for y in it) for x in few)
 
 
+# What a reader takes in: reportlab's inline markup stripped, entities decoded,
+# whitespace collapsed, the generation timestamp normalised so two renders a
+# minute apart still compare, and the card's own name taken out — a name is the
+# one place in a reason where a digit belongs. Attribute values are read rather
+# than stripped with their tag: a link or a title is text a reader can reach.
+TIMESTAMP = re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}")
+ATTRIBUTE = re.compile(r'\s(?:href|title|alt)="([^"]*)"')
+
+
+def texts_of(raw, name):
+    t = TIMESTAMP.sub("Generated <ts>", str(raw))
+    attrs = ATTRIBUTE.findall(t)
+    t = re.sub(r"<[^>]*>", " ", t)
+    for entity, ch in (("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")):
+        t = t.replace(entity, ch)
+
+    def flat(x):
+        return re.sub(r"\s+", " ", x.replace(name, " ")).strip()
+
+    return ([x for x in re.split(r"(?<=[.!?])\s+", flat(t)) if x]
+            + [x for x in map(flat, attrs) if x])
+
+
+def words_of(text):
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def with_moved_figures(c):
+    """The same result with every figure that needs a constant moved — numbers
+    scaled and offset, flags flipped — and everything the ruling lets survive
+    untouched. A string that reads differently under it is a string that carries
+    one of those figures, so no unit has to be recognised to find one."""
+    return {k: (v if k == "throughput_modelled" or k in SURVIVE_WITHOUT_CONSTANTS
+                else (not v) if isinstance(v, bool)
+                else (v * 3 + 7) if isinstance(v, (int, float)) else v)
+            for k, v in c.items()}
+
+
+_ABSENT_VIEWS = []
+
+
+def absent_views():
+    """Rendered once and shared by the checks below: the report with constants,
+    the same report with every figure that needs one moved, and the report
+    without. (label, cfg with, cfg without, strings, moved strings, strings
+    without.)"""
+    if not _ABSENT_VIEWS:
+        for label, kcfg, ucfg in absent_pairs():
+            _ABSENT_VIEWS.append((label, kcfg, ucfg, story_strings(kcfg),
+                                  story_strings(kcfg, with_moved_figures(gr.compute(kcfg))),
+                                  story_strings(ucfg)))
+    return _ABSENT_VIEWS
+
+
+# The only text a report with no constants may show that the report with them
+# does not: the reason, as the document words it, with the card's own name taken
+# out. Reword one of these and this list moves with it — which is what makes the
+# wording a contract rather than whatever generate() happens to say that day.
+REASON = [
+    # the throughput table, where the five figures and the Basis row were
+    "Throughput and TTFT",
+    "Not modelled",
+    # the paragraph under it, sentence by sentence
+    "No measured utilisation is published for : there are no memory-bandwidth or compute "
+    "utilisation figures for this hardware.",
+    "Estimating its throughput or time to first token would mean borrowing another "
+    "architecture's constants, which do not transfer, so this report gives neither.",
+    "The VRAM, fit, cost and command figures do not depend on them.",
+    # the interconnect note, where the PCIe decode loss was
+    "PCIe provides 64-128 GB/s.",
+]
+
+
 def check_the_report_says_why_where_the_figures_were():
     """The PDF is the document that gets forwarded. Discovered like the page's
     surfaces: the strings that carry a throughput or TTFT figure for the card
@@ -1704,8 +1889,8 @@ def check_the_report_says_why_where_the_figures_were():
         return ([ts.sub("Generated <ts>", t) for t in strings[:head]],
                 strings[head:cost], strings[cost:notes], strings[notes:])
 
-    for label, kcfg, ucfg in absent_pairs():
-        known, unknown = story_strings(kcfg), story_strings(ucfg)
+    accounted = 0
+    for label, kcfg, ucfg, known, moved, unknown in absent_views():
         assert any(figure.search(t) for t in known), (
             f"{label}: the report with constants prints no figure, so this sees nothing")
         leaked = [t for t in unknown if figure.search(t)]
@@ -1752,13 +1937,41 @@ def check_the_report_says_why_where_the_figures_were():
         assert in_order_within(numbers, may), (
             f"{label}: the notes show numbers without constants they did not show with them: "
             f"{numbers} against {may}")
-        for name, rx in speech.items():
-            heard.update([name] if any(rx.search(t) for t in known) else [])
+        # Nothing new, the reverse of the rule above and the one that does not
+        # depend on recognising a unit. Every sentence the report without
+        # constants shows — in a table cell, a paragraph, a bullet, the footer,
+        # or anything printed while the document was built — must be a sentence
+        # the report with constants shows outside the strings that carry a
+        # figure, a shortening of one of its speed sentences, or one of the
+        # reason strings above. A figure under a unit nobody listed, a number
+        # spelled as a word and a claim about speed with no number in it are all
+        # the same failure here: text that was not there before.
+        assert len(moved) == len(known), (
+            f"{label}: moving the throughput figures changed how the report is laid out")
+        still = [known[i] for i in range(len(known))
+                 if known[i] == moved[i] and not figure.search(known[i])]
+        outside, spoken = set(), []
+        for raw in still:
+            for t in texts_of(raw, name):
+                outside.add(t)
+                if any(rx.search(t) for rx in speech.values()):
+                    spoken.append(t)
+        for raw in unknown:
+            for t in texts_of(raw, name):
+                accounted += 1
+                assert (t in outside or t in REASON
+                        or any(in_order_within(words_of(t), words_of(said)) for said in spoken)), (
+                    f"{label}: the report without constants shows text the report with them does not "
+                    f"show outside its figures, and that is not one of the reason strings: {t!r}")
+        for heard_name, rx in speech.items():
+            heard.update([heard_name] if any(rx.search(t) for t in known) else [])
             said = [t for t in unknown if rx.search(t)]
-            assert not said, f"{label}: without constants the report still mentions {name}: {said[0][:160]!r}"
+            assert not said, (
+                f"{label}: without constants the report still mentions {heard_name}: {said[0][:160]!r}")
     # Every pattern has to have matched a report with constants, or it guards nothing.
     assert heard == set(speech), f"never seen with constants, so not guarding: {sorted(set(speech) - heard)}"
     assert kept > 50, f"only {kept} note sentences were checked for survival"
+    assert accounted > 1000, f"only {accounted} texts were accounted for"
 
 test("the report prints no throughput figure without constants, and says why in its place",
      check_the_report_says_why_where_the_figures_were)
@@ -1770,12 +1983,12 @@ def check_the_report_prints_no_none_without_constants():
                    "~0 tokens per second", "~0 milliseconds", "Expect roughly 0 tokens per second per user."):
         assert bad.search(sample), f"the pattern cannot see {sample!r}"
     chars = known_hits = 0
-    for label, kcfg, ucfg in absent_pairs():
-        for t in story_strings(ucfg):
+    for label, kcfg, ucfg, known, moved, unknown in absent_views():
+        for t in unknown:
             m = bad.search(t)
             assert not m, f"{label}: the report without constants prints {m.group(0)!r} in {t[:160]!r}"
             chars += len(t)
-        known_hits += sum(bool(bad.search(t)) for t in story_strings(kcfg))
+        known_hits += sum(bool(bad.search(t)) for t in known)
     assert known_hits and chars > 20000, (
         f"not discriminating: {known_hits} strings matched with constants, {chars} characters scanned")
 
