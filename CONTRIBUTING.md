@@ -178,5 +178,6 @@ JSON by `tools/sync_data.py` and marked with `GPU_TABLE:BEGIN` /
 `BENCHMARK_DATA:BEGIN` comments. Edit the JSON and re-run the script; the tests
 compare the two and will tell you if you edited the wrong one.
 
-Run `./tests/run.sh` before opening a PR. It needs `node` and `python3` and
-nothing else.
+Run `./tests/run.sh` before opening a PR. It needs `node`, `python3` and `reportlab`
+(`pip install reportlab`) — `tests/report.test.py` imports the PDF generator, which
+will not load without it. Nothing else.

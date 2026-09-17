@@ -178,7 +178,7 @@ tools/price_check.py    Repo-side job: re-reads published GPU prices, reports wh
 docs/MODEL.md           Every formula, constant and limitation, explained
 docs/research/          Working notes behind catalog entries
 setup.sh                Fork setup — repoints analytics at your account, or strips it
-tests/run.sh            Full suite — node + python3, no other deps
+tests/run.sh            Full suite — node, python3 and reportlab
 tests/model.test.js     VRAM, throughput and TTFT math
 tests/parity.test.py    Checks index.html and generate_report.py agree
 tests/report.test.py    The PDF generator and the text it emits
