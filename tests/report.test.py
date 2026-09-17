@@ -1662,6 +1662,20 @@ test("a perfKey with no PERF entry gets no constants — never NVIDIA's, and nev
      check_a_perf_key_with_no_entry_never_gets_nvidias_constants)
 
 
+# A throughput or TTFT figure, however its unit is spelled. The checks below do
+# not lean on it alone: a figure under a unit nobody listed still prints a
+# number, and the numbers are checked on their own.
+FIGURE = re.compile(r"tok/s|\btok(?:en)?s?\s*(?:/|per)\s*s(?:ec(?:ond)?s?)?\b|\bper\s+sec(?:ond)?s?\b"
+                    r"|\btps\b|\d\s*ms\b|\bmilli-?seconds?\b", re.I)
+NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def in_order_within(few, many):
+    """Whether every item of `few` occurs in `many`, in the same order."""
+    it = iter(many)
+    return all(any(x == y for y in it) for x in few)
+
+
 def check_the_report_says_why_where_the_figures_were():
     """The PDF is the document that gets forwarded. Discovered like the page's
     surfaces: the strings that carry a throughput or TTFT figure for the card
@@ -1669,7 +1683,7 @@ def check_the_report_says_why_where_the_figures_were():
     stand in the throughput section, once. Every sentence that talks about those
     figures, or about speed, goes with them. Everything before the section, and
     the cost and the command after it, reads exactly as it does with constants."""
-    figure = re.compile(r"tokens/sec|tok/s|\d\s*ms\b")
+    figure = FIGURE
     why = (re.compile(r"no measured utilisation", re.I), re.compile(r"do not\s+transfer", re.I))
     speech = {
         "single-stream": re.compile(r"single-stream", re.I),
@@ -1682,6 +1696,7 @@ def check_the_report_says_why_where_the_figures_were():
     }
     ts = re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}")
     heard = set()
+    kept = 0
 
     def split(strings):
         head = next(i for i, t in enumerate(strings) if t in ("Throughput estimate", "Throughput"))
@@ -1707,20 +1722,52 @@ def check_the_report_says_why_where_the_figures_were():
             f"{label}: the max-batch row did not survive unchanged")
         assert u_head == k_head, f"{label}: the report before the throughput section depends on the constants"
         assert u_cost == k_cost, f"{label}: the cost section or the command depends on the constants"
+        # No number in the throughput section but the max-batch row's, once the
+        # card's own name is out: a figure cannot come back under any unit, in a
+        # row of its own or inside the reason.
+        name = ucfg["gpu"]["name"]
+        value = u_tp[u_tp.index(row) + 1]
+        rest = [t for t in u_tp if t not in (row, value)]
+        shown = [n for t in rest for n in NUMBER.findall(t.replace(name, " "))]
+        assert not shown, (
+            f"{label}: the throughput section shows {shown} for a card without constants: {rest!r}")
+        # The notes keep every sentence that is not about speed, word for word and
+        # in order, and show only numbers they showed with constants, in the same
+        # order — the rule the page is held to in tests/model.test.js.
+        k_notes, u_notes = split(known)[3], split(unknown)[3]
+
+        def sentences(strings):
+            return [x for t in strings for x in re.split(r"(?<=[.!?])\s+", t.replace(name, " ")) if x]
+
+        before, after = sentences(k_notes), " ".join(sentences(u_notes))
+        at = 0
+        for sentence in before:
+            if any(rx.search(sentence) for rx in speech.values()):
+                continue
+            found = after.find(sentence, at)
+            assert found >= 0, f"{label}: the notes lost {sentence!r} when the constants went"
+            at = found + len(sentence)
+            kept += 1
+        numbers, may = NUMBER.findall(after), NUMBER.findall(" ".join(before))
+        assert in_order_within(numbers, may), (
+            f"{label}: the notes show numbers without constants they did not show with them: "
+            f"{numbers} against {may}")
         for name, rx in speech.items():
             heard.update([name] if any(rx.search(t) for t in known) else [])
             said = [t for t in unknown if rx.search(t)]
             assert not said, f"{label}: without constants the report still mentions {name}: {said[0][:160]!r}"
     # Every pattern has to have matched a report with constants, or it guards nothing.
     assert heard == set(speech), f"never seen with constants, so not guarding: {sorted(set(speech) - heard)}"
+    assert kept > 50, f"only {kept} note sentences were checked for survival"
 
 test("the report prints no throughput figure without constants, and says why in its place",
      check_the_report_says_why_where_the_figures_were)
 
 
 def check_the_report_prints_no_none_without_constants():
-    bad = re.compile(r"\bNone\b|\bnan\b|\bNaN\b|\binf\b|N/A|tokens/sec|tok/s|\d\s*ms\b")
-    for sample in ("~None ms", "nan tokens/sec", "~0 tokens/sec", "N/A", "inf", "~0 ms"):
+    bad = re.compile(r"\bNone\b|\bnan\b|\bNaN\b|\binf\b|N/A|" + FIGURE.pattern, re.I)
+    for sample in ("~None ms", "nan tokens/sec", "~0 tokens/sec", "N/A", "inf", "~0 ms",
+                   "~0 tokens per second", "~0 milliseconds", "Expect roughly 0 tokens per second per user."):
         assert bad.search(sample), f"the pattern cannot see {sample!r}"
     chars = known_hits = 0
     for label, kcfg, ucfg in absent_pairs():
