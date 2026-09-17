@@ -2441,6 +2441,17 @@ const piecesOf = (id, markup) => (id === '(copied report)'
   : String(markup ?? '').split(/(?=<div\b)|(?=<span class="badge")/));
 const sentencesOf = (text) => text.split(/(?<=[.!?])\s+/).filter(Boolean);
 const ATTRIBUTE = /\s(?:title|aria-label|alt|data-[\w-]+)=(?:"([^"]*)"|'([^']*)')/g;
+/* Every element a render touched, however it touched it. Walking the innerHTML
+   keys alone skipped the thirteen slider labels, the counting link and the
+   restore notice outright — they are only ever written through textContent or a
+   style — so a figure put in one of them was recorded by the harness and read by
+   nothing. */
+const viewIds = (v) => [...new Set([...Object.keys(v.html), ...Object.keys(v.written),
+                                    ...Object.keys(v.props)])];
+/* And everything it put there, as one string: markup, text written directly, and
+   the values of any attributes or styles set on the element. */
+const viewText = (v, id, st) => [String(v.html[id] ?? ''), String(v.written[id] ?? ''),
+                                 ...Object.values(v.props[id] || {})].join(' ');
 const viewPieces = (views, id, st) => {
   const pieces = piecesOf(id, views.html[id]).map(raw => ({
     raw,
@@ -2544,12 +2555,12 @@ test('every view that talks about throughput says why, in its place, when there 
   const WHY = [/no measured utilisation/i, /do not transfer/i];
   const printed = new Set(), spoke = new Set();
   for (const { label, ks, us, known, unknown } of absentViews()) {
-    for (const id of Object.keys(known.html)) {
-      const shown = seenText(known.html[id], ks);
+    for (const id of viewIds(known)) {
+      const shown = seenText(viewText(known, id, ks), ks);
       const figures = FIGURE.test(shown);
       if (!figures && !speaks(shown)) continue;
       (figures ? printed : spoke).add(id);
-      const reads = seenText(unknown.html[id], us);
+      const reads = seenText(viewText(unknown, id, us), us);
       assert.match(reads, /not modelled/i,
         `${label}: ${id} talks about throughput for a card with constants, and does not say it is ` +
         `not modelled for one without: ${reads.slice(0, 300)}`);
@@ -2586,7 +2597,7 @@ test('no view prints null, undefined, NaN or a throughput figure when there are 
     assert.match(sample, BAD, `the pattern cannot see "${sample}"`);
   let chars = 0, knownHits = 0;
   for (const { label, ks, us, known, unknown } of absentViews()) {
-    for (const id of Object.keys(unknown.html)) {
+    for (const id of viewIds(unknown)) {
       const parts = [String(unknown.html[id] ?? ''), seenText(unknown.html[id], us),
                      String(unknown.written[id] ?? ''), ...Object.values(unknown.props[id] || {})];
       for (const text of parts) {
