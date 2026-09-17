@@ -46,6 +46,7 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1174,6 +1175,13 @@ def report_strings(card, boards, **over):
     cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), ctx=8192, conc=16,
                n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
                perfKey=card["perfKey"], hf_model="m", model_name="M", **over)
+    return cfg, story_strings(cfg)
+
+
+def story_strings(cfg):
+    """Every string generate() puts in the story for this cfg, by the walk
+    report_strings() describes. Separate so a test can hand over a whole cfg:
+    report_strings() fixes the preset and the interconnect."""
     obj = gr.ReportCard(cfg, output_path=os.devnull)
     seen = []
 
@@ -1199,7 +1207,7 @@ def report_strings(card, boards, **over):
             harvest(item)
     finally:
         gr.SimpleDocTemplate.build = real_build
-    return cfg, seen
+    return seen
 
 
 def check_parallelism_row_agrees_with_the_command():
@@ -1523,6 +1531,234 @@ test("the PDF says when FP8 was asked for on silicon that cannot run it",
 
 test("tp and dp in a JSON config reach cfg and change nothing",
      check_tp_dp_json_keys_are_inert)
+
+
+# ---- hardware with no measured constants ------------------------------------
+# The ruling: a card whose perfKey has no PERF entry gets its full VRAM breakdown,
+# fit verdict, cost and command, and no throughput. Every figure that needs a
+# constant is None and the report says why in their place. The fallback to
+# nvidia is what this replaces. Each probe is a pair — the same cfg on a card
+# with constants and on the same card without — so every assertion below is
+# about the constants and nothing else.
+print("\nHardware with no measured constants")
+
+# Every field compute() returns that reads no PERF constant: the ruling, written
+# down. Everything else it returns has to be None without constants, so a
+# throughput figure added later that forgets to suppress fails the first test
+# below, and so does a new VRAM figure, until someone decides its side.
+SURVIVE_WITHOUT_CONSTANTS = {
+    # VRAM, capacity and the fit they decide
+    "weights_gb", "kv_gb", "act_gb", "total_oh", "total_gb", "per_w", "per_kv", "per_a",
+    "per_oh", "per_total", "total_vram", "free_kv", "kv_per_tok_gb", "kv_bytes_per_tok",
+    "max_ctx_1", "max_conc_8k", "max_conc_4k", "kv_saved_by_prefix_gb", "eff_prefix",
+    "is_moe", "total_tokens", "device_count", "device_gb", "device_bw", "fits", "comfortable",
+    # the parallelism split
+    "tp", "dp", "shard_divisor", "model_copies",
+    # batch sizes, which are KV arithmetic
+    "eff_batch", "max_batch_kv", "batch_limited", "sat_batch",
+    # cost
+    "hourly_hyper", "hourly_spec", "hourly_spot",
+    # a fact about the card and the precision rather than a constant
+    "fp8_no_tensor_cores",
+}
+# The fields the ruling names, so the set above cannot absorb one of them.
+NAMED_SUPPRESSED = {"single_tok", "agg_tok", "sat_tok", "per_user_load", "agg_obs_lo",
+                    "agg_obs_hi", "ttft_ms", "ttft_cold_ms", "ttft_warm_ms", "compute_ratio",
+                    "perf_mbu", "perf_mfu_decode", "perf_mfu_prefill", "perf_obs_lo",
+                    "perf_obs_hi", "perf_fp8_ratio"}
+
+
+def absent_pairs():
+    """(label, cfg with constants, the same cfg without). Dense and MoE, over and
+    under the fit, one device to past a domain, both interconnects, FP8 with and
+    without tensor cores, a shared prefix, and a saturated short context that
+    sits on the compute ceiling."""
+    pairs = []
+    for fp8 in (True, False):
+        known = dict(DUAL, caps={"fp8": fp8})
+        unknown = dict(known, perfKey="no-such-key")
+        for preset, boards, over in (
+                ("llama31-70b", 1, {}),
+                ("llama31-8b", 1, {}),
+                ("llama31-70b", 8, {"bpp": 0.5, "nvlink": False}),
+                ("qwen3-30b", 1, {}),
+                ("llama31-8b", 2, {"bpp": 1, "quant": "fp8", "nvlink": False}),
+                ("llama31-8b", 2, {"ctx": 256, "conc": 1024}),
+                ("llama31-8b", 1, {"ctx": 32768, "shared_prefix": 8192, "prefix_caching": True}),
+                ("llama31-70b", 5, {"bpp": 0.5})):
+            base = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=2, ctx=8192, conc=16,
+                        n_gpu=boards, nvlink=True, kv_bpp=2, hf_model="m", model_name="M")
+            base.update(over)
+            pairs.append((f"{preset} on {boards} board(s), caps.fp8 {fp8}, {over}",
+                          dict(base, gpu=known, vendor=known["vendor"], perfKey=known["perfKey"]),
+                          dict(base, gpu=unknown, vendor=unknown["vendor"], perfKey=unknown["perfKey"])))
+    return pairs
+
+
+def check_without_constants_only_the_figures_that_need_them_go():
+    over = bound = False
+    for label, kcfg, ucfg in absent_pairs():
+        known, unknown = gr.compute(kcfg), gr.compute(ucfg)
+        assert known["throughput_modelled"] is True, f"{label}: the card with constants is not modelled"
+        assert unknown["throughput_modelled"] is False, f"{label}: a perfKey with no entry is modelled"
+        assert set(known) == set(unknown), f"{label}: the two results carry different fields"
+        suppressed = set(known) - SURVIVE_WITHOUT_CONSTANTS - {"throughput_modelled"}
+        assert NAMED_SUPPRESSED <= suppressed, (
+            f"listed as surviving, though the ruling suppresses them: {sorted(NAMED_SUPPRESSED - suppressed)}")
+        for k in sorted(suppressed):
+            # None exactly: 0 prints as "0 tokens/sec".
+            assert unknown[k] is None, f"{label}: {k} is {unknown[k]!r} with no constants — it has to be None"
+            assert known[k] is not None, f"{label}: {k} is None even with constants"
+        for k in sorted(SURVIVE_WITHOUT_CONSTANTS):
+            assert k in known, f"{k} is listed as surviving, but compute() returns no such field"
+            assert unknown[k] == known[k] and type(unknown[k]) is type(known[k]), (
+                f"{label}: {k} moved when the constants went: {known[k]!r} -> {unknown[k]!r}")
+        assert gr.build_vllm_cmd(ucfg, unknown) == gr.build_vllm_cmd(kcfg, known), (
+            f"{label}: the vLLM command depends on the constants")
+        if not known["fits"]:
+            over = True
+            assert gr.boards_needed(ucfg, unknown) == gr.boards_needed(kcfg, known), (
+                f"{label}: the board count depends on the constants")
+            assert gr.boards_advice(ucfg, unknown) == gr.boards_advice(kcfg, known), (
+                f"{label}: the advice depends on the constants")
+        # compute() exports no compute-bound flag; a ceiling that holds the
+        # saturated figure is one that more bandwidth does not move.
+        faster = gr.compute(dict(kcfg, gpu=dict(kcfg["gpu"], bw=kcfg["gpu"]["bw"] * 10)))
+        bound = bound or faster["sat_tok"] == known["sat_tok"]
+    assert over, "every probe fits, so the board recommendation was never compared"
+    assert bound, "no probe sits on the compute ceiling, so the decode MFU path was never suppressed"
+
+test("with no constants, every figure that needs one is None and nothing else moves, command included",
+     check_without_constants_only_the_figures_that_need_them_go)
+
+
+def check_a_perf_key_with_no_entry_never_gets_nvidias_constants():
+    cfg = gr.from_cli_args(cli_args_for("llama31-8b"))
+    nvidia = gr.compute(cfg)
+    assert nvidia["throughput_modelled"] is True, "the H100 probe must be modelled"
+    # A typo, a case slip, a vendor name, dict-method names, and non-strings —
+    # unhashable ones included, which a bare PERF.get() would raise on.
+    for key in ("Nvidia", "NVIDIA", "nvidia ", " nvidia", "nvida", "amd", "cdna3", "",
+                "constructor", "__proto__", "toString", "get", "keys",
+                None, 0, 42, True, ["nvidia"], ("nvidia",), {"nvidia": 1}):
+        try:
+            got = gr.compute(dict(cfg, perfKey=key))
+        except Exception as e:
+            raise AssertionError(f"perfKey {key!r} raised {type(e).__name__}: {e}")
+        assert got["throughput_modelled"] is False, f"perfKey {key!r} was treated as having constants"
+        assert got["single_tok"] != nvidia["single_tok"], f"perfKey {key!r} was given NVIDIA's single_tok"
+        for k in ("single_tok", "agg_tok", "ttft_ms", "perf_mbu", "perf_mfu_decode"):
+            assert got[k] is None, f"perfKey {key!r}: {k} is {got[k]!r}"
+    keyless = {k: v for k, v in cfg.items() if k != "perfKey"}
+    assert gr.compute(keyless)["throughput_modelled"] is False, "a cfg with no perfKey was given constants"
+    # The lookup reads perfKey, not vendor — the field it used to read.
+    assert gr.compute(dict(cfg, vendor="nvidia", perfKey="no-such-key"))["throughput_modelled"] is False, (
+        'vendor "nvidia" granted constants to a key with none')
+    other = gr.compute(dict(cfg, vendor="acme", perfKey="nvidia"))
+    assert other["throughput_modelled"] is True, 'vendor "acme" removed constants its perfKey has'
+    assert other["single_tok"] == nvidia["single_tok"] and other["perf_mbu"] == gr.PERF["nvidia"]["mbu"]
+
+test("a perfKey with no PERF entry gets no constants — never NVIDIA's, and never an exception",
+     check_a_perf_key_with_no_entry_never_gets_nvidias_constants)
+
+
+def check_the_report_says_why_where_the_figures_were():
+    """The PDF is the document that gets forwarded. Discovered like the page's
+    surfaces: the strings that carry a throughput or TTFT figure for the card
+    with constants must all be gone for the card without, and the reason must
+    stand in the throughput section, once. Every sentence that talks about those
+    figures, or about speed, goes with them. Everything before the section, and
+    the cost and the command after it, reads exactly as it does with constants."""
+    figure = re.compile(r"tokens/sec|tok/s|\d\s*ms\b")
+    why = (re.compile(r"no measured utilisation", re.I), re.compile(r"do not\s+transfer", re.I))
+    speech = {
+        "single-stream": re.compile(r"single-stream", re.I),
+        "aggregate ceiling": re.compile(r"aggregate ceiling", re.I),
+        "decode throughput": re.compile(r"decode throughput", re.I),
+        "the throughput and TTFT figures": re.compile(r"throughput and TTFT figures"),
+        "bandwidth-bound estimate": re.compile(r"bandwidth-bound estimate"),
+        "FP8 tensor cores": re.compile(r"FP8 tensor cores"),
+        "the Basis row": re.compile(r"^Basis$"),
+    }
+    ts = re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}")
+    heard = set()
+
+    def split(strings):
+        head = next(i for i, t in enumerate(strings) if t in ("Throughput estimate", "Throughput"))
+        cost, notes = strings.index("Cost estimate"), strings.index("Notes and assumptions")
+        return ([ts.sub("Generated <ts>", t) for t in strings[:head]],
+                strings[head:cost], strings[cost:notes], strings[notes:])
+
+    for label, kcfg, ucfg in absent_pairs():
+        known, unknown = story_strings(kcfg), story_strings(ucfg)
+        assert any(figure.search(t) for t in known), (
+            f"{label}: the report with constants prints no figure, so this sees nothing")
+        leaked = [t for t in unknown if figure.search(t)]
+        assert not leaked, f"{label}: the report without constants prints {leaked[:3]!r}"
+        k_head, k_tp, k_cost, _ = split(known)
+        u_head, u_tp, u_cost, _ = split(unknown)
+        reasons = [t for t in unknown if all(r.search(t) for r in why)]
+        assert len(reasons) == 1 and reasons[0] in u_tp, (
+            f"{label}: the reason should appear once, in the throughput section; found {reasons!r}")
+        assert "Not modelled" in u_tp, f"{label}: the throughput table does not say 'Not modelled': {u_tp!r}"
+        # The batch row is KV arithmetic and stands in both.
+        row = "Max batch at this context"
+        assert row in u_tp and u_tp[u_tp.index(row) + 1] == k_tp[k_tp.index(row) + 1], (
+            f"{label}: the max-batch row did not survive unchanged")
+        assert u_head == k_head, f"{label}: the report before the throughput section depends on the constants"
+        assert u_cost == k_cost, f"{label}: the cost section or the command depends on the constants"
+        for name, rx in speech.items():
+            heard.update([name] if any(rx.search(t) for t in known) else [])
+            said = [t for t in unknown if rx.search(t)]
+            assert not said, f"{label}: without constants the report still mentions {name}: {said[0][:160]!r}"
+    # Every pattern has to have matched a report with constants, or it guards nothing.
+    assert heard == set(speech), f"never seen with constants, so not guarding: {sorted(set(speech) - heard)}"
+
+test("the report prints no throughput figure without constants, and says why in its place",
+     check_the_report_says_why_where_the_figures_were)
+
+
+def check_the_report_prints_no_none_without_constants():
+    bad = re.compile(r"\bNone\b|\bnan\b|\bNaN\b|\binf\b|N/A|tokens/sec|tok/s|\d\s*ms\b")
+    for sample in ("~None ms", "nan tokens/sec", "~0 tokens/sec", "N/A", "inf", "~0 ms"):
+        assert bad.search(sample), f"the pattern cannot see {sample!r}"
+    chars = known_hits = 0
+    for label, kcfg, ucfg in absent_pairs():
+        for t in story_strings(ucfg):
+            m = bad.search(t)
+            assert not m, f"{label}: the report without constants prints {m.group(0)!r} in {t[:160]!r}"
+            chars += len(t)
+        known_hits += sum(bool(bad.search(t)) for t in story_strings(kcfg))
+    assert known_hits and chars > 20000, (
+        f"not discriminating: {known_hits} strings matched with constants, {chars} characters scanned")
+
+test("the report prints no None, nan or throughput figure for a card without constants",
+     check_the_report_prints_no_none_without_constants)
+
+
+def check_a_card_without_constants_gets_a_real_pdf():
+    """Through a real cfg builder and a real reportlab build, not the story spy:
+    the layout has to hold the replacement rows."""
+    key = "__no_constants_probe"
+    gr.GPUS[key] = dict(gr.GPUS["h100-80"], name="Unmeasured 80 GB", vendor="acme",
+                        perfKey="acme-unmeasured")
+    fd, out = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            cfg = gr.from_cli_args(dict_args(cli_args_for("llama31-8b"), gpu=key, ngpu=2))
+        assert gr.compute(cfg)["throughput_modelled"] is False, "the probe card was given constants"
+        gr.ReportCard(cfg, output_path=out).generate()
+        with open(out, "rb") as f:
+            head = f.read(5)
+        assert head == b"%PDF-" and os.path.getsize(out) > 1000, (
+            f"no PDF was written: {head!r}, {os.path.getsize(out)} bytes")
+    finally:
+        del gr.GPUS[key]
+        os.remove(out)
+
+test("a card without constants goes through the CLI builder to a real PDF",
+     check_a_card_without_constants_gets_a_real_pdf)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

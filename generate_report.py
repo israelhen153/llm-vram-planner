@@ -388,10 +388,17 @@ def compute(cfg):
     # capped by the compute roofline and by how many sequences fit in KV cache.
     # These are different quantities and must never be compared to each other.
     # Looked up by the card's perfKey, which every cfg builder copies off the
-    # catalog row. An unknown or absent perfKey falls back to nvidia rather than
-    # raising; this is called from report rendering, where a KeyError loses the
-    # whole document.
-    P = PERF.get(cfg.get("perfKey") or "", PERF["nvidia"])
+    # catalog row. A perfKey PERF has no entry for — hardware nobody has
+    # published utilisation for, or a typo — gets no constants, never another
+    # entry's: this used to fall back to nvidia, which ran any such card on
+    # NVIDIA's MBU and MFU and printed the result as its estimate. Every figure
+    # that needs a constant is None instead, and throughput_modelled says why;
+    # None and never 0, because "0 tokens/sec" is a claim. A non-string key is
+    # no key, as in index.html. Nothing raises: this is called from report
+    # rendering, where an exception loses the whole document.
+    perf_key = cfg.get("perfKey")
+    P = PERF.get(perf_key) if isinstance(perf_key, str) else None
+    throughput_modelled = P is not None
     # NVLink is roughly flat within a domain (full bisection); PCIe worsens with GPU
     # count — decode all-reduces are small, so hop latency dominates. Heuristic step,
     # same class as MBU/MFU. Mirrors index.html exactly; the parity suite enforces it.
@@ -411,18 +418,19 @@ def compute(cfg):
         nv_penalty = 0.85
     else:
         nv_penalty = max(0.55 - 0.05 * math.log2(device_count / 2), 0.40)
-    achieved_bw = device_bw * 1e9 * device_count * P["mbu"] * nv_penalty
     active_weight_bytes = total_active_p * 1e9 * bpp
     kv_bytes_per_seq = kv_seq_bytes
 
-    def decode_at(batch):
-        denom = active_weight_bytes + batch * kv_bytes_per_seq
-        return (batch * achieved_bw) / denom if denom > 0 else 0
-
+    # The KV-bound batch sizes read no constant, so they stand whether or not the
+    # throughput below does.
     marginal_seq_bytes = max(kv_bytes_per_seq - shared_bytes, 1)
     max_batch_kv = (max(int((free_kv * GIB - shared_bytes) / marginal_seq_bytes), 0)
                     if kv_bytes_per_seq > 0 else conc)
     eff_batch = max(min(conc, max_batch_kv), 1)
+    batch_limited = conc > max_batch_kv
+    # Saturated batch: the only basis on which a published batch benchmark can be
+    # compared like with like, since those are run with the GPU fully loaded.
+    sat_batch = max(max_batch_kv, 1)
     # The compute figures run on the catalog's dense BF16 TFLOPS, which is the
     # rate only if the GEMM runs in 16 bits. FP8 is W8A8 and doubles on capable
     # silicon; AWQ/GPTQ are W4A16, dequantizing to FP16 before the GEMM, so they
@@ -431,38 +439,51 @@ def compute(cfg):
     # Gated on caps.fp8: Turing and Ampere load FP8 weights but run FP16 math.
     # Mirrors index.html; the parity suite compares the applied ratio.
     gpu_fp8 = bool(gpu.get("caps", {}).get("fp8", False))
-    compute_ratio = P["fp8ComputeRatio"] if (is_fp8 and gpu_fp8) else 1.0
-    compute_ceiling = (
-        (P["mfuDecode"] * device_tflops * 1e12 * device_count * nv_penalty * compute_ratio) / (2 * total_active_p * 1e9)
-        if total_active_p > 0 else 0
-    )
-    single_tok = round(decode_at(1))
-    agg_tok = round(min(decode_at(eff_batch), compute_ceiling))
-    # Saturated batch: the only basis on which a published batch benchmark can be
-    # compared like with like, since those are run with the GPU fully loaded.
-    sat_batch = max(max_batch_kv, 1)
-    sat_tok = round(min(decode_at(sat_batch), compute_ceiling))
-    per_user_load = round(agg_tok / eff_batch) if eff_batch else 0
-    # The ceiling's observed discount: measured batch benchmarks land at 40-91% of
-    # the roofline (the 1.1-2.5x optimism inverted). Mirrors index.html; the JS test
-    # suite re-derives the band from benchmarks/data.json to keep it honest.
-    agg_obs_lo = round(agg_tok * P["obsLo"])
-    agg_obs_hi = round(agg_tok * P["obsHi"])
-    batch_limited = conc > max_batch_kv
 
-    # Prefill is compute-bound, not bandwidth-bound; deriving it from decode speed
-    # understated TTFT by roughly 10x. MFU_PREFILL, not MFU_DECODE: dense GEMMs.
-    achieved_prefill_flops = P["mfuPrefill"] * device_tflops * 1e12 * device_count * nv_penalty * compute_ratio
+    # Every figure in this block reads a PERF constant, so every one of them is
+    # None when there are none. Bound to None out here and assigned only in
+    # there, so a figure added inside is suppressed by construction. Mirrors
+    # index.html's block; the parity suite compares the Nones as well as the
+    # numbers.
+    compute_ratio = single_tok = agg_tok = sat_tok = per_user_load = None
+    agg_obs_lo = agg_obs_hi = ttft_cold_ms = ttft_warm_ms = ttft_ms = None
+    if throughput_modelled:
+        achieved_bw = device_bw * 1e9 * device_count * P["mbu"] * nv_penalty
 
-    def ttft_for(tokens):
-        flops = 2 * total_active_p * 1e9 * max(tokens, 0)
-        return round((flops / achieved_prefill_flops) * 1000) if achieved_prefill_flops > 0 else 0
+        def decode_at(batch):
+            denom = active_weight_bytes + batch * kv_bytes_per_seq
+            return (batch * achieved_bw) / denom if denom > 0 else 0
 
-    # APC skips the shared prefix during prefill, so TTFT differs cold vs warm.
-    # It never changes decode speed.
-    ttft_cold_ms = ttft_for(ctx)
-    ttft_warm_ms = ttft_for(ctx - eff_prefix) if prefix_caching else ttft_cold_ms
-    ttft_ms = ttft_warm_ms
+        compute_ratio = P["fp8ComputeRatio"] if (is_fp8 and gpu_fp8) else 1.0
+        compute_ceiling = (
+            (P["mfuDecode"] * device_tflops * 1e12 * device_count * nv_penalty * compute_ratio) / (2 * total_active_p * 1e9)
+            if total_active_p > 0 else 0
+        )
+        single_tok = round(decode_at(1))
+        agg_tok = round(min(decode_at(eff_batch), compute_ceiling))
+        sat_tok = round(min(decode_at(sat_batch), compute_ceiling))
+        per_user_load = round(agg_tok / eff_batch) if eff_batch else 0
+        # The ceiling's observed discount: measured batch benchmarks land at 40-91%
+        # of the roofline (the 1.1-2.5x optimism inverted). Mirrors index.html; the
+        # JS test suite re-derives the band from benchmarks/data.json to keep it
+        # honest.
+        agg_obs_lo = round(agg_tok * P["obsLo"])
+        agg_obs_hi = round(agg_tok * P["obsHi"])
+
+        # Prefill is compute-bound, not bandwidth-bound; deriving it from decode
+        # speed understated TTFT by roughly 10x. MFU_PREFILL, not MFU_DECODE:
+        # dense GEMMs.
+        achieved_prefill_flops = P["mfuPrefill"] * device_tflops * 1e12 * device_count * nv_penalty * compute_ratio
+
+        def ttft_for(tokens):
+            flops = 2 * total_active_p * 1e9 * max(tokens, 0)
+            return round((flops / achieved_prefill_flops) * 1000) if achieved_prefill_flops > 0 else 0
+
+        # APC skips the shared prefix during prefill, so TTFT differs cold vs warm.
+        # It never changes decode speed.
+        ttft_cold_ms = ttft_for(ctx)
+        ttft_warm_ms = ttft_for(ctx - eff_prefix) if prefix_caching else ttft_cold_ms
+        ttft_ms = ttft_warm_ms
     # Boards, not devices: a dual-GCD module is one line item on the invoice.
     hourly_hyper = gpu["hyper"] * n_gpu
     hourly_spec = gpu["spec"] * n_gpu
@@ -481,13 +502,20 @@ def compute(cfg):
         "max_ctx_1": max_ctx_1, "max_conc_8k": max_conc_8k, "max_conc_4k": max_conc_4k,
         "single_tok": single_tok, "agg_tok": agg_tok, "per_user_load": per_user_load,
         "agg_obs_lo": agg_obs_lo, "agg_obs_hi": agg_obs_hi,
+        # Whether the figures that need a PERF constant were computed at all.
+        # False: the card's perfKey has no entry, every one of them is None, and
+        # the report says why in their place.
+        "throughput_modelled": throughput_modelled,
         # The constants this result was actually computed with, so callers can
         # label it without re-reading PERF and drifting. The parity suite compares
-        # these, which pins the two engines to the same values as executed.
-        "perf_mbu": P["mbu"], "perf_mfu_decode": P["mfuDecode"],
-        "perf_mfu_prefill": P["mfuPrefill"],
-        "perf_obs_lo": P["obsLo"], "perf_obs_hi": P["obsHi"],
-        "perf_fp8_ratio": P["fp8ComputeRatio"],
+        # these, which pins the two engines to the same values as executed. None,
+        # like the figures, when there are none.
+        "perf_mbu": P["mbu"] if throughput_modelled else None,
+        "perf_mfu_decode": P["mfuDecode"] if throughput_modelled else None,
+        "perf_mfu_prefill": P["mfuPrefill"] if throughput_modelled else None,
+        "perf_obs_lo": P["obsLo"] if throughput_modelled else None,
+        "perf_obs_hi": P["obsHi"] if throughput_modelled else None,
+        "perf_fp8_ratio": P["fp8ComputeRatio"] if throughput_modelled else None,
         # The multiplier actually applied, and the case the PDF captions. Not
         # inverses: a BF16 run on an A100 has ratio 1.0 and nothing to caption.
         "compute_ratio": compute_ratio,
@@ -925,22 +953,45 @@ class ReportCard:
         story.append(Spacer(1, 3*mm))
 
         # ---- Throughput ----
-        story.append(Paragraph("Throughput estimate", self.styles["SectionHead"]))
-        tp_data = [
-            ["Single-stream decode (1 user)", f"~{fmt_tok(c['single_tok'])} tokens/sec"],
-            [f"Aggregate ceiling @ {c['eff_batch']} concurrent", f"~{fmt_tok(c['agg_tok'])} tokens/sec (upper bound)"],
-            ["Observed range in practice", f"~{fmt_tok(c['agg_obs_lo'])}–{fmt_tok(c['agg_obs_hi'])} tokens/sec ({round(c['perf_obs_lo'] * 100)}–{round(c['perf_obs_hi'] * 100)}% of ceiling across measured benchmarks)"],
-            ["Per user under that load", f"~{fmt_tok(c['per_user_load'])} tokens/sec"],
-            ["Max batch at this context", f"{c['max_batch_kv']} sequences" + (" (below requested concurrency)" if c["batch_limited"] else "")],
-            ["Est. time to first token", f"~{c['ttft_ms']} ms (at {fmt_k(cfg['ctx'])} context)"],
-            ["Basis", f"Memory-bandwidth bound — {c['device_bw']:g} GB/s x {c['device_count']} device(s)"],
-        ]
-        story.append(self._make_kv_table(tp_data))
-        story.append(Paragraph(
-            "Throughput is a theoretical memory-bandwidth-bound estimate. Real numbers depend on "
-            "batching strategy, attention implementation, quantization kernels, and workload mix.",
-            self.styles["Small"]
-        ))
+        # KV arithmetic, not a PERF constant: this row stands either way.
+        max_batch_row = ["Max batch at this context",
+                         f"{c['max_batch_kv']} sequences"
+                         + (" (below requested concurrency)" if c["batch_limited"] else "")]
+        if c["throughput_modelled"]:
+            story.append(Paragraph("Throughput estimate", self.styles["SectionHead"]))
+            tp_data = [
+                ["Single-stream decode (1 user)", f"~{fmt_tok(c['single_tok'])} tokens/sec"],
+                [f"Aggregate ceiling @ {c['eff_batch']} concurrent", f"~{fmt_tok(c['agg_tok'])} tokens/sec (upper bound)"],
+                ["Observed range in practice", f"~{fmt_tok(c['agg_obs_lo'])}–{fmt_tok(c['agg_obs_hi'])} tokens/sec ({round(c['perf_obs_lo'] * 100)}–{round(c['perf_obs_hi'] * 100)}% of ceiling across measured benchmarks)"],
+                ["Per user under that load", f"~{fmt_tok(c['per_user_load'])} tokens/sec"],
+                max_batch_row,
+                ["Est. time to first token", f"~{c['ttft_ms']} ms (at {fmt_k(cfg['ctx'])} context)"],
+                ["Basis", f"Memory-bandwidth bound — {c['device_bw']:g} GB/s x {c['device_count']} device(s)"],
+            ]
+            story.append(self._make_kv_table(tp_data))
+            story.append(Paragraph(
+                "Throughput is a theoretical memory-bandwidth-bound estimate. Real numbers depend on "
+                "batching strategy, attention implementation, quantization kernels, and workload mix.",
+                self.styles["Small"]
+            ))
+        else:
+            # The card's perfKey has no PERF entry. The five rows that need a
+            # constant go, and so does "Basis", which describes how they would
+            # have been computed; the reason stands in their place. This is the
+            # document that gets forwarded, so it says why in full.
+            story.append(Paragraph("Throughput", self.styles["SectionHead"]))
+            story.append(self._make_kv_table([
+                ["Throughput and TTFT", "Not modelled"],
+                max_batch_row,
+            ]))
+            story.append(Paragraph(
+                f"No measured utilisation is published for {gpu['name']}: there are no memory-bandwidth "
+                "or compute utilisation figures for this hardware. Estimating its throughput or time to "
+                "first token would mean borrowing another architecture's constants, which do not "
+                "transfer, so this report gives neither. The VRAM, fit, cost and command figures do not "
+                "depend on them.",
+                self.styles["Small"]
+            ))
         story.append(Spacer(1, 3*mm))
 
         # ---- Cost ----
@@ -999,7 +1050,9 @@ class ReportCard:
         notes.append("VRAM estimates include ~1.5 GB CUDA context overhead per device.")
         if device_count_for(cfg) > 1:
             notes.append(f"{'NVLink' if cfg.get('nvlink') else 'PCIe'} interconnect assumed. "
-                         f"{'NVLink provides 600-900 GB/s bidirectional.' if cfg.get('nvlink') else 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.'}")
+                         # The PCIe loss is the interconnect curve's, withheld with
+                         # the throughput figures it prices.
+                         f"{'NVLink provides 600-900 GB/s bidirectional.' if cfg.get('nvlink') else 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.' if c['throughput_modelled'] else 'PCIe provides 64-128 GB/s.'}")
             notes.append(f"NCCL buffers add ~0.3 GB per device peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
@@ -1009,7 +1062,9 @@ class ReportCard:
         # Top-level, not inside the dp>1 block below: this is a property of the
         # card and the precision, and the single-GPU A100 case is the commonest
         # place it applies. It shipped nested by mistake and said nothing there.
-        if c.get("fp8_no_tensor_cores"):
+        # And only where those figures exist: with no constants there is no
+        # ceiling or TTFT above for the note to qualify.
+        if c.get("fp8_no_tensor_cores") and c["throughput_modelled"]:
             notes.append(f"FP8 was selected, but {cfg['gpu']['name']} has no FP8 tensor cores. The weights "
                          f"still store at 8 bits, so the memory and single-stream figures above hold. The "
                          f"aggregate ceiling and TTFT do not gain from it: the kernel dequantizes to FP16 and "
@@ -1036,7 +1091,9 @@ class ReportCard:
                              f"parallelism partitions the request stream rather than replicating the cache.")
             notes.append(f"TP={tp} x DP={dp} is a starting point, not an answer. Above one NVLink domain both the "
                          f"split and the interconnect factor priced against it are heuristics; nothing here is "
-                         f"measured above 2 devices, so the throughput and TTFT figures inherit that uncertainty.")
+                         f"measured above 2 devices"
+                         + (", so the throughput and TTFT figures inherit that uncertainty."
+                            if c["throughput_modelled"] else "."))
         notes.append("Parameter estimates from presets are approximate. Verify against the model's config.json.")
         notes.append("GPU prices are mid-2026 per-board/hr estimates across 3 tiers: hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave/RunPod), spot/marketplace (Vast.ai). Reserved instances typically 30-60% off.")
         for n in notes:

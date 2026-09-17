@@ -182,6 +182,35 @@ CASES = [
      "ctx": 32768, "conc": 32, "n_gpu": 1, "gpu": "h100-80",
      "attn": "swa", "swa_win": 1024, "swa_local": 25,
      "shared_prefix": 4096, "prefix_caching": True},
+    # Hardware with no measured constants: a row whose perfKey has no PERF entry.
+    # Both engines must agree that every throughput figure is absent — Python's
+    # None and JS's null meeting across the JSON boundary — while every VRAM,
+    # cost and parallelism figure is computed as for any other card. The card is
+    # a synthetic one, because no catalog row is like this yet; its perfKey goes
+    # through the c.card copy in the JS builder, and the echoed key below is what
+    # tells an unknown key from one that copy dropped.
+    {"name": "No measured constants: 4 dual-GCD modules, perfKey with no PERF entry",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
+              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "no-such-key", "devices": 2}},
+    # The same, past one domain, on PCIe, as an MoE at FP8 with FP8 KV and a
+    # saturated short context: the regime where every figure that could leak has
+    # something to leak.
+    {"name": "No measured constants: 16 devices, PCIe, MoE fp8, saturated",
+     "params": 30, "active": 10, "bpp": 1, "quant": "fp8", "layers": 48, "kv_heads": 4,
+     "h_dim": 128, "ctx": 1024, "conc": 512, "n_gpu": 16, "nvlink": False, "kv_bpp": 1,
+     "gpu": "h100-80",
+     "card": {"gb": 64, "bw": 1638.4, "hyper": 3.0, "spec": 1.25, "spot": 0.6,
+              "tflops": 191.5, "name": "Unmeasured 64 GB", "perfKey": "no-such-key",
+              "devices": 1, "caps": {"fp8": True}}},
+    # And a card that carries no perfKey at all, which is what a state or cfg
+    # built without one looks like: absent in both engines, never a fallback.
+    {"name": "No perfKey at all: absent in both engines, not a fallback",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80",
+     "card": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+              "tflops": 990, "name": "Keyless 80 GB", "devices": 1, "caps": {"fp8": True}}},
 ]
 
 js_runner = r"""
@@ -305,11 +334,32 @@ FIELDS = [
     # would compare equal on every case: it is a constant, and what can drift is
     # whether the two engines decide to *apply* it to the same configuration.
     ("perf_fp8_ratio", "perfFp8Ratio", 0), ("compute_ratio", "computeRatio", 0),
+    # Whether the two engines found constants for the card at all. A bool on both
+    # sides; compared exactly.
+    ("throughput_modelled", "throughputModelled", 0),
 ]
+# Every field above that needs a PERF constant: absent — None in Python, null in
+# JS — for a card without constants, and present for every other card. The rest
+# of FIELDS is present either way. A literal, because it is the ruling.
+PERF_BOUND = {"single_tok", "agg_tok", "agg_obs_lo", "agg_obs_hi", "per_user_load",
+              "ttft_ms", "sat_tok", "ttft_cold_ms", "ttft_warm_ms", "perf_mbu",
+              "perf_mfu_decode", "perf_mfu_prefill", "perf_obs_lo", "perf_obs_hi",
+              "perf_fp8_ratio", "compute_ratio"}
+assert PERF_BOUND <= {pk for pk, _, _ in FIELDS}, "PERF_BOUND names a field FIELDS does not compare"
+
+
+class Missing(Exception):
+    """A field one engine did not return at all — not the same as returning null."""
+
+
 def dig(d, path):
     """Walk a dotted path, so a field mapping can name perGPU.weights as easily
-    as perGPU.total — the special case this replaces could name exactly one."""
+    as perGPU.total — the special case this replaces could name exactly one.
+    A key that is not there raises Missing: JSON.stringify drops an undefined
+    field, and that is a different failure from a null one."""
     for part in path.split("."):
+        if not isinstance(d, dict) or part not in d:
+            raise Missing(path)
         d = d[part]
     return d
 
@@ -422,7 +472,11 @@ for case, js in zip(CASES, js_results):
     if js.get("__perfKey") != cfg["perfKey"]:
         bad.append(f"perfKey: py={cfg['perfKey']!r} js={js.get('__perfKey')!r}")
     for pk, jk, tol in FIELDS:
-        a, b = py[pk], dig(js, jk)
+        try:
+            a, b = py[pk], dig(js, jk)
+        except Missing:
+            bad.append(f"{pk}: js returned no {jk} at all (undefined, not null)")
+            continue
         if a is None or b is None:
             # A figure an engine reports as absent: Python's None, or JS's null,
             # which arrives through JSON as None too. Absent on both sides is
@@ -442,6 +496,54 @@ for case, js in zip(CASES, js_results):
     else:
         print(f"  ok   {case['name']}")
         passed += 1
+
+# ---- absent means absent, in both engines ----------------------------------
+# The comparison above is agreement, and two engines that both still borrowed
+# NVIDIA's constants would agree. So for every case whose card has no PERF entry,
+# each engine is held to the ruling on its own: throughput_modelled is False,
+# every PERF-bound field is None — and on the JS side it is there as null, since
+# the JSON boundary is the one place this design could silently turn "absent"
+# into "missing" — and every other compared field is a real value. The cases
+# with constants are held to the converse, so neither half passes by accident.
+absent_seen = present_seen = absent_failed = 0
+for case, js in zip(CASES, js_results):
+    cfg = cfg_for(case)
+    py = compute(cfg)
+    absent = cfg["perfKey"] not in PERF
+    problems = []
+    if py["throughput_modelled"] is not (not absent):
+        problems.append(f"python throughput_modelled={py['throughput_modelled']!r}")
+    if js.get("throughputModelled") is not (not absent):
+        problems.append(f"js throughputModelled={js.get('throughputModelled')!r}")
+    for pk, jk, _ in FIELDS:
+        if pk == "throughput_modelled":
+            continue
+        try:
+            jv = dig(js, jk)
+        except Missing:
+            problems.append(f"js returned no {jk} at all")
+            continue
+        want_none = absent and pk in PERF_BOUND
+        for engine, v in (("python", py[pk]), ("js", jv)):
+            if (v is None) != want_none:
+                problems.append(f"{engine} {pk}={v!r}, expected {'None' if want_none else 'a value'}")
+    if problems:
+        print(f"  FAIL throughput should be {'absent' if absent else 'present'} in both engines "
+              f"— {case['name']}")
+        for m in problems[:8]:
+            print(f"       {m}")
+        failed += 1
+        absent_failed += 1
+    absent_seen += absent
+    present_seen += not absent
+if absent_seen < 3 or not present_seen:
+    print(f"  FAIL the absent check reached {absent_seen} cases without constants and "
+          f"{present_seen} with — it needs both")
+    failed += 1
+elif not absent_failed:
+    print(f"  ok   throughput is absent, as None and null, in all {absent_seen} cases without "
+          f"constants, and present in the other {present_seen}")
+    passed += 1
 
 # The verdict flags must agree too — that is the tool's headline answer.
 for case, js in zip(CASES, js_results):

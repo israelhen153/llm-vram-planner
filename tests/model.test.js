@@ -1366,7 +1366,7 @@ test('one board that is two devices still explains its interconnect', () => {
   // dual-GCD module took the interconnect penalty in silence.
   const h = renderHarness();
   const state = asState(dualGCD, 1, { params: 8, layers: 32 });
-  h.renderNotes(state);
+  h.renderNotes(state, h.computeInference(state));
   const notes = Object.values(h.out).join(' ');
   assert.ok(/NVLink|PCIe/.test(notes),
     'no interconnect note for a board whose two devices must talk to each other');
@@ -1393,7 +1393,7 @@ test('two dual-GCD boards and four single-GCD boards produce identical output', 
     h.renderExecutiveSummary(state, computed);
     h.renderStrategyBadges(state, computed);
     h.renderTraining(state, computed);
-    h.renderNotes(state);
+    h.renderNotes(state, computed);
     h.renderThroughput(state, computed);
     h.renderCapacity(state, computed);
     h.renderCommand(state, computed);
@@ -1931,6 +1931,227 @@ test('every view that prints a compute figure says when FP8 has no tensor cores'
   }
   assert.ok(flagged >= 3 && clean > 0,
     `reached ${flagged} cards without FP8 and ${clean} labelled-clean renders — need both regimes`);
+});
+
+console.log('\nHardware with no measured constants');
+/* The ruling: a card whose perfKey has no PERF entry gets its full VRAM
+   breakdown, fit verdict, cost and vLLM command, and no throughput at all. Every
+   figure that needs a constant is null, and every view says why instead of
+   printing one. Nothing borrows another entry's constants — the fallback to
+   PERF.nvidia is what this replaces.
+
+   Every probe is a pair: the same configuration on a card with constants and on
+   the same card without. The card is derived from dualGCD rather than being it —
+   the device-splitting tests above rely on dualGCD having constants, and turning
+   it into this case would leave them green while testing something else. */
+const noConstants = { ...dualGCD, perfKey: 'no-such-key' };
+const absentProbes = () => {
+  const probes = [];
+  for (const caps of [{ fp8: true }, { fp8: false }]) {
+    const known = { ...dualGCD, caps };
+    const unknown = { ...noConstants, caps };
+    // Dense and MoE, over and under the fit, one board to past a domain, both
+    // interconnects, FP8, a shared prefix, and a saturated short context that sits
+    // on the compute ceiling: a state where every field below could differ.
+    for (const [count, extra] of [
+      [1, {}],
+      [1, { params: 8, layers: 32 }],
+      [8, { bytesPerParam: 0.5, hasNVLink: false }],
+      [1, { params: 30, activePercent: 10, layers: 48 }],
+      [2, { params: 8, layers: 32, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false }],
+      [2, { params: 8, layers: 32, contextLength: 256, concurrency: 1024 }],
+      [1, { params: 8, layers: 32, contextLength: 32768, sharedPrefix: 8192, prefixCaching: true }],
+    ]) {
+      probes.push({ label: `${count} board(s), caps.fp8 ${caps.fp8}, ${JSON.stringify(extra)}`,
+                    known: asState(known, count, extra), unknown: asState(unknown, count, extra) });
+    }
+  }
+  return probes;
+};
+
+/* Every field computeInference() returns that reads no PERF constant. A literal on
+   purpose: it is the ruling written down. Everything else the result carries has
+   to be null without constants, so a throughput figure added later that forgets
+   to suppress fails the next test — and so does a new VRAM figure, until someone
+   decides which side of this list it is on. */
+const WITHOUT_CONSTANTS_SURVIVE = [
+  // VRAM, capacity and the fit they decide
+  'isMoE', 'weightsGB', 'kvCacheGB', 'activationsGB', 'totalOverhead', 'totalGB', 'perGPU',
+  'totalVRAM', 'deviceCount', 'deviceGB', 'deviceBandwidth', 'freeForKVCache', 'kvPerTokenGB',
+  'kvBytesPerToken', 'kvSavedByPrefixGB', 'effectivePrefix', 'totalTokens', 'fits', 'comfortable',
+  'maxContextSingleUser', 'maxConcurrentAt8K', 'maxConcurrentAt4K',
+  // the parallelism split
+  'tp', 'dp', 'shardDivisor', 'modelCopies',
+  // batch sizes, which are KV arithmetic
+  'maxBatchByKV', 'effectiveBatch', 'saturatedBatch', 'batchLimitedByKV',
+  // cost
+  'hourlyHyper', 'hourlySpec', 'hourlySpot',
+  // a fact about the card and the precision rather than a constant: FP8 was asked
+  // for on silicon without FP8 tensor cores whether or not anything is estimated
+  'fp8NoTensorCores',
+];
+// The fields the ruling names, so the list above cannot absorb one of them.
+const NAMED_SUPPRESSED = ['singleStreamTokS', 'aggregateTokS', 'saturatedTokS', 'perUserAtLoadTokS',
+  'aggregateObservedLoTokS', 'aggregateObservedHiTokS', 'ttftMs', 'ttftColdMs', 'ttftWarmMs',
+  'computeBound', 'computeRatio', 'perfMbu', 'perfMfuDecode', 'perfMfuPrefill', 'perfObsLo',
+  'perfObsHi', 'perfFp8Ratio'];
+
+test('with no constants, every figure that needs one is null, enumerated from the result', () => {
+  let bound = false;
+  for (const { label, known: ks, unknown: us } of absentProbes()) {
+    const known = computeInference(ks);
+    const unknown = computeInference(us);
+    assert.strictEqual(known.throughputModelled, true, `${label}: the card with constants is not modelled`);
+    assert.strictEqual(unknown.throughputModelled, false, `${label}: a perfKey with no entry is modelled`);
+    assert.deepStrictEqual(Object.keys(unknown).sort(), Object.keys(known).sort(),
+      `${label}: the two results do not carry the same fields`);
+    const suppressed = Object.keys(known)
+      .filter(k => k !== 'throughputModelled' && !WITHOUT_CONSTANTS_SURVIVE.includes(k));
+    for (const k of NAMED_SUPPRESSED)
+      assert.ok(suppressed.includes(k), `${k} is a figure the ruling suppresses, but it is listed as surviving`);
+    for (const k of suppressed) {
+      // null exactly: 0 prints as "0 tok/s", and undefined vanishes from JSON.
+      assert.strictEqual(unknown[k], null,
+        `${label}: ${k} is ${JSON.stringify(unknown[k])} with no constants — it has to be null`);
+      assert.ok(known[k] !== null && known[k] !== undefined,
+        `${label}: ${k} is ${known[k]} even with constants, so this cannot tell it was suppressed`);
+    }
+    bound = bound || known.computeBound === true;
+  }
+  assert.ok(bound, 'no probe sits on the compute ceiling, so computeBound was only ever false');
+});
+
+test('with no constants, VRAM, fit, cost, the split, the batch sizes and the command do not move', () => {
+  const h = renderHarness();
+  let over = 0;
+  for (const { label, known: ks, unknown: us } of absentProbes()) {
+    const known = computeInference(ks);
+    const unknown = computeInference(us);
+    for (const k of WITHOUT_CONSTANTS_SURVIVE) {
+      assert.ok(k in known, `${k} is listed as surviving, but computeInference() returns no such field`);
+      assert.deepStrictEqual(unknown[k], known[k],
+        `${label}: ${k} moved when the constants went: ${JSON.stringify(known[k])} -> ${JSON.stringify(unknown[k])}`);
+    }
+    assert.strictEqual(h.buildVllmCommand(us, unknown, 'm'), h.buildVllmCommand(ks, known, 'm'),
+      `${label}: the vLLM command depends on the constants`);
+    if (!known.fits) {
+      over++;
+      assert.deepStrictEqual(h.boardsNeeded(us, unknown), h.boardsNeeded(ks, known),
+        `${label}: the board count the verdict recommends depends on the constants`);
+      assert.strictEqual(h.boardsAdvice(us, unknown), h.boardsAdvice(ks, known),
+        `${label}: the advice depends on the constants`);
+    }
+  }
+  assert.ok(over > 0, 'every probe fits, so the board recommendation was never compared');
+});
+
+test('a perfKey with no entry gets no constants — never NVIDIA\'s, whatever it looks like', () => {
+  /* The regression this replaces: an unknown key used to take PERF.nvidia. A
+     typo, a case slip, a vendor name, a prototype member and a non-string all
+     have to come out absent, and none of them may throw. */
+  const nvidia = computeInference(state());
+  assert.strictEqual(nvidia.throughputModelled, true, 'the H100 probe must be modelled');
+  const typos = ['Nvidia', 'NVIDIA', 'nvidia ', ' nvidia', 'nvidia​', 'nvida', 'amd', 'cdna3', '',
+                 'constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf',
+                 undefined, null, 0, 42, true, ['nvidia'], { toString: () => 'nvidia' }];
+  const { perfKey: _dropped, ...keyless } = state();
+  const describe = (t) => (typeof t === 'string' ? JSON.stringify(t)
+    : Array.isArray(t) ? `the array ${JSON.stringify(t)}`
+    : t && typeof t === 'object' ? 'an object whose toString() is "nvidia"' : String(t));
+  const cases = [...typos.map(t => [describe(t), state({ perfKey: t })]), ['(absent from the state)', keyless]];
+  for (const [shown, st] of cases) {
+    let c;
+    assert.doesNotThrow(() => { c = computeInference(st); }, `perfKey ${shown} threw`);
+    assert.strictEqual(c.throughputModelled, false, `perfKey ${shown} was treated as having constants`);
+    assert.notStrictEqual(c.singleStreamTokS, nvidia.singleStreamTokS,
+      `perfKey ${shown} was given NVIDIA's single-stream figure`);
+    for (const k of ['singleStreamTokS', 'aggregateTokS', 'ttftMs', 'perfMbu', 'perfMfuDecode'])
+      assert.strictEqual(c[k], null, `perfKey ${shown}: ${k} is ${c[k]}`);
+  }
+  /* And the lookup reads perfKey, not vendor — the field it used to read. A
+     vendor may neither grant constants nor take them away. */
+  const vendorOnly = computeInference(state({ vendor: 'nvidia', perfKey: 'no-such-key' }));
+  assert.strictEqual(vendorOnly.throughputModelled, false, 'vendor "nvidia" granted constants to a key with none');
+  const otherVendor = computeInference(state({ vendor: 'acme', perfKey: 'nvidia' }));
+  assert.strictEqual(otherVendor.throughputModelled, true, 'vendor "acme" removed constants its perfKey has');
+  assert.strictEqual(otherVendor.singleStreamTokS, nvidia.singleStreamTokS,
+    'the same perfKey under another vendor computed a different figure');
+  assert.strictEqual(otherVendor.perfMbu, PERF.nvidia.mbu);
+});
+
+/* Every renderer the harness exposes, called the way index.html declares it,
+   plus the copied report — the same discovery the two caveat sweeps use. */
+const surfaceParams = {};
+for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
+  surfaceParams[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
+const renderEverything = (st) => {
+  const h = renderHarness();
+  const renderers = Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function');
+  const c = h.computeInference(st);
+  h.pushSnapshot(st, c);
+  for (const name of renderers) {
+    assert.ok(surfaceParams[name], `${name} is exposed but not declared in index.html`);
+    h[name](...surfaceParams[name].map(pn => (pn === 'computed' ? c : pn === 'state' ? st : undefined)));
+  }
+  h.out['(copied report)'] = h.exportSummary(st, c);
+  return h.out;
+};
+
+test('every view that prints a throughput figure says why, in its place, when there are none', () => {
+  /* Discovered, not enumerated: every element that prints a throughput or TTFT
+     figure for the card with constants is a surface. Rendered again for the card
+     without, each one must print no figure, and must say why — both halves of
+     the reason, inside one card, beside "not modelled", so it stands where the
+     figures stood rather than somewhere else on the page. Per card and not per
+     element, because renderThroughput writes several tiles into one element and a
+     reason in one tile says nothing about the next. */
+  const FIGURE = /tok\/s|tokens\/sec|\d\s*ms\b/;
+  const WHY = [/no measured utilisation/i, /do not transfer/i];
+  const CARD = /<div class="(?:reverse-card|compare-card|exec-row|row)"/;
+  const found = new Set();
+  for (const { label, known: ks, unknown: us } of absentProbes()) {
+    const known = renderEverything(ks);
+    const unknown = renderEverything(us);
+    for (const id of Object.keys(known).filter(k => FIGURE.test(known[k]))) {
+      found.add(id);
+      const text = unknown[id] || '';
+      const figure = text.match(FIGURE);
+      assert.ok(!figure, `${label}: ${id} prints "${figure && figure[0]}" for a card with no constants: ` +
+        text.slice(Math.max(0, (figure ? figure.index : 0) - 120), (figure ? figure.index : 0) + 40));
+      const cards = id === '(copied report)' ? text.split('\n') : text.split(CARD);
+      const reasons = cards.filter(frag => WHY.every(re => re.test(frag)));
+      assert.ok(reasons.length > 0,
+        `${label}: ${id} prints no figure and does not say why: ${text.slice(0, 300)}`);
+      for (const frag of reasons)
+        assert.match(frag, /not modelled/i,
+          `${label}: ${id} gives the reason away from where the figures were: ${frag.slice(0, 200)}`);
+    }
+  }
+  // A floor, not a list: a fifth surface is found and held to the same rule.
+  assert.ok(found.size >= 4 && found.has('(copied report)'),
+    `the sweep reached ${found.size} surfaces (${[...found].join(', ')}) — it has stopped finding them`);
+});
+
+test('no view prints null, undefined, NaN or a throughput figure when there are no constants', () => {
+  /* Every element, not only the discovered surfaces: a leaked figure is as wrong
+     under the notes as in the throughput panel. */
+  const BAD = /\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b|N\/A|tok\/s|tokens\/sec|\d\s*ms\b/;
+  // The pattern has to be able to fire, or this asserts nothing.
+  for (const sample of ['~null ms', '~N/A ms', 'is undefined', 'NaN%', '~0 tok/s', '0 tokens/sec', 'Infinity', '~0 ms'])
+    assert.match(sample, BAD, `the pattern cannot see "${sample}"`);
+  let chars = 0, knownHits = 0;
+  for (const { label, known: ks, unknown: us } of absentProbes()) {
+    for (const [id, text] of Object.entries(renderEverything(us))) {
+      const m = String(text).match(BAD);
+      assert.ok(!m, `${label}: ${id} prints "${m && m[0]}" with no constants: ` +
+        String(text).slice(Math.max(0, (m ? m.index : 0) - 100), (m ? m.index : 0) + 40));
+      chars += String(text).length;
+    }
+    knownHits += Object.values(renderEverything(ks)).filter(t => BAD.test(String(t))).length;
+  }
+  // And the same scan does see figures where they exist, so it is looking.
+  assert.ok(knownHits > 0 && chars > 20000,
+    `not discriminating: ${knownHits} known-card elements matched, ${chars} characters scanned`);
 });
 
 test('the VRAM breakdown row adds up to the total it prints beside it', () => {
