@@ -1255,10 +1255,29 @@ const renderHarness = (inputs = {}) => {
     'train-batch-size': '1', 'train-seq-len': '2048', 'train-lora-rank': '16',
     'train-lora-targets': '4', 'train-hidden-size': '4096', ...inputs,
   };
+  /* Everything a renderer can put in front of a reader, not only innerHTML. A
+     textContent write, a title, a data-* attribute: each is as visible as a tile
+     — a title is what a reader sees on hover — and each is a place a figure can
+     be printed where a harness that records innerHTML alone would never look. */
+  const shown = {}, props = {};
   const el = (id) => ({
     get innerHTML() { return out[id] || ''; }, set innerHTML(v) { out[id] = v; },
+    get textContent() { return shown[id] || ''; }, set textContent(v) { shown[id] = String(v); },
+    get title() { return (props[id] || {}).title || ''; },
+    set title(v) { (props[id] = props[id] || {}).title = String(v); },
+    setAttribute(name, v) { (props[id] = props[id] || {})[name] = String(v); },
+    removeAttribute(name) { delete (props[id] || {})[name]; },
+    dataset: new Proxy({}, {
+      get: (_, k) => (props[id] || {})[`data-${String(k)}`],
+      set: (_, k, v) => { (props[id] = props[id] || {})[`data-${String(k)}`] = String(v); return true; },
+    }),
     get value() { return values[id] !== undefined ? values[id] : ''; }, set value(v) { values[id] = v; },
-    style: {}, options: [], selectedOptions: [{ dataset: { q: '' } }], checked: true,
+    style: {}, checked: true,
+    /* The preset dropdown, so a state that names a preset renders the way the
+       page renders it: the executive view and the copied report both read the
+       selected option's label. */
+    options: [{ text: 'Llama 3.1 8B', textContent: 'Llama 3.1 8B', disabled: false }], selectedIndex: 0,
+    selectedOptions: [{ dataset: { q: '' } }],
     classList: { add() {}, remove() {} },
   });
   const cache = {};
@@ -1267,8 +1286,16 @@ const renderHarness = (inputs = {}) => {
     // Executive mode is on: renderExecutiveSummary() returns immediately
     // otherwise, and this suite exists to read what it writes.
     body: { classList: { add() {}, remove() {}, contains: () => true } },
-    // exportSummary() reads the comparison table and copies to the clipboard.
-    querySelector: () => ({ textContent: '', innerHTML: '', parentElement: null }),
+    /* The copied report quotes the command the page is showing. Returning an
+       empty string here left that block empty for every card, so a renderer that
+       dropped the command for one of them changed nothing a test could see. */
+    querySelector: (sel) => {
+      if (sel === '#command-output code') {
+        const m = (out['command-output'] || '').match(/<code>([\s\S]*?)<\/code>/);
+        return m ? { textContent: m[1] } : null;
+      }
+      return { textContent: '', innerHTML: '', parentElement: null };
+    },
     querySelectorAll: () => [],
   };
   const start = html.indexOf('function getVal(id)');
@@ -1290,7 +1317,7 @@ const renderHarness = (inputs = {}) => {
              renderMetrics, renderComparisons, renderCost, computeInference, buildVllmCommand,
              boardsNeeded, boardsAdvice,
              pushSnapshot: (s, c) => savedSnapshots.push({ state: s, computed: c, name: 'snap' }) };`)(document, navigator);
-  return { ...api, out };
+  return { ...api, out, shown, props };
 };
 
 /* index.html's own formatters, read from source so a change to one cannot make
@@ -2045,27 +2072,67 @@ console.log('\nHardware with no measured constants');
    the device-splitting tests above rely on dualGCD having constants, and turning
    it into this case would leave them green while testing something else. */
 const noConstants = { ...dualGCD, perfKey: 'no-such-key' };
+
+/* The probes, each a pair: a card with constants and the same card without.
+
+   Every row in the catalog is a single-device board, and the AMD rows to come
+   mostly will be, so a grid built only from the dual-GCD fixture would never
+   render the shape the tool actually ships. A renderer could print an estimate,
+   or withhold a figure, on `gpuDevices === 1` — or on the KV dtype, or on an
+   attention mode, or on a preset being selected — and nothing would look. So
+   the grid runs real catalog rows as well as the fixture, and rotates what a
+   renderer can branch on: devices per board, board count (including counts that
+   split data-parallel), the model's attention regime, the weight precision, the
+   KV dtype, the interconnect, the load, whether a preset is named, and whether
+   the card has benchmark data on file. */
+const PROBE_CARDS = [
+  ['H100 80GB (sxm, FP8 cores)', GPU_TABLE['h100-80'], 'h100-80'],
+  ['A100 80GB (sxm, no FP8 cores)', GPU_TABLE['a100-80'], 'a100-80'],
+  ['RTX 4090 (consumer, PCIe)', GPU_TABLE['rtx4090-24'], 'rtx4090-24'],
+  ['T4 16GB (PCIe, no FP8 cores)', GPU_TABLE['t4-16'], 't4-16'],
+  ['B200 192GB (sxm)', GPU_TABLE['b200-192'], 'b200-192'],
+  ['dual-GCD board (2 devices)', dualGCD, undefined],
+];
+const PROBE_MODELS = [
+  ['8B dense', { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 }],
+  ['70B dense', { params: 70, layers: 80, kvHeads: 8, headDim: 128, activePercent: 100 }],
+  ['30B MoE', { params: 30, layers: 48, kvHeads: 8, headDim: 128, activePercent: 10, sharedExperts: 1 }],
+  ['26B SWA', { params: 26, layers: 30, kvHeads: 8, headDim: 256, activePercent: 15,
+                attnMode: 'swa', swaWindow: 1024, swaLocalLayers: 25 }],
+  ['671B MLA', { params: 671, layers: 61, kvHeads: 128, headDim: 56, activePercent: 5, sharedExperts: 1,
+                 attnMode: 'mla', mlaLatentDim: 576 }],
+];
+const PROBE_PRECISIONS = [
+  ['bf16', { bytesPerParam: 2, quantMethod: '' }],
+  ['fp8', { bytesPerParam: 1, quantMethod: 'fp8' }],
+  ['awq', { bytesPerParam: 0.5, quantMethod: 'awq' }],
+];
+const PROBE_LOADS = [
+  ['16 at 8K', { contextLength: 8192, concurrency: 16 }],
+  ['256 at 1K', { contextLength: 1024, concurrency: 256 }],
+  ['4 at 32K behind an 8K prefix', { contextLength: 32768, concurrency: 4, sharedPrefix: 8192, prefixCaching: true }],
+];
 const absentProbes = () => {
   const probes = [];
-  for (const caps of [{ fp8: true }, { fp8: false }]) {
-    const known = { ...dualGCD, caps };
-    const unknown = { ...noConstants, caps };
-    // Dense and MoE, over and under the fit, one board to past a domain, both
-    // interconnects, FP8, a shared prefix, and a saturated short context that sits
-    // on the compute ceiling: a state where every field below could differ.
-    for (const [count, extra] of [
-      [1, {}],
-      [1, { params: 8, layers: 32 }],
-      [8, { bytesPerParam: 0.5, hasNVLink: false }],
-      [1, { params: 30, activePercent: 10, layers: 48, gpuKey: 'b200-192' }],
-      [2, { params: 8, layers: 32, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false }],
-      [2, { params: 8, layers: 32, contextLength: 256, concurrency: 1024, gpuKey: 'h100-80' }],
-      [1, { params: 8, layers: 32, contextLength: 32768, sharedPrefix: 8192, prefixCaching: true }],
-    ]) {
-      probes.push({ label: `${count} board(s), caps.fp8 ${caps.fp8}, ${JSON.stringify(extra)}`,
-                    known: asState(known, count, extra), unknown: asState(unknown, count, extra) });
+  let i = 0;
+  for (const [cardName, card, gpuKey] of PROBE_CARDS)
+    for (const count of [1, 2, 4, 16]) {
+      const [modelName, model] = PROBE_MODELS[i % PROBE_MODELS.length];
+      const [precName, precision] = PROBE_PRECISIONS[(i >> 1) % PROBE_PRECISIONS.length];
+      const [loadName, load] = PROBE_LOADS[(i >> 2) % PROBE_LOADS.length];
+      const kvBytesPerValue = i % 2 ? 1 : 2;
+      const hasNVLink = i % 3 !== 0;
+      const presetKey = i % 4 === 1 ? 'llama31-8b' : '';
+      const extra = { ...model, ...precision, ...load, kvBytesPerValue, hasNVLink, presetKey, gpuKey };
+      probes.push({
+        label: `${cardName} x${count}, ${modelName}, ${precName}, ${loadName}, ` +
+          `KV ${kvBytesPerValue === 1 ? 'FP8' : 'BF16'}, ${hasNVLink ? 'NVLink' : 'PCIe'}` +
+          `${presetKey ? ', preset named' : ''}`,
+        known: asState(card, count, extra),
+        unknown: asState({ ...card, perfKey: 'no-such-key' }, count, extra),
+      });
+      i++;
     }
-  }
   return probes;
 };
 
@@ -2181,7 +2248,11 @@ test('a perfKey with no entry gets no constants — never NVIDIA\'s, whatever it
 
 /* Every renderer the harness exposes, called the way index.html declares it,
    plus the copied report — the same discovery the two caveat sweeps use. The
-   engine's own result is rendered unless another one is handed in. */
+   engine's own result is rendered unless another one is handed in.
+
+   What comes back is everything the harness recorded: what each element renders,
+   what a textContent write put there, and what a title or data-* attribute was
+   set to. A view is all three, because a reader sees all three. */
 const surfaceParams = {};
 for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
   surfaceParams[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
@@ -2195,16 +2266,18 @@ const renderEverything = (st, given) => {
     h[name](...surfaceParams[name].map(pn => (pn === 'computed' ? c : pn === 'state' ? st : undefined)));
   }
   h.out['(copied report)'] = h.exportSummary(st, c);
-  return h.out;
+  return { html: h.out, written: h.shown, props: h.props };
 };
 
-/* A throughput or TTFT figure, however its unit is spelled: "tok/s",
+/* A throughput or TTFT figure, however its unit is spelled: "tok/s", "t/s",
    "tokens/sec", "tokens per second", "per sec", "ms", "milliseconds". Nothing
-   below leans on it alone — a figure under a unit nobody listed still has to
-   print a number, and the numbers are checked on their own. */
-const FIGURE = /tok\/s|\btok(?:en)?s?\s*(?:\/|per)\s*s(?:ec(?:ond)?s?)?\b|\bper\s+sec(?:ond)?s?\b|\btps\b|\d\s*ms\b|\bmilli-?seconds?\b/i;
-/* A claim about speed that is not a figure. Each rests on the same heuristics the
-   constants do. */
+   below leans on it alone — a figure under a unit nobody listed still has to be
+   text the card with constants does not show, and that is the rule that
+   catches it. */
+const FIGURE = /\bt(?:ok(?:en)?s?)?\s*(?:\/|per)\s*s(?:ec(?:ond)?s?)?\b|\bper\s+sec(?:ond)?s?\b|\btps\b|\d\s*ms\b|\bmilli-?seconds?\b/i;
+/* A claim about speed that is not a figure. Each rests on the same heuristics
+   the constants do, and each may be dropped or shortened for a card without
+   them — nothing else may be. */
 const SPEECH = {
   'a PCIe loss percentage': /\d+-\d+% (?:perf|decode) loss/i,
   'a bandwidth-bound estimate': /bandwidth-bound/i,
@@ -2215,30 +2288,50 @@ const SPEECH = {
 };
 const speaks = (text) => Object.values(SPEECH).some(re => re.test(text));
 
-/* What a reader sees of an element or of the copied report: tags dropped,
-   entities decoded, whitespace collapsed — and the card's own name taken out,
-   because a name is the one place in a reason where a digit belongs. */
+/* What a reader sees of a piece of markup: tags dropped, entities decoded,
+   whitespace collapsed — and the card's own name taken out, because a name is
+   the one place in a reason where a digit belongs. */
 const seenText = (markup, st) => String(markup ?? '')
   .replace(/<[^>]*>/g, ' ')
   .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
   .split(st.gpuName).join(' ')
   .replace(/\s+/g, ' ').trim();
 const numbersIn = (text) => text.match(/\d+(?:[.,]\d+)*/g) || [];
+const wordsOf = (text) => text.toLowerCase().match(/[a-z0-9]+/g) || [];
 // Whether every item of `few` occurs in `many`, in the same order.
 const inOrderWithin = (few, many) => {
   let i = 0;
   for (const x of many) if (i < few.length && x === few[i]) i++;
   return i === few.length;
 };
-/* A view as a reader takes it in: the copied report line by line, a page element
-   tile by tile (each <div>, each badge). Each piece's prose is then read sentence
-   by sentence. */
+// A sentence with words dropped and nothing added: how a caveat is shortened.
+const isShorteningOf = (short, long) => inOrderWithin(wordsOf(short), wordsOf(long));
+/* A view as a reader takes it in: the copied report line by line, an element
+   tile by tile. Each piece carries the sentences of its text and the values of
+   the attributes that carry text — an attribute is read rather than stripped
+   with its tag, because a title is a place a figure can hide. */
 const piecesOf = (id, markup) => (id === '(copied report)'
   ? String(markup ?? '').split('\n')
   : String(markup ?? '').split(/(?=<div\b)|(?=<span class="badge")/));
 const sentencesOf = (text) => text.split(/(?<=[.!?])\s+/).filter(Boolean);
-/* The same result with every figure that needs a constant moved — numbers scaled
-   and offset, flags flipped — and everything else untouched. A piece of a view
+const ATTRIBUTE = /\s(?:title|aria-label|alt|data-[\w-]+)="([^"]*)"/g;
+const viewPieces = (views, id, st) => {
+  const pieces = piecesOf(id, views.html[id]).map(raw => ({
+    raw,
+    texts: [...sentencesOf(seenText(raw, st)),
+            ...[...raw.matchAll(ATTRIBUTE)].map(m => seenText(m[1], st))].filter(Boolean),
+  }));
+  /* Writes that never touch innerHTML: a textContent assignment, a title, a
+     data-* attribute set on the element itself. */
+  const written = seenText(views.written[id], st);
+  const set = Object.entries(views.props[id] || {}).map(([k, v]) => `${k}=${seenText(v, st)}`);
+  const asideTexts = [...sentencesOf(written), ...Object.values(views.props[id] || {})
+    .map(v => seenText(v, st))].filter(Boolean);
+  if (asideTexts.length) pieces.push({ raw: `[written] ${written} ${set.join(' ')}`, texts: asideTexts });
+  return pieces.filter(piece => piece.texts.length);
+};
+/* The same result with every figure that needs a constant moved — numbers
+   scaled and offset, flags flipped — and everything else untouched. A piece
    that reads differently under it is a piece that shows one of those figures;
    no unit has to be recognised to find it. */
 const withMovedFigures = (c) => Object.fromEntries(Object.entries(c).map(([k, v]) =>
@@ -2251,29 +2344,63 @@ const firstDifference = (a = '', b = '') => {
     `"${b.slice(Math.max(0, i - 80), i + 80)}"`;
 };
 
+/* Rendered once and shared by the tests below: the card with constants, the
+   same card with every figure that needs one moved, and the card without. */
+const absentViews = (() => {
+  let cache;
+  return () => (cache = cache || absentProbes().map(({ label, known, unknown }) => {
+    const computed = computeInference(known);
+    return { label, ks: known, us: unknown,
+             known: renderEverything(known, computed),
+             moved: renderEverything(known, withMovedFigures(computed)),
+             unknown: renderEverything(unknown) };
+  }));
+})();
+
+/* The only text a card with no constants may show that the card with them does
+   not: the reason, as each view words it, with the card's own name taken out.
+   Reword a reason and this list moves with it — which is what makes the wording
+   a contract rather than whatever the renderer happens to say that day. */
+const REASON = [
+  // renderThroughput's tile, where the three figures were
+  "Throughput and TTFT Not modelled No measured utilisation for this hardware — has no published " +
+  "memory-bandwidth or compute utilisation, and estimating its throughput or time to first token " +
+  "would mean borrowing another architecture's constants, which do not transfer",
+  // renderExecutiveSummary's row, where the two figures were
+  'Speed and server throughput Not modelled · no measured utilisation for this hardware, and an ' +
+  'estimate would borrow constants that do not transfer',
+  // renderComparisons' row in a saved snapshot
+  'Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants ' +
+  'do not transfer',
+  // renderNotes
+  'Throughput is not modelled for this hardware: no measured utilisation is published for it.',
+  // renderStrategyBadges, where the PCIe loss percentage was
+  'PCIe — no NVLink; the speed cost is not modelled for this hardware',
+  // exportSummary, in place of its three lines
+  '- Throughput and TTFT: not modelled.',
+  'No measured utilisation is published for , and estimating either would mean borrowing another ' +
+  "architecture's constants, which do not transfer.",
+];
+
 test('every view that talks about throughput says why, in its place, when there is none to show', () => {
   /* Discovered, not enumerated: every element that prints a throughput or TTFT
      figure for the card with constants, or makes a claim about its speed, is a
      surface. Rendered again for the card without, each one must say throughput
      is not modelled. One that printed a figure must print none, and must give
-     the reason — both halves, inside one card, beside "not modelled" — with no
-     number in that card once the card's own name is out, so the reason stands
-     where the figures stood and cannot carry one. Per card and not per element,
+     the reason — both halves, inside one piece, beside "not modelled" — with no
+     number in that piece once the card's own name is out, so the reason stands
+     where the figures stood and cannot carry one. Per piece and not per element,
      because renderThroughput writes several tiles into one element and a reason
      in one tile says nothing about the next. */
   const WHY = [/no measured utilisation/i, /do not transfer/i];
-  const CARD = /<div class="(?:reverse-card|compare-card|exec-row|row)"/;
   const printed = new Set(), spoke = new Set();
-  for (const { label, known: ks, unknown: us } of absentProbes()) {
-    const known = renderEverything(ks);
-    const unknown = renderEverything(us);
-    for (const id of Object.keys(known)) {
-      const shown = seenText(known[id], ks);
+  for (const { label, ks, us, known, unknown } of absentViews()) {
+    for (const id of Object.keys(known.html)) {
+      const shown = seenText(known.html[id], ks);
       const figures = FIGURE.test(shown);
       if (!figures && !speaks(shown)) continue;
       (figures ? printed : spoke).add(id);
-      const markup = unknown[id] || '';
-      const reads = seenText(markup, us);
+      const reads = seenText(unknown.html[id], us);
       assert.match(reads, /not modelled/i,
         `${label}: ${id} talks about throughput for a card with constants, and does not say it is ` +
         `not modelled for one without: ${reads.slice(0, 300)}`);
@@ -2281,15 +2408,14 @@ test('every view that talks about throughput says why, in its place, when there 
       const figure = reads.match(FIGURE);
       assert.ok(!figure, `${label}: ${id} prints "${figure && figure[0]}" for a card with no constants: ` +
         reads.slice(Math.max(0, (figure ? figure.index : 0) - 120), (figure ? figure.index : 0) + 40));
-      const cards = id === '(copied report)' ? markup.split('\n') : markup.split(CARD);
-      const reasons = cards.filter(frag => WHY.every(re => re.test(frag)));
+      const reasons = viewPieces(unknown, id, us).filter(piece => WHY.every(re => re.test(piece.raw)));
       assert.ok(reasons.length > 0, `${label}: ${id} prints no figure and does not say why: ${reads.slice(0, 300)}`);
-      for (const frag of reasons) {
-        assert.match(frag, /not modelled/i,
-          `${label}: ${id} gives the reason away from where the figures were: ${frag.slice(0, 200)}`);
-        const digits = numbersIn(seenText(frag, us));
+      for (const piece of reasons) {
+        assert.match(seenText(piece.raw, us), /not modelled/i,
+          `${label}: ${id} gives the reason away from where the figures were: ${piece.raw.slice(0, 200)}`);
+        const digits = numbersIn(piece.texts.join(' '));
         assert.deepStrictEqual(digits, [],
-          `${label}: ${id} puts a number beside the reason: "${seenText(frag, us)}"`);
+          `${label}: ${id} puts a number beside the reason: "${piece.texts.join(' ')}"`);
       }
     }
   }
@@ -2301,98 +2427,31 @@ test('every view that talks about throughput says why, in its place, when there 
 });
 
 test('no view prints null, undefined, NaN or a throughput figure when there are no constants', () => {
-  /* Every element, not only the discovered surfaces: a leaked figure is as wrong
-     under the notes as in the throughput panel. */
-  const BAD = new RegExp(String.raw`\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b|N\/A|` + FIGURE.source);
-  // The pattern has to be able to fire, or this asserts nothing.
+  /* Every element, not only the discovered surfaces, and everything each one
+     renders, writes or sets: a leaked figure is as wrong in a title as in the
+     throughput panel. */
+  const BAD = new RegExp(String.raw`\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b|N\/A|` + FIGURE.source, 'i');
   for (const sample of ['~null ms', '~N/A ms', 'is undefined', 'NaN%', '~0 tok/s', '0 tokens/sec', 'Infinity',
-                        '~0 ms', '~0 tokens per second', 'first token in ~0 milliseconds', '0 tok per sec'])
-    assert.match(sample, new RegExp(BAD.source, 'i'), `the pattern cannot see "${sample}"`);
-  const bad = new RegExp(BAD.source, 'i');
+                        '~0 ms', '~0 tokens per second', 'first token in ~0 milliseconds', '0 tok per sec',
+                        '~147 t/s per user', '40 tokens each second'.replace('each second', 'per second')])
+    assert.match(sample, BAD, `the pattern cannot see "${sample}"`);
   let chars = 0, knownHits = 0;
-  for (const { label, known: ks, unknown: us } of absentProbes()) {
-    for (const [id, markup] of Object.entries(renderEverything(us))) {
-      for (const text of [String(markup), seenText(markup, us)]) {
-        const m = text.match(bad);
+  for (const { label, ks, us, known, unknown } of absentViews()) {
+    for (const id of Object.keys(unknown.html)) {
+      const parts = [String(unknown.html[id] ?? ''), seenText(unknown.html[id], us),
+                     String(unknown.written[id] ?? ''), ...Object.values(unknown.props[id] || {})];
+      for (const text of parts) {
+        const m = text.match(BAD);
         assert.ok(!m, `${label}: ${id} prints "${m && m[0]}" with no constants: ` +
           text.slice(Math.max(0, (m ? m.index : 0) - 100), (m ? m.index : 0) + 40));
+        chars += text.length;
       }
-      chars += String(markup).length;
     }
-    knownHits += Object.values(renderEverything(ks)).filter(t => bad.test(String(t))).length;
+    knownHits += Object.values(known.html).filter(t => BAD.test(String(t))).length;
   }
   // And the same scan does see figures where they exist, so it is looking.
   assert.ok(knownHits > 0 && chars > 20000,
     `not discriminating: ${knownHits} known-card elements matched, ${chars} characters scanned`);
-});
-
-test('without constants every view reads as it does with them, except where throughput was', () => {
-  /* VRAM yes, throughput absent — and "absent" may not leak into anything else.
-     Six views may differ between a card with constants and the same card
-     without: the throughput panel, the executive view, the comparison card, the
-     notes, the badges and the copied report. Every other element the harness
-     renders must be byte-identical, and a new element is held to that by default.
-
-     Inside the six, a piece that shows a throughput figure (it moves when the
-     engine's figures are moved, or it carries a unit) and the benchmark panel may
-     go wholly, and a sentence of speed talk may go or be reworded. Every other
-     sentence must survive word for word, in order: that is what keeps a VRAM,
-     fit or cost figure from quietly going with them. And every number the card
-     without constants shows must be one the card with them shows outside its
-     figures, in the same order, so no figure can come back under any unit. */
-  const MAY_DIFFER = ['throughput-output', 'exec-summary', 'comparison-output',
-                      'notes-output', 'strategy-badges', '(copied report)'];
-  const differed = new Set(), held = new Set();
-  let sentences = 0;
-  for (const { label, known: ks, unknown: us } of absentProbes()) {
-    const kc = computeInference(ks);
-    const known = renderEverything(ks, kc);
-    const moved = renderEverything(ks, withMovedFigures(kc));
-    const unknown = renderEverything(us);
-    assert.deepStrictEqual(Object.keys(unknown).sort(), Object.keys(known).sort(),
-      `${label}: the two cards render different sets of elements`);
-    for (const id of Object.keys(known)) {
-      if (!MAY_DIFFER.includes(id)) {
-        assert.ok(unknown[id] === known[id],
-          `${label}: ${id} changed when the constants went, ${firstDifference(known[id], unknown[id])}`);
-        held.add(id);
-        continue;
-      }
-      if (unknown[id] !== known[id]) differed.add(id);
-      const pieces = piecesOf(id, known[id]), movedPieces = piecesOf(id, moved[id]);
-      assert.strictEqual(pieces.length, movedPieces.length,
-        `${label}: moving the throughput figures changed how ${id} is laid out`);
-      const kept = [], outsideFigures = [];
-      pieces.forEach((piece, i) => {
-        const text = seenText(piece, ks);
-        if (!text || piece !== movedPieces[i] || FIGURE.test(text) || /benchmark/i.test(text)) return;
-        for (const sentence of sentencesOf(text)) {
-          outsideFigures.push(sentence);
-          if (!speaks(sentence)) kept.push(sentence);
-        }
-      });
-      const reads = seenText(unknown[id], us);
-      let at = 0;
-      for (const sentence of kept) {
-        const found = reads.indexOf(sentence, at);
-        assert.ok(found >= 0, `${label}: ${id} lost "${sentence}" when the constants went: ${reads.slice(0, 400)}`);
-        at = found + sentence.length;
-        sentences++;
-      }
-      const shows = numbersIn(reads), may = numbersIn(outsideFigures.join(' '));
-      assert.ok(inOrderWithin(shows, may),
-        `${label}: ${id} shows numbers without constants that it only shows beside figures with them — ` +
-        `[${shows.join(' ')}] is not within [${may.join(' ')}]: ${reads.slice(0, 400)}`);
-    }
-  }
-  // Both halves have to be reached: every view allowed to differ does, and the
-  // rest of the page is really being held still.
-  assert.deepStrictEqual([...differed].sort(), [...MAY_DIFFER].sort(),
-    `allowed to differ, and never did: ${MAY_DIFFER.filter(id => !differed.has(id)).join(', ')}`);
-  for (const id of ['gpu-cards', 'metrics-output', 'verdict-output', 'capacity-output', 'cost-output',
-                    'command-output', 'training-results'])
-    assert.ok(held.has(id), `${id} was never rendered, so it was never held identical`);
-  assert.ok(sentences > 500, `only ${sentences} sentences were checked for survival`);
 });
 
 test('the benchmark panel is not drawn for a card without constants, even with measurements on file', () => {
@@ -2422,18 +2481,127 @@ test('without constants no view makes a speed claim, figure or not', () => {
      and each rests on the same heuristics the constants do. Every pattern must be
      seen on a card with constants, or it guards nothing. */
   const heard = new Set();
-  for (const { label, known: ks, unknown: us } of absentProbes()) {
-    const known = Object.values(renderEverything(ks)).join('\n');
-    for (const [name, re] of Object.entries(SPEECH)) if (re.test(known)) heard.add(name);
-    for (const [id, text] of Object.entries(renderEverything(us))) {
+  for (const { label, ks, us, known, unknown } of absentViews()) {
+    const withConstants = Object.values(known.html).join('\n');
+    for (const [name, re] of Object.entries(SPEECH)) if (re.test(withConstants)) heard.add(name);
+    for (const id of Object.keys(unknown.html)) {
+      const parts = [String(unknown.html[id] ?? ''), String(unknown.written[id] ?? ''),
+                     ...Object.values(unknown.props[id] || {})];
       for (const [name, re] of Object.entries(SPEECH)) {
-        const m = String(text).match(re);
+        const m = parts.join('\n').match(re);
         assert.ok(!m, `${label}: ${id} makes ${name} with no constants: "${m && m[0]}"`);
       }
     }
   }
   assert.deepStrictEqual([...heard].sort(), Object.keys(SPEECH).sort(),
     'some of these never matched a card with constants, so they guard nothing');
+});
+
+test('without constants every view reads as it does with them, except where throughput was', () => {
+  /* VRAM yes, throughput absent — and "absent" may not leak into anything else,
+     in either direction.
+
+     Six views may differ between a card with constants and the same card
+     without: the throughput panel, the executive view, the comparison card, the
+     notes, the badges and the copied report. Every other element the harness
+     renders must be identical, in what it renders, in anything written to it
+     through textContent, and in every attribute set on it. A new element is held
+     to that by default.
+
+     Inside the six, three rules:
+
+     Nothing goes. A piece that shows a throughput figure — found by moving the
+     engine's figures and seeing which pieces move, so no unit has to be
+     recognised — may go, and so may the benchmark panel, and a sentence of speed
+     talk may be dropped or shortened. Every other piece must survive verbatim,
+     markup and attributes included, in order.
+
+     Nothing new. Every text the card without constants shows — the sentences of
+     each piece, the values of its title and data-* attributes, anything written
+     through textContent — must be text the card with constants shows outside its
+     figures, a shortening of one of its speed sentences, or one of the reason
+     strings listed above. That is what catches a figure under a unit nobody
+     listed, a number spelled as a word, and a claim with no number in it at all.
+
+     And no new numbers: what the card without constants shows must be numbers the
+     card with them shows outside its figures, in the same order. */
+  const MAY_DIFFER = ['throughput-output', 'exec-summary', 'comparison-output',
+                      'notes-output', 'strategy-badges', '(copied report)'];
+  const differed = new Set(), held = new Set();
+  let survived = 0, checked = 0;
+  for (const { label, ks, us, known, moved, unknown } of absentViews()) {
+    assert.deepStrictEqual(Object.keys(unknown.html).sort(), Object.keys(known.html).sort(),
+      `${label}: the two cards render different sets of elements`);
+    for (const id of new Set([...Object.keys(known.html), ...Object.keys(known.written),
+                              ...Object.keys(known.props), ...Object.keys(unknown.html),
+                              ...Object.keys(unknown.written), ...Object.keys(unknown.props)])) {
+      if (!MAY_DIFFER.includes(id)) {
+        assert.ok(unknown.html[id] === known.html[id],
+          `${label}: ${id} changed when the constants went, ${firstDifference(known.html[id], unknown.html[id])}`);
+        assert.strictEqual(String(unknown.written[id] ?? ''), String(known.written[id] ?? ''),
+          `${label}: ${id} had different text written to it when the constants went`);
+        assert.deepStrictEqual(unknown.props[id] || {}, known.props[id] || {},
+          `${label}: ${id} had different attributes set on it when the constants went`);
+        held.add(id);
+        continue;
+      }
+      if (unknown.html[id] !== known.html[id]) differed.add(id);
+      const pieces = viewPieces(known, id, ks), movedPieces = viewPieces(moved, id, ks);
+      assert.strictEqual(pieces.length, movedPieces.length,
+        `${label}: moving the throughput figures changed how ${id} is laid out`);
+      const kept = [], spoken = [], outsideFigures = [];
+      pieces.forEach((piece, i) => {
+        if (piece.raw !== movedPieces[i].raw || piece.texts.some(t => FIGURE.test(t)) ||
+            piece.texts.some(t => /benchmark/i.test(t))) return;
+        outsideFigures.push(...piece.texts);
+        piece.texts.filter(speaks).forEach(t => spoken.push(t));
+        if (piece.texts.some(speaks)) kept.push({ sentences: piece.texts.filter(t => !speaks(t)) });
+        else kept.push({ raw: piece.raw });
+      });
+      const after = viewPieces(unknown, id, us);
+      const reads = seenText(unknown.html[id], us);
+      const rawAfter = String(unknown.html[id] ?? '');
+      let atRaw = 0, atText = 0;
+      for (const unit of kept) {
+        if (unit.raw !== undefined) {
+          const found = rawAfter.indexOf(unit.raw, atRaw);
+          assert.ok(found >= 0,
+            `${label}: ${id} lost, or reworded, "${seenText(unit.raw, ks).slice(0, 120)}" when the constants went`);
+          atRaw = found + unit.raw.length;
+          survived++;
+          continue;
+        }
+        for (const sentence of unit.sentences) {
+          const found = reads.indexOf(sentence, atText);
+          assert.ok(found >= 0, `${label}: ${id} lost "${sentence}" when the constants went`);
+          atText = found + sentence.length;
+          survived++;
+        }
+      }
+      for (const piece of after)
+        for (const text of piece.texts) {
+          checked++;
+          const accounted = outsideFigures.includes(text) || REASON.includes(text) ||
+            spoken.some(sentence => isShorteningOf(text, sentence));
+          assert.ok(accounted,
+            `${label}: ${id} shows text for a card with no constants that the card with them does ` +
+            `not show outside its figures, and that is not one of the reason strings: "${text}"`);
+        }
+      const shows = numbersIn(reads), may = numbersIn(outsideFigures.join(' '));
+      assert.ok(inOrderWithin(shows, may),
+        `${label}: ${id} shows numbers without constants that it only shows beside figures with them — ` +
+        `[${shows.join(' ')}] is not within [${may.join(' ')}]: ${reads.slice(0, 400)}`);
+    }
+  }
+  // Both halves have to be reached: every view allowed to differ does, and the
+  // rest of the page is really being held still.
+  assert.deepStrictEqual([...differed].sort(), [...MAY_DIFFER].sort(),
+    `allowed to differ, and never did: ${MAY_DIFFER.filter(id => !differed.has(id)).join(', ')}`);
+  for (const id of ['gpu-cards', 'metrics-output', 'verdict-output', 'capacity-output', 'cost-output',
+                    'command-output', 'training-results'])
+    assert.ok(held.has(id), `${id} was never rendered, so it was never held identical`);
+  assert.ok(survived > 500 && checked > 500,
+    `only ${survived} pieces were required to survive and ${checked} texts were accounted for`);
 });
 
 test('the VRAM breakdown row adds up to the total it prints beside it', () => {
