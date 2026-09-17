@@ -1179,12 +1179,18 @@ def report_strings(card, boards, **over):
 
 
 class DrawSpy:
-    """A canvas that keeps the strings drawn on it and ignores everything else.
+    """A canvas that keeps everything a reader could end up seeing and ignores
+    the rest.
 
     The header and the footer are not in the story: generate() hands them to
     doc.build as callbacks and reportlab calls them with a canvas, so a spy that
     walked the story alone never saw them. A figure printed in the footer of
-    every page was invisible to every test below."""
+    every page was invisible to every test below.
+
+    The metadata setters are here for the same reason. setTitle() does not draw
+    anything on the page, but it is what a PDF viewer puts in its title bar and
+    what pdfinfo prints, so a figure passed to it is shown to the reader as
+    surely as a table row."""
 
     def __init__(self, seen):
         self._seen = seen
@@ -1194,13 +1200,21 @@ class DrawSpy:
 
     drawRightString = drawCentredString = drawCenteredString = drawAlignedString = drawString
 
+    def _metadata(self, value, *a, **kw):
+        if isinstance(value, str):
+            self._seen.append(value)
+
+    setTitle = setSubject = setAuthor = setCreator = setKeywords = setProducer = _metadata
+
     def __getattr__(self, name):
         return lambda *a, **kw: None
 
 
 class DocStub:
-    """What _header_footer reads off the document: the page number."""
-    page = 1
+    """What a page callback reads off the document: the page number."""
+
+    def __init__(self, page=1):
+        self.page = page
 
 
 def story_strings(cfg, comp=None):
@@ -1238,19 +1252,43 @@ def story_strings(cfg, comp=None):
         for child in getattr(item, "_content", []) or []:
             harvest(child)
 
-    real_build = gr.SimpleDocTemplate.build
     captured = {}
-    printed = io.StringIO()
+
+    class DocSpy:
+        """Stands in for SimpleDocTemplate: keeps what the document was built
+        with instead of writing a PDF. The constructor's arguments matter as much
+        as the story — `title=` there becomes the PDF's metadata title, which a
+        viewer shows in its title bar."""
+
+        def __init__(self, *args, **kw):
+            captured["doc_args"], captured["doc_kw"] = args, kw
+
+        def build(self, story, **kw):
+            captured["story"], captured["build_kw"] = story, kw
+
+    real_doc = gr.SimpleDocTemplate
+    printed, complained = io.StringIO(), io.StringIO()
     try:
-        gr.SimpleDocTemplate.build = lambda self, story, **kw: captured.__setitem__("story", story)
-        with contextlib.redirect_stdout(printed):
+        gr.SimpleDocTemplate = DocSpy
+        with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(complained):
             obj.generate()
         for item in captured.get("story", []):
             harvest(item)
     finally:
-        gr.SimpleDocTemplate.build = real_build
-    obj._header_footer(DrawSpy(seen), DocStub())
-    seen.extend(line for line in printed.getvalue().splitlines() if line.strip())
+        gr.SimpleDocTemplate = real_doc
+    # Every string the document was named with, whatever the keyword was called.
+    seen.extend(v for v in list(captured.get("doc_args", ())) + list(captured.get("doc_kw", {}).values())
+                if isinstance(v, str))
+    # Every page callback doc.build was given, not just the first one: a report
+    # whose second page carries a different footer is still the same document.
+    spy = DrawSpy(seen)
+    callbacks = {k: v for k, v in captured.get("build_kw", {}).items() if callable(v)}
+    assert callbacks, "generate() passed no page callback, so the header and footer are unread"
+    for name, fn in sorted(callbacks.items()):
+        fn(spy, DocStub(page=1 if "First" in name else 2))
+    # And anything it said while building, on either stream.
+    for stream in (printed, complained):
+        seen.extend(line for line in stream.getvalue().splitlines() if line.strip())
     return seen
 
 
