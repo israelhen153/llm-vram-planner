@@ -6,6 +6,8 @@
 
 Everything targets NVIDIA datacenter and consumer GPUs with vLLM.
 
+
+
 - [x] VRAM calculator (inference + training)
 - [x] Multi-GPU with TP/DP split and topology warnings
 - [x] vLLM command generator
