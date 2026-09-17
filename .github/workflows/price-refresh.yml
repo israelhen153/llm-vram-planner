@@ -79,13 +79,16 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install tools/make_assets.py's own dependencies
+      - name: Install what the image step and the test suite need
         if: steps.diff.outputs.changed == 'true'
-        run: pip install pillow websockets
-        # google-chrome-stable ships on the ubuntu-latest image already;
-        # these two do not, and only this maintenance path needs them (see
-        # tools/make_assets.py's own docstring — the planner and the test
-        # suite need neither).
+        run: pip install pillow websockets reportlab
+        # google-chrome-stable ships on the ubuntu-latest image already.
+        # pillow and websockets are tools/make_assets.py's own dependencies
+        # (see its docstring); the planner and the suite need neither.
+        # reportlab is the one package the suite itself needs:
+        # tests/report.test.py imports generate_report.py as a real module,
+        # and that exits without it. The first manual run of this job
+        # installed only the first two and failed at the suite step.
 
       - name: Regenerate published images (index.html changed)
         if: steps.diff.outputs.changed == 'true'
