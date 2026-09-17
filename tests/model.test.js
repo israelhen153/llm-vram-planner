@@ -2140,6 +2140,17 @@ const PROBE_CARDS = [
   ['T4 16GB (PCIe, no FP8 cores)', GPU_TABLE['t4-16'], 't4-16'],
   ['B200 192GB (sxm)', GPU_TABLE['b200-192'], 'b200-192'],
   ['dual-GCD board (2 devices)', dualGCD, undefined],
+  /* Two cards whose vendor is not nvidia, under names no current row has.
+     data/gpus.json documents `vendor` as the hook for vendor-specific guidance
+     and the rows that come next are vendor "amd", so a renderer branching on the
+     vendor — or on the card's name, which is the other thing that will look
+     unfamiliar — is the designed extension rather than a hypothetical. Their
+     perfKey is one PERF has, because a probe is a pair and the constants are
+     what the pair varies: fixing the key here is what isolates the vendor. */
+  ['MI300X 192GB (amd, oam)',
+   { ...GPU_TABLE['b200-192'], name: 'MI300X 192 GB', vendor: 'amd', form: 'oam' }, undefined],
+  ['Radeon PRO W7900 (amd, workstation)',
+   { ...GPU_TABLE['rtx6000ada-48'], name: 'Radeon PRO W7900 48 GB', vendor: 'amd' }, undefined],
 ];
 const PROBE_MODELS = [
   ['8B dense', { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 }],
@@ -2154,35 +2165,97 @@ const PROBE_PRECISIONS = [
   ['bf16', { bytesPerParam: 2, quantMethod: '' }],
   ['fp8', { bytesPerParam: 1, quantMethod: 'fp8' }],
   ['awq', { bytesPerParam: 0.5, quantMethod: 'awq' }],
+  // Both of the dropdown's other quantisations. GGUF is not cosmetic:
+  // renderCommand already branches on it, so it is a branch a leak can ride.
+  ['gptq', { bytesPerParam: 0.5, quantMethod: 'gptq' }],
+  ['gguf Q4_K_M', { bytesPerParam: 0.63, quantMethod: 'gguf' }],
 ];
 const PROBE_LOADS = [
   ['16 at 8K', { contextLength: 8192, concurrency: 16 }],
   ['256 at 1K', { contextLength: 1024, concurrency: 256 }],
   ['4 at 32K behind an 8K prefix', { contextLength: 32768, concurrency: 4, sharedPrefix: 8192, prefixCaching: true }],
+  // A prefix configured and the caching switched off, which the grid never took:
+  // every load that named a prefix also enabled caching for it.
+  ['4 at 32K, 8K prefix, caching off',
+   { contextLength: 32768, concurrency: 4, sharedPrefix: 8192, prefixCaching: false }],
 ];
+/* More than one key with no PERF entry, because a leak can be gated on the key
+   itself rather than on its absence — and the keys that arrive next are named:
+   cdna2, cdna3, rdna3. One key would have made "the key is unknown" and "the key
+   is this string" the same probe. */
+const PROBE_UNKNOWN_KEYS = ['no-such-key', 'cdna3'];
 const absentProbes = () => {
   const probes = [];
   let i = 0;
   for (const [cardName, card, gpuKey] of PROBE_CARDS)
-    for (const count of [1, 2, 4, 16]) {
+    // Counts that are not powers of two, that sit on an NVLink domain boundary,
+    // and that sit past one with an uneven split.
+    for (const count of [1, 2, 3, 8, 12, 16]) {
       const [modelName, model] = PROBE_MODELS[i % PROBE_MODELS.length];
       const [precName, precision] = PROBE_PRECISIONS[(i >> 1) % PROBE_PRECISIONS.length];
       const [loadName, load] = PROBE_LOADS[(i >> 2) % PROBE_LOADS.length];
       const kvBytesPerValue = i % 2 ? 1 : 2;
       const hasNVLink = i % 3 !== 0;
       const presetKey = i % 4 === 1 ? 'llama31-8b' : '';
-      const extra = { ...model, ...precision, ...load, kvBytesPerValue, hasNVLink, presetKey, gpuKey };
+      // The page's other naming path: a model imported by HuggingFace id. The
+      // two are exclusive on the page — importing clears the preset.
+      const hfModelId = i % 4 === 3 ? 'org/imported-27b' : null;
+      // Decorrelated from the KV dtype, so "this key" and "FP8 KV" are not one probe.
+      const unknownKey = PROBE_UNKNOWN_KEYS[(i >> 3) % PROBE_UNKNOWN_KEYS.length];
+      const extra = { ...model, ...precision, ...load, kvBytesPerValue, hasNVLink,
+                      presetKey, hfModelId, gpuKey };
       probes.push({
         label: `${cardName} x${count}, ${modelName}, ${precName}, ${loadName}, ` +
           `KV ${kvBytesPerValue === 1 ? 'FP8' : 'BF16'}, ${hasNVLink ? 'NVLink' : 'PCIe'}` +
-          `${presetKey ? ', preset named' : ''}`,
+          `${presetKey ? ', preset named' : ''}${hfModelId ? ', model imported' : ''}` +
+          `, unknown key "${unknownKey}"`,
         known: asState(card, count, extra),
-        unknown: asState({ ...card, perfKey: 'no-such-key' }, count, extra),
+        unknown: asState({ ...card, perfKey: unknownKey }, count, extra),
       });
       i++;
     }
   return probes;
 };
+
+/* Every axis the grid claims to take, counted while it runs. A grid that stops
+   covering one says nothing about that shape, and every test below would still
+   be green, so the claim is checked rather than left in a comment. */
+test('the probe grid renders the shapes the tool ships', () => {
+  const axes = {
+    'a single-device board': p => (p.known.gpuDevices || 1) === 1,
+    'two devices on one board': p => (p.known.gpuDevices || 1) > 1,
+    'one board': p => p.known.gpuCount === 1,
+    'a board count that is not a power of two': p => ![1, 2, 4, 8, 16].includes(p.known.gpuCount),
+    'a full NVLink domain': p => p.known.gpuCount * (p.known.gpuDevices || 1) === 8,
+    'past an NVLink domain': p => p.known.gpuCount * (p.known.gpuDevices || 1) > 8,
+    'a vendor that is not nvidia': p => p.known.vendor !== 'nvidia',
+    'a card name unlike the catalog\'s': p => /MI300|Radeon/.test(p.known.gpuName),
+    'an unknown key that is not the placeholder': p => p.unknown.perfKey !== 'no-such-key',
+    'the placeholder unknown key': p => p.unknown.perfKey === 'no-such-key',
+    'FP8 KV cache': p => p.known.kvBytesPerValue < 2,
+    'BF16 KV cache': p => p.known.kvBytesPerValue === 2,
+    'NVLink': p => p.known.hasNVLink,
+    'PCIe': p => !p.known.hasNVLink,
+    'sliding-window attention': p => p.known.attnMode === 'swa',
+    'MLA': p => p.known.attnMode === 'mla',
+    'a mixture of experts': p => p.known.activePercent < 100,
+    'GGUF weights': p => p.known.quantMethod === 'gguf',
+    'GPTQ weights': p => p.known.quantMethod === 'gptq',
+    'AWQ weights': p => p.known.quantMethod === 'awq',
+    'FP8 weights': p => p.known.quantMethod === 'fp8',
+    'unquantised weights': p => p.known.quantMethod === '',
+    'a shared prefix with caching on': p => p.known.sharedPrefix > 0 && p.known.prefixCaching,
+    'a shared prefix with caching off': p => p.known.sharedPrefix > 0 && !p.known.prefixCaching,
+    'a model the preset named': p => !!p.known.presetKey,
+    'a model imported by id': p => !!p.known.hfModelId,
+    'a model neither named nor imported': p => !p.known.presetKey && !p.known.hfModelId,
+    'a card with FP8 tensor cores': p => p.known.gpuFp8,
+    'a card without them': p => !p.known.gpuFp8,
+  };
+  const probes = absentProbes();
+  const missing = Object.entries(axes).filter(([, hits]) => !probes.some(hits)).map(([name]) => name);
+  assert.deepStrictEqual(missing, [], `the probe grid no longer renders: ${missing.join(', ')}`);
+});
 
 /* Every field computeInference() returns that reads no PERF constant. A literal on
    purpose: it is the ruling written down. Everything else the result carries has
@@ -2308,6 +2381,11 @@ const renderEverything = (st, given) => {
   const h = renderHarness();
   const renderers = Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function');
   const c = given || h.computeInference(st);
+  /* readInputState() reads the imported id off a closure variable, not the
+     state, so a probe that names one has to set it: otherwise the command, the
+     executive view and the snapshot name all read the preset path and the
+     imported-model shape is never rendered. */
+  if (st.hfModelId) h.setImportedModel(st.hfModelId);
   h.pushSnapshot(st, c);
   for (const name of renderers) {
     assert.ok(surfaceParams[name], `${name} is exposed but not declared in index.html`);

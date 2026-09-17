@@ -1626,17 +1626,40 @@ PROBE_CARDS = [
     ("T4 16GB (no FP8 cores)", gr.GPUS["t4-16"]),
     ("B200 192GB", gr.GPUS["b200-192"]),
     ("dual-GCD board (2 devices)", DUAL),
+    # Two cards whose vendor is not nvidia, under names no current row has.
+    # data/gpus.json documents `vendor` as the hook for vendor-specific guidance
+    # and the rows that come next are vendor "amd", so a report branching on the
+    # vendor — or on the card's name — is the designed extension rather than a
+    # hypothetical. Their perfKey is one PERF has, because a probe is a pair and
+    # the constants are what the pair varies: fixing the key isolates the vendor.
+    ("MI300X 192GB (amd, oam)",
+     dict(gr.GPUS["b200-192"], name="MI300X 192 GB", vendor="amd", form="oam")),
+    ("Radeon PRO W7900 (amd, workstation)",
+     dict(gr.GPUS["rtx6000ada-48"], name="Radeon PRO W7900 48 GB", vendor="amd")),
 ]
 PROBE_PRESETS = [("8B dense", "llama31-8b"), ("70B dense", "llama31-70b"),
                  ("30B MoE", "qwen3-30b"), ("26B SWA", "gemma4-26b"), ("671B MLA", "dsr1-671b")]
 PROBE_PRECISIONS = [("bf16", {"bpp": 2}), ("fp8", {"bpp": 1, "quant": "fp8"}),
-                    ("awq", {"bpp": 0.5, "quant": "awq"})]
+                    ("awq", {"bpp": 0.5, "quant": "awq"}),
+                    # Both of the other quantisations the tool offers. GGUF is a
+                    # branch the command builder already takes, so it is a branch
+                    # a leak can ride.
+                    ("gptq", {"bpp": 0.5, "quant": "gptq"}),
+                    ("gguf Q4_K_M", {"bpp": 0.63, "quant": "gguf"})]
 PROBE_LOADS = [
     ("16 at 8K", {"ctx": 8192, "conc": 16}),
     ("256 at 1K", {"ctx": 1024, "conc": 256}),
     ("4 at 32K behind an 8K prefix",
      {"ctx": 32768, "conc": 4, "shared_prefix": 8192, "prefix_caching": True}),
+    # A prefix configured and the caching switched off, which the grid never
+    # took: every load that named a prefix also enabled caching for it.
+    ("4 at 32K, 8K prefix, caching off",
+     {"ctx": 32768, "conc": 4, "shared_prefix": 8192, "prefix_caching": False}),
 ]
+# More than one key with no PERF entry, because a leak can be gated on the key
+# itself rather than on its absence — and the keys that arrive next are named:
+# cdna2, cdna3, rdna3.
+PROBE_UNKNOWN_KEYS = ["no-such-key", "cdna3"]
 
 
 def absent_pairs():
@@ -1649,28 +1672,39 @@ def absent_pairs():
     pairs = []
     i = 0
     for card_name, card in PROBE_CARDS:
-        for boards in (1, 2, 5, 16):
+        # Counts that are not powers of two, that sit on an NVLink domain
+        # boundary, and that sit past one with an uneven split.
+        for boards in (1, 2, 3, 5, 8, 12, 16):
             model_name, preset = PROBE_PRESETS[i % len(PROBE_PRESETS)]
             prec_name, prec = PROBE_PRECISIONS[(i // 2) % len(PROBE_PRECISIONS)]
             load_name, load = PROBE_LOADS[(i // 4) % len(PROBE_LOADS)]
             kv_bpp = 1 if i % 2 else 2
             nvlink = i % 3 != 0
             named = i % 4 == 1
-            unknown_card = dict(card, perfKey="no-such-key")
+            # The report's other naming path: a model imported by HuggingFace id
+            # rather than chosen from the presets. Exclusive with `named`.
+            imported = i % 4 == 3
+            # Decorrelated from the KV dtype, so "this key" and "FP8 KV" are not
+            # the same probe.
+            unknown_key = PROBE_UNKNOWN_KEYS[(i // 8) % len(PROBE_UNKNOWN_KEYS)]
+            unknown_card = dict(card, perfKey=unknown_key)
             base = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=2, ctx=8192, conc=16,
                         n_gpu=boards, nvlink=nvlink, kv_bpp=kv_bpp,
                         # Both come from a preset or from the raw defaults every
                         # builder falls back to; a hand-built cfg with neither is
                         # not a state the tool can reach.
-                        hf_model=gr.PRESETS[preset]["hf"] if named else "/opt/models/YourModel",
+                        hf_model=gr.PRESETS[preset]["hf"] if named
+                        else "org/imported-27b" if imported else "/opt/models/YourModel",
                         model_name=gr.PRESETS[preset]["name"] if named
+                        else "org/imported-27b" if imported
                         else f"{gr.arch_fields(gr.PRESETS[preset])['params']}B model")
             base.update(prec)
             base.update(load)
             pairs.append((
                 f"{card_name} x{boards}, {model_name}, {prec_name}, {load_name}, "
                 f"KV {'FP8' if kv_bpp < 2 else 'BF16'}, {'NVLink' if nvlink else 'PCIe'}"
-                f"{', preset named' if named else ''}",
+                f"{', preset named' if named else ''}{', model imported' if imported else ''}"
+                f', unknown key "{unknown_key}"',
                 dict(base, gpu=card, vendor=card["vendor"], perfKey=card["perfKey"]),
                 dict(base, gpu=unknown_card, vendor=unknown_card["vendor"],
                      perfKey=unknown_card["perfKey"])))
@@ -1685,16 +1719,24 @@ def check_without_constants_only_the_figures_that_need_them_go():
     # nothing about those shapes, and the tests below would still be green — so
     # the claim is checked rather than written in a docstring.
     axes = {"a single-device board": 0, "two devices on one board": 0, "one board": 0,
+            "a board count that is not a power of two": 0, "a full NVLink domain": 0,
             "past an NVLink domain": 0, "a data-parallel split": 0, "FP8 KV cache": 0,
             "BF16 KV cache": 0, "NVLink": 0, "PCIe": 0, "sliding-window attention": 0,
             "MLA": 0, "a mixture of experts": 0, "FP8 on silicon without FP8 cores": 0,
-            "a model the preset named": 0, "a model it did not": 0, "a shared prefix": 0}
+            "a model the preset named": 0, "a model imported by id": 0,
+            "a model neither named nor imported": 0, "a shared prefix with caching on": 0,
+            "a shared prefix with caching off": 0, "a vendor that is not nvidia": 0,
+            "a card name unlike the catalog's": 0, "the placeholder unknown key": 0,
+            "an unknown key that is not the placeholder": 0, "GGUF weights": 0,
+            "GPTQ weights": 0, "AWQ weights": 0, "FP8 weights": 0, "unquantised weights": 0}
     for label, kcfg, ucfg in absent_pairs():
         known, unknown = gr.compute(kcfg), gr.compute(ucfg)
         devices = kcfg["gpu"].get("devices", 1) or 1
         axes["a single-device board"] += devices == 1
         axes["two devices on one board"] += devices > 1
         axes["one board"] += kcfg["n_gpu"] == 1
+        axes["a board count that is not a power of two"] += kcfg["n_gpu"] not in (1, 2, 4, 8, 16)
+        axes["a full NVLink domain"] += gr.device_count_for(kcfg) == 8
         axes["past an NVLink domain"] += gr.device_count_for(kcfg) > 8
         axes["a data-parallel split"] += known["dp"] > 1
         axes["FP8 KV cache"] += kcfg.get("kv_bpp", 2) < 2
@@ -1705,10 +1747,23 @@ def check_without_constants_only_the_figures_that_need_them_go():
         axes["MLA"] += kcfg.get("attn") == "mla"
         axes["a mixture of experts"] += known["is_moe"]
         axes["FP8 on silicon without FP8 cores"] += bool(known.get("fp8_no_tensor_cores"))
-        named = kcfg["model_name"] != f"{kcfg['params']}B model"
+        imported = kcfg["model_name"] == kcfg["hf_model"]
+        named = not imported and kcfg["model_name"] != f"{kcfg['params']}B model"
         axes["a model the preset named"] += named
-        axes["a model it did not"] += not named
-        axes["a shared prefix"] += bool(kcfg.get("shared_prefix"))
+        axes["a model imported by id"] += imported
+        axes["a model neither named nor imported"] += not named and not imported
+        axes["a shared prefix with caching on"] += bool(kcfg.get("shared_prefix")) and bool(
+            kcfg.get("prefix_caching"))
+        axes["a shared prefix with caching off"] += bool(kcfg.get("shared_prefix")) and not bool(
+            kcfg.get("prefix_caching"))
+        axes["a vendor that is not nvidia"] += kcfg["gpu"]["vendor"] != "nvidia"
+        axes["a card name unlike the catalog's"] += bool(
+            re.search(r"MI300|Radeon", kcfg["gpu"]["name"]))
+        axes["the placeholder unknown key"] += ucfg["perfKey"] == "no-such-key"
+        axes["an unknown key that is not the placeholder"] += ucfg["perfKey"] != "no-such-key"
+        for q in ("gguf", "gptq", "awq", "fp8"):
+            axes[f"{q.upper()} weights"] += kcfg.get("quant") == q
+        axes["unquantised weights"] += not kcfg.get("quant")
         assert known["throughput_modelled"] is True, f"{label}: the card with constants is not modelled"
         assert unknown["throughput_modelled"] is False, f"{label}: a perfKey with no entry is modelled"
         assert set(known) == set(unknown), f"{label}: the two results carry different fields"
