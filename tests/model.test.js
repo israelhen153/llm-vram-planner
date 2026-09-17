@@ -2557,8 +2557,8 @@ test('without constants every view reads as it does with them, except where thro
            constants-dependent space, or comma, reads differently under moved
            figures while showing no figure at all, and that was enough to buy an
            exemption from surviving. The number is the evidence. */
-        const shows = numbersIn(piece.texts.join(' ')).join(' ');
-        const moves = shows !== numbersIn(movedPieces[i].texts.join(' ')).join(' ');
+        const printed = numbersIn(piece.texts.join(' ')).join(' ');
+        const moves = printed !== numbersIn(movedPieces[i].texts.join(' ')).join(' ');
         if (moves || piece.texts.some(t => FIGURE.test(t)) ||
             piece.texts.some(t => /benchmark/i.test(t))) return;
         outsideFigures.push(...piece.texts);

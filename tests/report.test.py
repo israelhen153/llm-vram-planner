@@ -1774,10 +1774,13 @@ test("a perfKey with no PERF entry gets no constants — never NVIDIA's, and nev
      check_a_perf_key_with_no_entry_never_gets_nvidias_constants)
 
 
-# A throughput or TTFT figure, however its unit is spelled. The checks below do
-# not lean on it alone: a figure under a unit nobody listed still prints a
-# number, and the numbers are checked on their own.
-FIGURE = re.compile(r"tok/s|\btok(?:en)?s?\s*(?:/|per)\s*s(?:ec(?:ond)?s?)?\b|\bper\s+sec(?:ond)?s?\b"
+# A throughput or TTFT figure, however its unit is spelled: "tok/s", "t/s",
+# "tokens/sec", "tokens per second", "per sec", "ms", "milliseconds" — the same
+# pattern the page is read with in tests/model.test.js. The checks below do not
+# lean on it alone: a figure under a unit nobody listed still prints a number and
+# still shows text the report with constants does not, and both are checked on
+# their own.
+FIGURE = re.compile(r"\bt(?:ok(?:en)?s?)?\s*(?:/|per)\s*s(?:ec(?:ond)?s?)?\b|\bper\s+sec(?:ond)?s?\b"
                     r"|\btps\b|\d\s*ms\b|\bmilli-?seconds?\b", re.I)
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
@@ -1980,7 +1983,8 @@ test("the report prints no throughput figure without constants, and says why in 
 def check_the_report_prints_no_none_without_constants():
     bad = re.compile(r"\bNone\b|\bnan\b|\bNaN\b|\binf\b|N/A|" + FIGURE.pattern, re.I)
     for sample in ("~None ms", "nan tokens/sec", "~0 tokens/sec", "N/A", "inf", "~0 ms",
-                   "~0 tokens per second", "~0 milliseconds", "Expect roughly 0 tokens per second per user."):
+                   "~0 tokens per second", "~0 milliseconds", "~0 t/s", "0 tps",
+                   "Expect roughly 0 tokens per second per user."):
         assert bad.search(sample), f"the pattern cannot see {sample!r}"
     chars = known_hits = 0
     for label, kcfg, ucfg, known, moved, unknown in absent_views():
