@@ -697,6 +697,30 @@ test('every catalog row declares the FP8 support its silicon actually has', () =
       ` — this flag halves the compute ceiling and prints a user-facing warning`);
   }
 });
+test('every catalog row names the constants its silicon was measured with', () => {
+  /* A literal per row, for the reason the FP8 flags above are literals: which
+     constants a card runs on is a statement about hardware, and a catalog
+     checked against itself passes any value. Moving one row to a key PERF does
+     not have — through data/gpus.json and the sync tool, so every other check
+     agrees with itself — would take that card's throughput off the page, and
+     no other test reads most of these rows' throughput. All twelve are NVIDIA
+     silicon, and nvidia is the entry PERF has for them. A row added without
+     deciding its key here fails. */
+  const PERF_KEY_BY_ROW = {
+    't4-16': 'nvidia', 'l4-24': 'nvidia', 'rtx4090-24': 'nvidia', 'rtx5090-32': 'nvidia',
+    'a100-40': 'nvidia', 'rtx6000ada-48': 'nvidia', 'l40s-48': 'nvidia', 'a100-80': 'nvidia',
+    'h100-80': 'nvidia', 'rtxpro-96': 'nvidia', 'h200-141': 'nvidia', 'b200-192': 'nvidia',
+  };
+  assert.deepStrictEqual(Object.keys(PERF_KEY_BY_ROW).sort(), Object.keys(GPU_TABLE).sort(),
+    'a catalog row was added or removed without deciding its perfKey here');
+  for (const [slug, key] of Object.entries(PERF_KEY_BY_ROW)) {
+    assert.strictEqual(GPU_TABLE[slug].perfKey, key,
+      `${slug}.perfKey is ${GPU_TABLE[slug].perfKey}, but its silicon is measured under ${key}`);
+    // And the engine agrees about whether that key has constants.
+    assert.strictEqual(computeInference(stateFor(GPU_TABLE[slug])).throughputModelled, Object.hasOwn(PERF, key),
+      `${slug}: the engine disagrees about whether ${key} has constants`);
+  }
+});
 test('the FP8 multiplier never reaches the single-stream figure', () => {
   /* Single-stream decode is bandwidth-bound at batch 1 and is the one number
      the tool matches measurements on closely. The compute ratio must not touch
