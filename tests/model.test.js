@@ -2551,7 +2551,15 @@ test('without constants every view reads as it does with them, except where thro
         `${label}: moving the throughput figures changed how ${id} is laid out`);
       const kept = [], spoken = [], outsideFigures = [];
       pieces.forEach((piece, i) => {
-        if (piece.raw !== movedPieces[i].raw || piece.texts.some(t => FIGURE.test(t)) ||
+        /* A piece may go when it shows one of the figures — either under a unit
+           listed above, or by printing a number that moved when the figures did.
+           Not merely because something about it changed: a piece given a
+           constants-dependent space, or comma, reads differently under moved
+           figures while showing no figure at all, and that was enough to buy an
+           exemption from surviving. The number is the evidence. */
+        const shows = numbersIn(piece.texts.join(' ')).join(' ');
+        const moves = shows !== numbersIn(movedPieces[i].texts.join(' ')).join(' ');
+        if (moves || piece.texts.some(t => FIGURE.test(t)) ||
             piece.texts.some(t => /benchmark/i.test(t))) return;
         outsideFigures.push(...piece.texts);
         piece.texts.filter(speaks).forEach(t => spoken.push(t));
