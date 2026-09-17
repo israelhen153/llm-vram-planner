@@ -77,8 +77,11 @@ def load_benchmarks():
 # same shape of optional: no row carries it yet (see _meta.schema.priceSource),
 # but it is declared here now so that the day tools/price_check.py writes one,
 # it renders correctly instead of being silently dropped by row_fields().
+# `perfKey` is required rather than optional on purpose: it selects the PERF
+# constants a card's throughput is computed with, and a row that left it out
+# would reach both engines as "no constants" without anyone having decided so.
 GPU_FIELDS = ("gb", "bw", "hyper", "spec", "spot", "tflops", "name",
-              "vendor", "devices", "form", "caps")
+              "vendor", "perfKey", "devices", "form", "caps")
 GPU_OPTIONAL = ("default", "priceSource")
 
 # Every field benchmarks/data.json documents. The inline copy carried four of

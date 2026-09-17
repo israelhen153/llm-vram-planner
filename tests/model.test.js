@@ -88,6 +88,10 @@ const state = (o = {}) => {
        would put every test on the ungated path and hide a gate that only ever
        fires on real hardware flags. */
     gpuFp8: !!(gpu.caps && gpu.caps.fp8),
+    /* The key computeInference() looks PERF up by, off the row for the same
+       reason. Left out, every test here would be computing a card with no
+       constants while its name said H100. */
+    perfKey: gpu.perfKey,
     ...o,
   };
 };
@@ -1038,7 +1042,13 @@ const domStub = (gpuKey, interconnect) => {
 };
 const readInputStateFor = (gpuKey, interconnect) => {
   const dom = domStub(gpuKey, interconnect);
-  const src = html.slice(html.indexOf('function getVal(id)'), html.indexOf('/* Vendor-keyed performance constants'));
+  // Up to the PERF declaration, which is where the state builder's
+  // neighbourhood ends. Anchored on the code rather than on the comment above
+  // it: a reworded comment made indexOf return -1, and slice(start, -1) is
+  // most of the file.
+  const stop = html.indexOf('\nconst PERF = {');
+  assert.ok(stop > 0, 'PERF declaration not found in index.html');
+  const src = html.slice(html.indexOf('function getVal(id)'), stop);
   const fn = new Function('document', 'GPU_TABLE', `
     let currentAttn = { mode: 'standard', window: 0, localLayers: 0, mlaDim: 0 };
     let currentModelMaxCtx = 131072, importedModelId = null;
@@ -1052,12 +1062,16 @@ console.log('\nA board is not always one device');
    multi-GCD module — one OAM presenting two GCDs — is one row with devices: 2.
    Everything except cost has to be scoped to devices, and each of the three
    traps below passes the existing suite while being wrong. */
+/* perfKey is explicit, and has to be: this fixture is here to test how a board
+   splits into devices, and without a key it would silently compute a card with no
+   throughput constants instead — still green, testing something else. */
 const dualGCD = { gb: 128, bw: 3276.8, tflops: 383, hyper: 6.0, spec: 2.5, spot: 1.2,
-                  name: 'Dual-GCD 128 GB', vendor: 'nvidia', devices: 2, form: 'sxm' };
+                  name: 'Dual-GCD 128 GB', vendor: 'nvidia', perfKey: 'nvidia', devices: 2, form: 'sxm' };
 const asState = (card, count, extra = {}) => ({
   params: 70, activePercent: 100, bytesPerParam: 2, layers: 80, kvHeads: 8, headDim: 128,
   sharedExperts: 0, contextLength: 8192, concurrency: 16, gpuCount: count,
   hasNVLink: true, kvBytesPerValue: 2, modelMaxCtx: 1048576, vendor: card.vendor,
+  perfKey: card.perfKey,
   gpuGB: card.gb, gpuBandwidth: card.bw, gpuTFLOPS: card.tflops, gpuDevices: card.devices,
   gpuHyperCost: card.hyper, gpuSpecCost: card.spec, gpuSpotCost: card.spot,
   // Off the row, as readInputState() does — see the same line in state() above.
@@ -2077,10 +2091,18 @@ test('an SXM card still honours the control in both positions', () => {
     assert.strictEqual(readInputStateFor(key, '0').hasNVLink, false, `${key} ignored PCIe`);
   }
 });
-test('the state carries the vendor its constants are chosen by', () => {
-  const state = readInputStateFor('h100-80', '1');
-  assert.strictEqual(state.vendor, GPU_TABLE['h100-80'].vendor);
-  assert.ok(state.vendor, 'vendor must not be empty — PERF[vendor] would fall back silently');
+test('the state carries the perfKey its constants are chosen by, for every row', () => {
+  /* Deleting perfKey from readInputState() — or from getGpuSpec(), which it reads
+     — leaves the page with no constants for any card. Driven through the real
+     state builder, row by row, so neither link can go missing unnoticed. */
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const state = readInputStateFor(key, '1');
+    assert.strictEqual(typeof gpu.perfKey, 'string', `${key}: the catalog row has no perfKey`);
+    assert.strictEqual(state.perfKey, gpu.perfKey,
+      `${key}: state carries perfKey=${state.perfKey}, the catalog says ${gpu.perfKey}`);
+    // vendor still rides along — it selects nothing now, but it is the card's.
+    assert.strictEqual(state.vendor, gpu.vendor, `${key}: state.vendor`);
+  }
 });
 
 console.log('\nThe interconnect control follows the card');
@@ -2133,6 +2155,7 @@ test('exactly one row carries default:true, and DEFAULT_GPU_KEY is derived from 
 test('every row carries the structural fields the engines read', () => {
   for (const [key, gpu] of Object.entries(GPU_TABLE)) {
     assert.strictEqual(typeof gpu.vendor, 'string', `${key}.vendor`);
+    assert.strictEqual(typeof gpu.perfKey, 'string', `${key}.perfKey`);
     assert.strictEqual(typeof gpu.devices, 'number', `${key}.devices`);
     assert.ok(['sxm', 'pcie', 'consumer'].includes(gpu.form), `${key}.form=${gpu.form}`);
     assert.strictEqual(typeof gpu.caps?.fp8, 'boolean', `${key}.caps.fp8`);

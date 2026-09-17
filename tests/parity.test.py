@@ -156,17 +156,19 @@ CASES = [
     # 3276.8 GB/s per module, 383 dense TFLOPS per module. It is not in the
     # catalog yet — the AMD rows come later — but the derivation that splits a board
     # into devices has to be compared across both engines before then, not after
-    # a wrong number ships.
+    # a wrong number ships. Its perfKey is spelled out on each copy: these cases
+    # test how a board splits into devices, and a card with no key would quietly
+    # test a card with no throughput constants instead.
     {"name": "Dual-GCD board, 1 module (device split must be identical in both engines)",
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "nvidia", "devices": 2}},
     {"name": "Dual-GCD board, 4 modules = 8 devices",
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "nvidia", "devices": 2}},
     # A multi-device board without NVLink: the PCIe curve is keyed on the count,
     # and every other dual-GCD case here is NVLink — which is the interconnect a
     # real AMD OAM row will not have.
@@ -174,7 +176,7 @@ CASES = [
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80", "nvlink": False,
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "nvidia", "devices": 2}},
     {"name": "Gemma SWA with shared prefix — only global layers share",
      "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
      "ctx": 32768, "conc": 32, "n_gpu": 1, "gpu": "h100-80",
@@ -209,7 +211,8 @@ const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
 for(const [k,g] of Object.entries(GPU_TABLE)){
   G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
-        name:g.name.replace(/ GB$/,'GB'),devices:g.devices,caps:g.caps};
+        name:g.name.replace(/ GB$/,'GB'),devices:g.devices,caps:g.caps,
+        perfKey:g.perfKey};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
   /* c.card lets a case carry a row the catalog does not have yet — the
@@ -217,9 +220,9 @@ const out=JSON.parse(process.argv[2]).map(c=>{
      such board ships, not after. */
   const g=c.card ? {gb:c.card.gb,bw:c.card.bw,h:c.card.hyper,sp:c.card.spec,
                     st:c.card.spot,tf:c.card.tflops,name:c.card.name.replace(/ GB$/,'GB'),
-                    devices:c.card.devices,caps:c.card.caps} : G[c.gpu];
+                    devices:c.card.devices,caps:c.card.caps,perfKey:c.card.perfKey} : G[c.gpu];
   if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
-  return ci({params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
+  const state={params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
@@ -228,10 +231,18 @@ const out=JSON.parse(process.argv[2]).map(c=>{
        selector; this harness builds state by hand, so it has to mirror them or
        the FP8 compute multiplier applies in Python and not here. */
     gpuFp8:!!(g.caps&&g.caps.fp8),quantMethod:c.quant||'',
+    /* The key computeInference() looks PERF up by, off the card as
+       readInputState() takes it. */
+    perfKey:g.perfKey,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
-    sharedPrefix:c.shared_prefix||0,prefixCaching:c.prefix_caching!==false});
+    sharedPrefix:c.shared_prefix||0,prefixCaching:c.prefix_caching!==false};
+  /* Echoed beside the result, so the comparison can check that both engines
+     looked up the same key. A copy above that drops perfKey otherwise shows up
+     only as a throughput mismatch — or, on a card with no constants, as
+     nothing at all: a missing key and an unknown one compute the same. */
+  return Object.assign(ci(state), {__perfKey: state.perfKey});
 });
 console.log(JSON.stringify(out));
 """
@@ -388,13 +399,28 @@ CONTRACTS = {
 _unmatched = set(CONTRACTS) - {c["name"] for c in CASES}
 assert not _unmatched, f"CONTRACTS names cases that do not exist: {sorted(_unmatched)}"
 
-passed = failed = 0
-for case, js in zip(CASES, js_results):
+def cfg_for(case):
+    """The Python side of a case, built the way generate_report.py's own cfg
+    builders build one: the card is the catalog row or the case's synthetic one,
+    and perfKey is copied off that card rather than written by the case. One
+    function for the three loops below, because a perfKey added to two of
+    three hand-copied builders leaves the third computing a card with no
+    constants."""
     cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
     cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
+    cfg["perfKey"] = cfg["gpu"].get("perfKey")
     cfg.setdefault("max_ctx", 1048576)
+    return cfg
+
+
+passed = failed = 0
+for case, js in zip(CASES, js_results):
+    cfg = cfg_for(case)
     py = compute(cfg)
     bad = []
+    # Both engines must have looked up the same key, before any figure is read.
+    if js.get("__perfKey") != cfg["perfKey"]:
+        bad.append(f"perfKey: py={cfg['perfKey']!r} js={js.get('__perfKey')!r}")
     for pk, jk, tol in FIELDS:
         a, b = py[pk], dig(js, jk)
         if a is None or b is None:
@@ -419,9 +445,7 @@ for case, js in zip(CASES, js_results):
 
 # The verdict flags must agree too — that is the tool's headline answer.
 for case, js in zip(CASES, js_results):
-    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
-    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
-    cfg.setdefault("max_ctx", 1048576)
+    cfg = cfg_for(case)
     py = compute(cfg)
     if py["fits"] != js["fits"] or py["comfortable"] != js["comfortable"]:
         print(f"  FAIL {case['name']}: verdict differs "
@@ -433,9 +457,7 @@ for case, js in zip(CASES, js_results):
 for case, js in zip(CASES, js_results):
     if case["name"] not in CONTRACTS:
         continue
-    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
-    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
-    cfg.setdefault("max_ctx", 1048576)
+    cfg = cfg_for(case)
     py = compute(cfg)
     for label, pk, jk, want, tol in CONTRACTS[case["name"]]:
         for engine, got in (("python", py[pk]), ("js", dig(js, jk))):
@@ -466,7 +488,8 @@ for case, js in zip(CASES, js_results):
 # since DP partitions the request stream rather than the cache.
 # index.html's side of the same invariant is in model.test.js.
 PROP_CFG = {"params": 70, "bpp": 2, "layers": 80, "kv_heads": 8,
-            "h_dim": 128, "ctx": 8192, "conc": 16, "max_ctx": 1048576}
+            "h_dim": 128, "ctx": 8192, "conc": 16, "max_ctx": 1048576,
+            "perfKey": GPUS["h100-80"]["perfKey"]}
 prop_bad, prop_n, prop_dp, prop_split = [], 0, 0, 0
 for _n in (1, 2, 4, 5, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128):
     # devices=2 as well, because the split is sized in devices and a board count
@@ -563,8 +586,11 @@ else:
 # about 4x optimistic. The commit that scopes single-stream and TTFT to a
 # replica has to move these numbers deliberately. index.html's side carries the
 # same literals in model.test.js.
+# perfKey off the same H100 row every cfg below runs on: this sweep reads
+# single_tok, which a cfg with no constants does not have.
 _IC_CFG = {"params": 0.5, "active": 100, "bpp": 2, "layers": 4, "kv_heads": 1,
-           "h_dim": 64, "ctx": 512, "conc": 1, "max_ctx": 1048576}
+           "h_dim": 64, "ctx": 512, "conc": 1, "max_ctx": 1048576,
+           "perfKey": GPUS["h100-80"]["perfKey"]}
 _pcie9 = 0.55 - 0.05 * math.log2(9 / 2)
 for _n, _nv, _want in ((1, True, 1.0), (1, False, 1.0),
                        (8, True, 0.85), (8, False, 0.45),
@@ -629,11 +655,11 @@ else:
     drift = []
     for key in sorted(GPUS):
         # Numeric fields compare with a tolerance; everything else — names,
-        # vendor, form, the caps object, the optional default flag — is an
-        # exact match, and .get() rather than [] so a field present on one
-        # side only reads as drift instead of raising.
+        # vendor, perfKey, form, the caps object, the optional default flag —
+        # is an exact match, and .get() rather than [] so a field present on
+        # one side only reads as drift instead of raising.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
-                  "name", "vendor", "devices", "form", "caps", "default"):
+                  "name", "vendor", "perfKey", "devices", "form", "caps", "default"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:
