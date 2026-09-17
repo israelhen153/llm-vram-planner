@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run the whole suite. No dependencies beyond node and python3 — the project
+# Run the whole suite. Needs node, python3 and reportlab — reportlab only because
+# tests/report.test.py imports generate_report.py as a real module. The project
 # deliberately has no build step, and the tests keep it that way.
 set -euo pipefail
 cd "$(dirname "$0")/.."
