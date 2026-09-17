@@ -2477,8 +2477,8 @@ const firstDifference = (a = '', b = '') => {
 const absentViews = (() => {
   let cache;
   return () => (cache = cache || absentProbes().map(({ label, known, unknown }) => {
-    const computed = computeInference(known);
-    return { label, ks: known, us: unknown,
+    const computed = computeInference(known), uc = computeInference(unknown);
+    return { label, ks: known, us: unknown, kc: computed, uc,
              known: renderEverything(known, computed),
              moved: renderEverything(known, withMovedFigures(computed)),
              unknown: renderEverything(unknown) };
@@ -2508,6 +2508,27 @@ const REASON = [
   '- Throughput and TTFT: not modelled.',
   'No measured utilisation is published for , and estimating either would mean borrowing another ' +
   "architecture's constants, which do not transfer.",
+];
+
+/* The only sentences a card with no constants may show that are not in the list
+   above and not shown verbatim with them: a speed sentence with its speed clause
+   taken off, exactly as the renderer writes it.
+
+   A literal list, because "any subsequence of the words" is not a shortening —
+   it is any sentence that can be spelled with those words in that order, and
+   that includes sentences which keep the number and drop only the words the
+   speech patterns key on. "PCIe 64-128 GB/s — 45-60% loss, growing with device
+   count." is a word-subsequence of the sentence below it and says more, not
+   less; so is "Throughput is a decode estimate." Each of these is still checked
+   to be a shortening of a sentence that really stood in that view, so listing
+   one cannot smuggle it into a view that never said the long form. */
+const SHORTENED = [
+  // renderThroughput's queue warning, with its pointer at the aggregate figure
+  'vLLM will queue the rest.',
+  // renderNotes' interconnect line, with the decode loss
+  'PCIe 64-128 GB/s.',
+  // renderExecutiveSummary's above-one-domain caveat, with its "ceiling to test"
+  'Nothing above 2 devices is measured.',
 ];
 
 test('every view that talks about throughput says why, in its place, when there is none to show', () => {
@@ -2580,6 +2601,41 @@ test('no view prints null, undefined, NaN or a throughput figure when there are 
   // And the same scan does see figures where they exist, so it is looking.
   assert.ok(knownHits > 0 && chars > 20000,
     `not discriminating: ${knownHits} known-card elements matched, ${chars} characters scanned`);
+});
+
+test('the KV-derived batch figures are shown for a card with no constants, by value', () => {
+  /* How many sequences the KV cache fits is arithmetic on bytes: it needs no
+     PERF constant and the ruling says it stays. The identity test cannot enforce
+     that on its own — it lets a piece that carries a figure disappear, and a
+     refactor that folds this tile into the aggregate tile, or into the TTFT
+     tile, makes it part of a piece that does. The PDF pins its "Max batch at
+     this context" row by value for exactly this reason; the page pinned nothing,
+     so the same refactor would take the figure with it and leave a card with no
+     constants showing no batch figure anywhere.
+
+     Pinned by value, not by markup, so the tile can be reworded or moved. */
+  let limited = 0, roomy = 0;
+  for (const { label, us, uc, unknown } of absentViews()) {
+    const shown = seenText(unknown.html['throughput-output'], us);
+    assert.ok(shown.includes('Max batch at this context'),
+      `${label}: the throughput panel of a card with no constants has no max-batch tile: ${shown}`);
+    assert.ok(shown.includes(`${uc.maxBatchByKV} seq`),
+      `${label}: the max-batch tile does not show ${uc.maxBatchByKV} seq: ${shown}`);
+    if (uc.batchLimitedByKV) {
+      limited++;
+      // The queue warning is KV arithmetic too, and says the same number.
+      assert.ok(shown.includes(`KV cache caps you below ${us.concurrency} requested`),
+        `${label}: the tile does not say the cache caps the requested concurrency: ${shown}`);
+      assert.ok(shown.includes(`KV cache only fits ${uc.maxBatchByKV} at`),
+        `${label}: the queue warning is missing for a card with no constants: ${shown}`);
+    } else {
+      roomy++;
+      assert.ok(shown.includes('KV cache has room for your concurrency'),
+        `${label}: the tile does not say the cache has room: ${shown}`);
+    }
+  }
+  assert.ok(limited > 0 && roomy > 0,
+    `both branches have to be reached: ${limited} capped, ${roomy} with room`);
 });
 
 test('the benchmark panel is not drawn for a card without constants, even with measurements on file', () => {
@@ -2655,7 +2711,7 @@ test('without constants every view reads as it does with them, except where thro
      card with them shows outside its figures, in the same order. */
   const MAY_DIFFER = ['throughput-output', 'exec-summary', 'comparison-output',
                       'notes-output', 'strategy-badges', '(copied report)'];
-  const differed = new Set(), held = new Set();
+  const differed = new Set(), held = new Set(), shortened = new Set();
   let survived = 0, checked = 0;
   for (const { label, ks, us, known, moved, unknown } of absentViews()) {
     assert.deepStrictEqual(Object.keys(unknown.html).sort(), Object.keys(known.html).sort(),
@@ -2726,11 +2782,14 @@ test('without constants every view reads as it does with them, except where thro
       for (const piece of after)
         for (const text of piece.texts) {
           checked++;
-          const accounted = outsideFigures.includes(text) || REASON.includes(text) ||
+          const isShortening = SHORTENED.includes(text) &&
             spoken.some(sentence => isShorteningOf(text, sentence));
+          if (isShortening) shortened.add(text);
+          const accounted = outsideFigures.includes(text) || REASON.includes(text) || isShortening;
           assert.ok(accounted,
             `${label}: ${id} shows text for a card with no constants that the card with them does ` +
-            `not show outside its figures, and that is not one of the reason strings: "${text}"`);
+            `not show outside its figures, and that is neither a reason string nor a listed ` +
+            `shortening: "${text}"`);
         }
       const shows = numbersIn(reads), may = numbersIn(outsideFigures.join(' '));
       assert.ok(inOrderWithin(shows, may),
@@ -2747,6 +2806,8 @@ test('without constants every view reads as it does with them, except where thro
                     // and the four surfaces the hand-written renderer list had missed
                     'gpu-model', 'gpu-count-display', 'counting-toggle', 'url-restore-warning'])
     assert.ok(held.has(id), `${id} was never rendered, so it was never held identical`);
+  assert.deepStrictEqual([...shortened].sort(), SHORTENED.slice().sort(),
+    'a listed shortening is never emitted where the sentence it shortens stood, so it excuses nothing');
   assert.ok(survived > 500 && checked > 500,
     `only ${survived} pieces were required to survive and ${checked} texts were accounted for`);
 });

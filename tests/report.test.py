@@ -1905,6 +1905,8 @@ def absent_views():
 # out. Reword one of these and this list moves with it — which is what makes the
 # wording a contract rather than whatever generate() happens to say that day.
 REASON = [
+    # the section head, which is "Throughput estimate" when there is one
+    "Throughput",
     # the throughput table, where the five figures and the Basis row were
     "Throughput and TTFT",
     "Not modelled",
@@ -1916,6 +1918,17 @@ REASON = [
     "The VRAM, fit, cost and command figures do not depend on them.",
     # the interconnect note, where the PCIe decode loss was
     "PCIe provides 64-128 GB/s.",
+]
+
+# The only sentence a report with no constants may show that is neither in the
+# list above nor shown verbatim with them: a speed sentence with its speed clause
+# taken off, exactly as generate() writes it. A literal, not "any subsequence of
+# the words" — a subsequence can keep the number and drop only the words the
+# speech patterns key on, which says more rather than less. It is still checked
+# to be a shortening of a sentence that really stood in that report.
+SHORTENED = [
+    "Above one NVLink domain both the split and the interconnect factor priced against it are "
+    "heuristics; nothing here is measured above 2 devices.",
 ]
 
 
@@ -1948,6 +1961,7 @@ def check_the_report_says_why_where_the_figures_were():
                 strings[head:cost], strings[cost:notes], strings[notes:])
 
     accounted = 0
+    shortened = set()
     for label, kcfg, ucfg, known, moved, unknown in absent_views():
         assert any(figure.search(t) for t in known), (
             f"{label}: the report with constants prints no figure, so this sees nothing")
@@ -2017,10 +2031,14 @@ def check_the_report_says_why_where_the_figures_were():
         for raw in unknown:
             for t in texts_of(raw, name):
                 accounted += 1
-                assert (t in outside or t in REASON
-                        or any(in_order_within(words_of(t), words_of(said)) for said in spoken)), (
+                is_shortening = t in SHORTENED and any(
+                    in_order_within(words_of(t), words_of(said)) for said in spoken)
+                if is_shortening:
+                    shortened.add(t)
+                assert t in outside or t in REASON or is_shortening, (
                     f"{label}: the report without constants shows text the report with them does not "
-                    f"show outside its figures, and that is not one of the reason strings: {t!r}")
+                    f"show outside its figures, and that is neither a reason string nor a listed "
+                    f"shortening: {t!r}")
         for heard_name, rx in speech.items():
             heard.update([heard_name] if any(rx.search(t) for t in known) else [])
             said = [t for t in unknown if rx.search(t)]
@@ -2029,6 +2047,9 @@ def check_the_report_says_why_where_the_figures_were():
     # Every pattern has to have matched a report with constants, or it guards nothing.
     assert heard == set(speech), f"never seen with constants, so not guarding: {sorted(set(speech) - heard)}"
     assert kept > 50, f"only {kept} note sentences were checked for survival"
+    assert sorted(shortened) == sorted(SHORTENED), (
+        "a listed shortening is never emitted where the sentence it shortens stood, so it "
+        f"excuses nothing: {sorted(set(SHORTENED) - shortened)}")
     assert accounted > 1000, f"only {accounted} texts were accounted for"
 
 test("the report prints no throughput figure without constants, and says why in its place",
