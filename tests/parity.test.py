@@ -163,12 +163,14 @@ CASES = [
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "nvidia", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 2}},
     {"name": "Dual-GCD board, 4 modules = 8 devices",
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "nvidia", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 2}},
     # A multi-device board without NVLink: the PCIe curve is keyed on the count,
     # and every other dual-GCD case here is NVLink — which is the interconnect a
     # real AMD OAM row will not have.
@@ -176,13 +178,15 @@ CASES = [
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80", "nvlink": False,
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "nvidia", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 2}},
     {"name": "Gemma SWA with shared prefix — only global layers share",
      "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
      "ctx": 32768, "conc": 32, "n_gpu": 1, "gpu": "h100-80",
      "attn": "swa", "swa_win": 1024, "swa_local": 25,
      "shared_prefix": 4096, "prefix_caching": True},
-    # Hardware with no measured constants: a row whose perfKey has no PERF entry.
+    # Hardware with no measured constants: a row whose perfKey has no PERF entry,
+    # under the vendor whose constants a vendor-keyed lookup would lend it.
     # Both engines must agree that every throughput figure is absent — Python's
     # None and JS's null meeting across the JSON boundary — while every VRAM,
     # cost and parallelism figure is computed as for any other card. The card is
@@ -193,7 +197,8 @@ CASES = [
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "perfKey": "no-such-key", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "no-such-key",
+              "devices": 2}},
     # The same, past one domain, on PCIe, as an MoE at FP8 with FP8 KV and a
     # saturated short context: the regime where every figure that could leak has
     # something to leak.
@@ -202,15 +207,16 @@ CASES = [
      "h_dim": 128, "ctx": 1024, "conc": 512, "n_gpu": 16, "nvlink": False, "kv_bpp": 1,
      "gpu": "h100-80",
      "card": {"gb": 64, "bw": 1638.4, "hyper": 3.0, "spec": 1.25, "spot": 0.6,
-              "tflops": 191.5, "name": "Unmeasured 64 GB", "perfKey": "no-such-key",
-              "devices": 1, "caps": {"fp8": True}}},
+              "tflops": 191.5, "name": "Unmeasured 64 GB", "vendor": "nvidia",
+              "perfKey": "no-such-key", "devices": 1, "caps": {"fp8": True}}},
     # And a card that carries no perfKey at all, which is what a state or cfg
     # built without one looks like: absent in both engines, never a fallback.
     {"name": "No perfKey at all: absent in both engines, not a fallback",
      "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80",
      "card": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
-              "tflops": 990, "name": "Keyless 80 GB", "devices": 1, "caps": {"fp8": True}}},
+              "tflops": 990, "name": "Keyless 80 GB", "vendor": "nvidia", "devices": 1,
+              "caps": {"fp8": True}}},
 ]
 
 js_runner = r"""
@@ -241,7 +247,7 @@ const G={};
 for(const [k,g] of Object.entries(GPU_TABLE)){
   G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
         name:g.name.replace(/ GB$/,'GB'),devices:g.devices,caps:g.caps,
-        perfKey:g.perfKey};
+        perfKey:g.perfKey,vendor:g.vendor};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
   /* c.card lets a case carry a row the catalog does not have yet — the
@@ -249,7 +255,8 @@ const out=JSON.parse(process.argv[2]).map(c=>{
      such board ships, not after. */
   const g=c.card ? {gb:c.card.gb,bw:c.card.bw,h:c.card.hyper,sp:c.card.spec,
                     st:c.card.spot,tf:c.card.tflops,name:c.card.name.replace(/ GB$/,'GB'),
-                    devices:c.card.devices,caps:c.card.caps,perfKey:c.card.perfKey} : G[c.gpu];
+                    devices:c.card.devices,caps:c.card.caps,perfKey:c.card.perfKey,
+                    vendor:c.card.vendor} : G[c.gpu];
   if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
   const state={params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
@@ -261,8 +268,10 @@ const out=JSON.parse(process.argv[2]).map(c=>{
        the FP8 compute multiplier applies in Python and not here. */
     gpuFp8:!!(g.caps&&g.caps.fp8),quantMethod:c.quant||'',
     /* The key computeInference() looks PERF up by, off the card as
-       readInputState() takes it. */
-    perfKey:g.perfKey,
+       readInputState() takes it — and the vendor beside it, which selects
+       nothing, so that anything that starts selecting by it again disagrees
+       with the other engine here. */
+    perfKey:g.perfKey,vendor:g.vendor,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
@@ -459,6 +468,7 @@ def cfg_for(case):
     cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
     cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
     cfg["perfKey"] = cfg["gpu"].get("perfKey")
+    cfg["vendor"] = cfg["gpu"].get("vendor")
     cfg.setdefault("max_ctx", 1048576)
     return cfg
 

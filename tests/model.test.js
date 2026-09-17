@@ -731,31 +731,42 @@ console.log('\nAgreement with published benchmarks');
 // Order-of-magnitude agreement (0.25x-4x) is the bar for a planning tool.
 const PREC_BYTES = { bf16: 2, fp8: 1, q4: 0.5, int4: 0.5 };
 
-for (const [key, b] of Object.entries(benchmarks.data)) {
-  if (b.estimated) continue; // only score against real measurements
-  const { params, gpu, slug } = gpuForKey(key);
-  const gpuCount = key === '70b-h100-80' ? 2 : 1;
-  /* A measurement on hardware with no constants has no estimate to be scored
-     against. It is reported as such, not scored with another key's constants
-     and not dropped in silence. */
-  const perfKey = GPU_TABLE[slug].perfKey;
-  if (!Object.hasOwn(PERF, perfKey)) {
-    test(`${key} (${b.mode}) is not scored: ${perfKey} has no constants`, () => {
-      assert.strictEqual(computeInference(state({ gpu, params })).throughputModelled, false);
+/* Which measured entries are scored, and against what estimate. A measurement on
+   hardware with no constants has no estimate to be scored against: it is marked
+   as such, not scored with another key's constants and not dropped in silence.
+   A function of the entries and the catalog, like bandRatios() below, so the skip
+   is driven with a synthetic card too — no real entry reaches it yet. */
+const scoringPlan = (entries, table) => {
+  const plan = [];
+  for (const [key, b] of Object.entries(entries)) {
+    if (b.estimated) continue; // only score against real measurements
+    const m = key.match(/^(\d+)b-(.+)$/);
+    assert.ok(m && Object.hasOwn(table, m[2]), `benchmark key "${key}" names no row in the catalog`);
+    const params = Number(m[1]), card = table[m[2]];
+    // Benchmarks are run at short context with a full batch; mirror that.
+    const c = computeInference(stateFor(card, {
+      params, gpuCount: key === '70b-h100-80' ? 2 : 1,
+      bytesPerParam: PREC_BYTES[b.prec] ?? 2,
+      layers: params >= 60 ? 80 : params >= 20 ? 48 : 32,
+      contextLength: b.mode === 'single' ? 16384 : 1024,
+      concurrency: 1,
+    }));
+    if (!Object.hasOwn(PERF, card.perfKey)) {
+      plan.push({ key, b, skipped: card.perfKey, modelled: c.throughputModelled });
+      continue;
+    }
+    // Batch benchmarks are run saturated, so score against the saturated estimate.
+    plan.push({ key, b, ours: b.mode === 'single' ? c.singleStreamTokS : c.saturatedTokS });
+  }
+  return plan;
+};
+for (const { key, b, ours, skipped, modelled } of scoringPlan(benchmarks.data, GPU_TABLE)) {
+  if (skipped) {
+    test(`${key} (${b.mode}) is not scored: ${skipped} has no constants`, () => {
+      assert.strictEqual(modelled, false, `the engine produced an estimate for ${key} anyway`);
     });
     continue;
   }
-  // Benchmarks are run at short context with a full batch; mirror that.
-  const s = state({
-    gpu, params, gpuCount,
-    bytesPerParam: PREC_BYTES[b.prec] ?? 2,
-    layers: params >= 60 ? 80 : params >= 20 ? 48 : 32,
-    contextLength: b.mode === 'single' ? 16384 : 1024,
-    concurrency: b.mode === 'single' ? 1 : 1,
-  });
-  const c = computeInference(s);
-  // Batch benchmarks are run saturated, so score against the saturated estimate.
-  const ours = b.mode === 'single' ? c.singleStreamTokS : c.saturatedTokS;
   test(`${key} (${b.mode}) within 4x of ${b.tokS} tok/s`, () => {
     const ratio = ours / b.tokS;
     assert.ok(ratio >= 0.25 && ratio <= 4,
@@ -811,7 +822,7 @@ test('each declared band matches its own measured spread, and is no wider', () =
       `directions. Update obsLo/obsHi in index.html and generate_report.py to match the measurements.`);
   }
 });
-test('a measurement on hardware with no constants is skipped by the band, never scored on nvidia', () => {
+test('a measurement on hardware with no constants is never scored — not by the band, not per entry', () => {
   /* A synthetic card with no PERF entry, and a measured batch entry on it shaped
      exactly like a real one. The catalog has no such row yet, so the case is
      built rather than found. */
@@ -833,6 +844,14 @@ test('a measurement on hardware with no constants is skipped by the band, never 
   assert.deepStrictEqual(twin.skipped, [], 'an entry on a card with constants was skipped');
   assert.strictEqual(twin.byKey.nvidia.length, real.byKey.nvidia.length + 1,
     'an entry on a card with constants was not scored on its key');
+  // And the per-entry scoring above follows the same rule, both ways.
+  const planned = (tbl) => scoringPlan(entries, tbl).find(e => e.key === '8b-probe-unmeasured');
+  const skipped = planned({ ...GPU_TABLE, 'probe-unmeasured': probe });
+  assert.ok(skipped && skipped.skipped === 'no-such-key' && skipped.ours === undefined && skipped.modelled === false,
+    `the per-entry scoring scored a card with no constants: ${JSON.stringify(skipped)}`);
+  const scored = planned({ ...GPU_TABLE, 'probe-unmeasured': { ...probe, perfKey: 'nvidia' } });
+  assert.ok(scored && !scored.skipped && scored.ours > 0,
+    `the per-entry scoring skipped a card with constants: ${JSON.stringify(scored)}`);
 });
 test('the band scales the aggregate ceiling and nothing else', () => {
   const c = computeInference(state({ concurrency: 64 }));
@@ -2209,6 +2228,55 @@ test('no view prints null, undefined, NaN or a throughput figure when there are 
   // And the same scan does see figures where they exist, so it is looking.
   assert.ok(knownHits > 0 && chars > 20000,
     `not discriminating: ${knownHits} known-card elements matched, ${chars} characters scanned`);
+});
+
+test('the benchmark panel is not drawn for a card without constants, even with measurements on file', () => {
+  /* Scoring a measurement against an estimate that does not exist is the units
+     error the panel was rebuilt to stop, and a bare reference point beside an
+     empty tile invites the same comparison by hand. Every branch of the panel is
+     reached with constants first: an exact batch match, the nearest size on the
+     same card, a single-stream entry, an estimated entry, and a card with no data. */
+  const h = renderHarness();
+  for (const [params, gpuKey] of [[8, 'h100-80'], [14, 'b200-192'], [8, 'rtx4090-24'],
+                                  [27, 'h100-80'], [8, 't4-16']]) {
+    const known = asState(dualGCD, 1, { params, layers: 32, gpuKey });
+    const unknown = { ...known, perfKey: 'no-such-key' };
+    h.renderThroughput(known, h.computeInference(known));
+    assert.match(h.out['throughput-output'], /benchmark/i,
+      `control: ${params}B on ${gpuKey} shows no benchmark panel even with constants`);
+    h.renderThroughput(unknown, h.computeInference(unknown));
+    assert.doesNotMatch(h.out['throughput-output'], /benchmark/i,
+      `${params}B on ${gpuKey}: the benchmark panel is drawn for a card with no constants`);
+  }
+});
+
+test('without constants no view makes a speed claim, figure or not', () => {
+  /* A figure is only half of it. A loss percentage, a "bandwidth-bound" or
+     "compute-bound" label, an FP8 caveat about a ceiling, the observed band, or a
+     sentence pointing at "the throughput figures" is a claim about speed as well,
+     and each rests on the same heuristics the constants do. Every pattern must be
+     seen on a card with constants, or it guards nothing. */
+  const SPEECH = {
+    'a PCIe loss percentage': /\d+-\d+% (?:perf|decode) loss/i,
+    'a bandwidth-bound estimate': /bandwidth-bound/i,
+    'a compute-bound label': /compute-bound/i,
+    'an FP8 compute caveat': /FP8 tensor cores/i,
+    'the observed band': /observed range/i,
+    'a pointer to throughput figures': /throughput figures|aggregate throughput above/i,
+  };
+  const heard = new Set();
+  for (const { label, known: ks, unknown: us } of absentProbes()) {
+    const known = Object.values(renderEverything(ks)).join('\n');
+    for (const [name, re] of Object.entries(SPEECH)) if (re.test(known)) heard.add(name);
+    for (const [id, text] of Object.entries(renderEverything(us))) {
+      for (const [name, re] of Object.entries(SPEECH)) {
+        const m = String(text).match(re);
+        assert.ok(!m, `${label}: ${id} makes ${name} with no constants: "${m && m[0]}"`);
+      }
+    }
+  }
+  assert.deepStrictEqual([...heard].sort(), Object.keys(SPEECH).sort(),
+    'some of these never matched a card with constants, so they guard nothing');
 });
 
 test('the VRAM breakdown row adds up to the total it prints beside it', () => {
