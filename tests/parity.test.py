@@ -397,7 +397,16 @@ for case, js in zip(CASES, js_results):
     bad = []
     for pk, jk, tol in FIELDS:
         a, b = py[pk], dig(js, jk)
-        if abs(a - b) > max(tol, abs(b) * 0.001):
+        if a is None or b is None:
+            # A figure an engine reports as absent: Python's None, or JS's null,
+            # which arrives through JSON as None too. Absent on both sides is
+            # agreement. Absent on one side only is drift, and it has to be
+            # reported rather than computed: abs(a - b) and :.4g both raise
+            # TypeError on None, which would lose the report this loop exists
+            # to print. Same shape as the catalog-table loop below.
+            if a != b:
+                bad.append(f"{pk}: py={a!r} js={b!r}")
+        elif abs(a - b) > max(tol, abs(b) * 0.001):
             bad.append(f"{pk}: py={a:.4g} js={b:.4g}")
     if bad:
         print(f"  FAIL {case['name']}")
