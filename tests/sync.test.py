@@ -84,16 +84,16 @@ print("\npriceSource is optional, nests an object, and is escaped like any other
 def check_price_source_round_trips_js():
     rows = {
         "8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
-                       "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
-                       "form": "sxm", "caps": {"fp8": True},
+                       "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+                       "devices": 1, "form": "sxm", "caps": {"fp8": True},
                        "priceSource": {"hyper": {"provider": "azure",
                                                   "sku": "Standard_ND96isr_H100_v5",
                                                   "region": "eastus", "date": "2026-09-16"}}},
         # A second row with no priceSource at all: the optional field must not be
         # required just because a sibling row happens to carry it.
         "8b-a100-80": {"gb": 80, "bw": 2039, "hyper": 4.5, "spec": 1.79, "spot": 0.99,
-                       "tflops": 312, "name": "A100 80 GB", "vendor": "nvidia", "devices": 1,
-                       "form": "sxm", "caps": {"fp8": False}},
+                       "tflops": 312, "name": "A100 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+                       "devices": 1, "form": "sxm", "caps": {"fp8": False}},
     }
     block = sync_data.render_gpu_js(rows)
     body = "\n".join(l for l in block.splitlines() if not l.startswith("/*"))
@@ -106,8 +106,8 @@ test("a row with priceSource round-trips through JS beside a row without it",
 def check_price_source_round_trips_py():
     rows = {
         "8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
-                       "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
-                       "form": "sxm", "caps": {"fp8": True},
+                       "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+                       "devices": 1, "form": "sxm", "caps": {"fp8": True},
                        "priceSource": {"hyper": {"provider": "azure",
                                                   "sku": "Standard_ND96isr_H100_v5",
                                                   "region": "eastus", "date": "2026-09-16"},
@@ -130,8 +130,8 @@ def check_price_source_free_text_is_escaped():
     # a benchmark note, sitting inside the same <script> element in index.html.
     hostile = "</script><script>alert(1)</script>"
     rows = {"8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
-                           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
-                           "form": "sxm", "caps": {"fp8": True},
+                           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+                           "devices": 1, "form": "sxm", "caps": {"fp8": True},
                            "priceSource": {"hyper": {"provider": "azure", "sku": hostile,
                                                       "region": "eastus", "date": "2026-09-16"}}}}
     block = sync_data.render_gpu_js(rows)
@@ -150,8 +150,8 @@ def check_marker_text_nested_in_price_source_is_refused():
     marker hiding inside a *nested* value, not the top-level field, matters."""
     poisoned = "see the GPU_TABLE:END marker in tools/sync_data.py"
     rows = {"8b-h100-80": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
-                           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "devices": 1,
-                           "form": "sxm", "caps": {"fp8": True},
+                           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+                           "devices": 1, "form": "sxm", "caps": {"fp8": True},
                            "priceSource": {"hyper": {"provider": "azure", "sku": poisoned,
                                                       "region": "eastus", "date": "2026-09-16"}}}}
     try:
@@ -211,6 +211,29 @@ def check_missing_field_names_itself():
     raise AssertionError("a row missing required fields rendered anyway")
 
 test("a row missing a required field names the row and the field", check_missing_field_names_itself)
+
+
+def check_a_gpu_row_without_perf_key_is_refused():
+    """data/gpus.json's schema says perfKey is required. That is what stops an
+    omission reaching both engines as a card with no throughput constants that
+    nobody decided it should be. Both renderers, since each is its own way into
+    a generated block. The message is matched on the missing list itself: every
+    refusal also lists all required fields, perfKey among them, so merely
+    finding the word would pass whatever was missing."""
+    row = {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+           "tflops": 990, "name": "H100 80 GB", "vendor": "nvidia",
+           "devices": 1, "form": "sxm", "caps": {"fp8": True}}
+    for render in (sync_data.render_gpu_js, sync_data.render_gpu_py):
+        try:
+            render({"h100-80": row})
+        except SystemExit as e:
+            assert "'h100-80'" in str(e) and "missing required field(s) ['perfKey']" in str(e), (
+                f"{render.__name__}: the refusal does not name the row and perfKey: {e}")
+            continue
+        raise AssertionError(f"{render.__name__} rendered a GPU row that has no perfKey")
+
+test("a GPU row with no perfKey is refused by both renderers, naming the row and the field",
+     check_a_gpu_row_without_perf_key_is_refused)
 
 
 def check_marker_text_in_a_value_is_refused():

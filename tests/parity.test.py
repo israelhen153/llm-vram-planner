@@ -156,17 +156,21 @@ CASES = [
     # 3276.8 GB/s per module, 383 dense TFLOPS per module. It is not in the
     # catalog yet — the AMD rows come later — but the derivation that splits a board
     # into devices has to be compared across both engines before then, not after
-    # a wrong number ships.
+    # a wrong number ships. Its perfKey is spelled out on each copy: these cases
+    # test how a board splits into devices, and a card with no key would quietly
+    # test a card with no throughput constants instead.
     {"name": "Dual-GCD board, 1 module (device split must be identical in both engines)",
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 2}},
     {"name": "Dual-GCD board, 4 modules = 8 devices",
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 2}},
     # A multi-device board without NVLink: the PCIe curve is keyed on the count,
     # and every other dual-GCD case here is NVLink — which is the interconnect a
     # real AMD OAM row will not have.
@@ -174,12 +178,45 @@ CASES = [
      "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
      "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80", "nvlink": False,
      "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
-              "tflops": 383, "name": "Dual-GCD 128 GB", "devices": 2}},
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 2}},
     {"name": "Gemma SWA with shared prefix — only global layers share",
      "params": 26, "active": 15, "bpp": 2, "layers": 30, "kv_heads": 8, "h_dim": 256,
      "ctx": 32768, "conc": 32, "n_gpu": 1, "gpu": "h100-80",
      "attn": "swa", "swa_win": 1024, "swa_local": 25,
      "shared_prefix": 4096, "prefix_caching": True},
+    # Hardware with no measured constants: a row whose perfKey has no PERF entry,
+    # under the vendor whose constants a vendor-keyed lookup would lend it.
+    # Both engines must agree that every throughput figure is absent — Python's
+    # None and JS's null meeting across the JSON boundary — while every VRAM,
+    # cost and parallelism figure is computed as for any other card. The card is
+    # a synthetic one, because no catalog row is like this yet; its perfKey goes
+    # through the c.card copy in the JS builder, and the echoed key below is what
+    # tells an unknown key from one that copy dropped.
+    {"name": "No measured constants: 4 dual-GCD modules, perfKey with no PERF entry",
+     "params": 70, "active": 100, "bpp": 2, "layers": 80, "kv_heads": 8, "h_dim": 128,
+     "ctx": 16384, "conc": 32, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": 6.0, "spec": 2.5, "spot": 1.2,
+              "tflops": 383, "name": "Dual-GCD 128 GB", "vendor": "nvidia", "perfKey": "no-such-key",
+              "devices": 2}},
+    # The same, past one domain, on PCIe, as an MoE at FP8 with FP8 KV and a
+    # saturated short context: the regime where every figure that could leak has
+    # something to leak.
+    {"name": "No measured constants: 16 devices, PCIe, MoE fp8, saturated",
+     "params": 30, "active": 10, "bpp": 1, "quant": "fp8", "layers": 48, "kv_heads": 4,
+     "h_dim": 128, "ctx": 1024, "conc": 512, "n_gpu": 16, "nvlink": False, "kv_bpp": 1,
+     "gpu": "h100-80",
+     "card": {"gb": 64, "bw": 1638.4, "hyper": 3.0, "spec": 1.25, "spot": 0.6,
+              "tflops": 191.5, "name": "Unmeasured 64 GB", "vendor": "nvidia",
+              "perfKey": "no-such-key", "devices": 1, "caps": {"fp8": True}}},
+    # And a card that carries no perfKey at all, which is what a state or cfg
+    # built without one looks like: absent in both engines, never a fallback.
+    {"name": "No perfKey at all: absent in both engines, not a fallback",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 2, "gpu": "h100-80",
+     "card": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
+              "tflops": 990, "name": "Keyless 80 GB", "vendor": "nvidia", "devices": 1,
+              "caps": {"fp8": True}}},
 ]
 
 js_runner = r"""
@@ -209,7 +246,8 @@ const GPU_TABLE=new Function(`${gt[0]}; return GPU_TABLE;`)();
 const G={};
 for(const [k,g] of Object.entries(GPU_TABLE)){
   G[k]={gb:g.gb,bw:g.bw,h:g.hyper,sp:g.spec,st:g.spot,tf:g.tflops,
-        name:g.name.replace(/ GB$/,'GB'),devices:g.devices,caps:g.caps};
+        name:g.name.replace(/ GB$/,'GB'),devices:g.devices,caps:g.caps,
+        perfKey:g.perfKey,vendor:g.vendor};
 }
 const out=JSON.parse(process.argv[2]).map(c=>{
   /* c.card lets a case carry a row the catalog does not have yet — the
@@ -217,9 +255,10 @@ const out=JSON.parse(process.argv[2]).map(c=>{
      such board ships, not after. */
   const g=c.card ? {gb:c.card.gb,bw:c.card.bw,h:c.card.hyper,sp:c.card.spec,
                     st:c.card.spot,tf:c.card.tflops,name:c.card.name.replace(/ GB$/,'GB'),
-                    devices:c.card.devices,caps:c.card.caps} : G[c.gpu];
+                    devices:c.card.devices,caps:c.card.caps,perfKey:c.card.perfKey,
+                    vendor:c.card.vendor} : G[c.gpu];
   if(!g) throw new Error('no GPU_TABLE row for slug '+c.gpu);
-  return ci({params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
+  const state={params:c.params,activePercent:c.active,bytesPerParam:c.bpp,layers:c.layers,
     kvHeads:c.kv_heads,headDim:c.h_dim,sharedExperts:c.shared_exp||0,contextLength:c.ctx,
     concurrency:c.conc,gpuCount:c.n_gpu,hasNVLink:c.nvlink!==false,kvBytesPerValue:c.kv_bpp||2,
     gpuGB:g.gb,gpuBandwidth:g.bw,gpuTFLOPS:g.tf,gpuHyperCost:g.h,gpuSpecCost:g.sp,
@@ -228,10 +267,20 @@ const out=JSON.parse(process.argv[2]).map(c=>{
        selector; this harness builds state by hand, so it has to mirror them or
        the FP8 compute multiplier applies in Python and not here. */
     gpuFp8:!!(g.caps&&g.caps.fp8),quantMethod:c.quant||'',
+    /* The key computeInference() looks PERF up by, off the card as
+       readInputState() takes it — and the vendor beside it, which selects
+       nothing, so that anything that starts selecting by it again disagrees
+       with the other engine here. */
+    perfKey:g.perfKey,vendor:g.vendor,
     attnMode:c.attn||'standard',swaWindow:c.swa_win||0,
     swaLocalLayers:c.swa_local||0,mlaLatentDim:c.mla_dim||0,
     modelMaxCtx:c.max_ctx||1048576,
-    sharedPrefix:c.shared_prefix||0,prefixCaching:c.prefix_caching!==false});
+    sharedPrefix:c.shared_prefix||0,prefixCaching:c.prefix_caching!==false};
+  /* Echoed beside the result, so the comparison can check that both engines
+     looked up the same key. A copy above that drops perfKey otherwise shows up
+     only as a throughput mismatch — or, on a card with no constants, as
+     nothing at all: a missing key and an unknown one compute the same. */
+  return Object.assign(ci(state), {__perfKey: state.perfKey});
 });
 console.log(JSON.stringify(out));
 """
@@ -294,11 +343,32 @@ FIELDS = [
     # would compare equal on every case: it is a constant, and what can drift is
     # whether the two engines decide to *apply* it to the same configuration.
     ("perf_fp8_ratio", "perfFp8Ratio", 0), ("compute_ratio", "computeRatio", 0),
+    # Whether the two engines found constants for the card at all. A bool on both
+    # sides; compared exactly.
+    ("throughput_modelled", "throughputModelled", 0),
 ]
+# Every field above that needs a PERF constant: absent — None in Python, null in
+# JS — for a card without constants, and present for every other card. The rest
+# of FIELDS is present either way. A literal, because it is the ruling.
+PERF_BOUND = {"single_tok", "agg_tok", "agg_obs_lo", "agg_obs_hi", "per_user_load",
+              "ttft_ms", "sat_tok", "ttft_cold_ms", "ttft_warm_ms", "perf_mbu",
+              "perf_mfu_decode", "perf_mfu_prefill", "perf_obs_lo", "perf_obs_hi",
+              "perf_fp8_ratio", "compute_ratio"}
+assert PERF_BOUND <= {pk for pk, _, _ in FIELDS}, "PERF_BOUND names a field FIELDS does not compare"
+
+
+class Missing(Exception):
+    """A field one engine did not return at all — not the same as returning null."""
+
+
 def dig(d, path):
     """Walk a dotted path, so a field mapping can name perGPU.weights as easily
-    as perGPU.total — the special case this replaces could name exactly one."""
+    as perGPU.total — the special case this replaces could name exactly one.
+    A key that is not there raises Missing: JSON.stringify drops an undefined
+    field, and that is a different failure from a null one."""
     for part in path.split("."):
+        if not isinstance(d, dict) or part not in d:
+            raise Missing(path)
         d = d[part]
     return d
 
@@ -388,16 +458,45 @@ CONTRACTS = {
 _unmatched = set(CONTRACTS) - {c["name"] for c in CASES}
 assert not _unmatched, f"CONTRACTS names cases that do not exist: {sorted(_unmatched)}"
 
-passed = failed = 0
-for case, js in zip(CASES, js_results):
+def cfg_for(case):
+    """The Python side of a case, built the way generate_report.py's own cfg
+    builders build one: the card is the catalog row or the case's synthetic one,
+    and perfKey is copied off that card rather than written by the case. One
+    function for the three loops below, because a perfKey added to two of
+    three hand-copied builders leaves the third computing a card with no
+    constants."""
     cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
     cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
+    cfg["perfKey"] = cfg["gpu"].get("perfKey")
+    cfg["vendor"] = cfg["gpu"].get("vendor")
     cfg.setdefault("max_ctx", 1048576)
+    return cfg
+
+
+passed = failed = 0
+for case, js in zip(CASES, js_results):
+    cfg = cfg_for(case)
     py = compute(cfg)
     bad = []
+    # Both engines must have looked up the same key, before any figure is read.
+    if js.get("__perfKey") != cfg["perfKey"]:
+        bad.append(f"perfKey: py={cfg['perfKey']!r} js={js.get('__perfKey')!r}")
     for pk, jk, tol in FIELDS:
-        a, b = py[pk], dig(js, jk)
-        if abs(a - b) > max(tol, abs(b) * 0.001):
+        try:
+            a, b = py[pk], dig(js, jk)
+        except Missing:
+            bad.append(f"{pk}: js returned no {jk} at all (undefined, not null)")
+            continue
+        if a is None or b is None:
+            # A figure an engine reports as absent: Python's None, or JS's null,
+            # which arrives through JSON as None too. Absent on both sides is
+            # agreement. Absent on one side only is drift, and it has to be
+            # reported rather than computed: abs(a - b) and :.4g both raise
+            # TypeError on None, which would lose the report this loop exists
+            # to print. Same shape as the catalog-table loop below.
+            if a != b:
+                bad.append(f"{pk}: py={a!r} js={b!r}")
+        elif abs(a - b) > max(tol, abs(b) * 0.001):
             bad.append(f"{pk}: py={a:.4g} js={b:.4g}")
     if bad:
         print(f"  FAIL {case['name']}")
@@ -408,11 +507,57 @@ for case, js in zip(CASES, js_results):
         print(f"  ok   {case['name']}")
         passed += 1
 
+# ---- absent means absent, in both engines ----------------------------------
+# The comparison above is agreement, and two engines that both still borrowed
+# NVIDIA's constants would agree. So for every case whose card has no PERF entry,
+# each engine is held to the ruling on its own: throughput_modelled is False,
+# every PERF-bound field is None — and on the JS side it is there as null, since
+# the JSON boundary is the one place this design could silently turn "absent"
+# into "missing" — and every other compared field is a real value. The cases
+# with constants are held to the converse, so neither half passes by accident.
+absent_seen = present_seen = absent_failed = 0
+for case, js in zip(CASES, js_results):
+    cfg = cfg_for(case)
+    py = compute(cfg)
+    absent = cfg["perfKey"] not in PERF
+    problems = []
+    if py["throughput_modelled"] is not (not absent):
+        problems.append(f"python throughput_modelled={py['throughput_modelled']!r}")
+    if js.get("throughputModelled") is not (not absent):
+        problems.append(f"js throughputModelled={js.get('throughputModelled')!r}")
+    for pk, jk, _ in FIELDS:
+        if pk == "throughput_modelled":
+            continue
+        try:
+            jv = dig(js, jk)
+        except Missing:
+            problems.append(f"js returned no {jk} at all")
+            continue
+        want_none = absent and pk in PERF_BOUND
+        for engine, v in (("python", py[pk]), ("js", jv)):
+            if (v is None) != want_none:
+                problems.append(f"{engine} {pk}={v!r}, expected {'None' if want_none else 'a value'}")
+    if problems:
+        print(f"  FAIL throughput should be {'absent' if absent else 'present'} in both engines "
+              f"— {case['name']}")
+        for m in problems[:8]:
+            print(f"       {m}")
+        failed += 1
+        absent_failed += 1
+    absent_seen += absent
+    present_seen += not absent
+if absent_seen < 3 or not present_seen:
+    print(f"  FAIL the absent check reached {absent_seen} cases without constants and "
+          f"{present_seen} with — it needs both")
+    failed += 1
+elif not absent_failed:
+    print(f"  ok   throughput is absent, as None and null, in all {absent_seen} cases without "
+          f"constants, and present in the other {present_seen}")
+    passed += 1
+
 # The verdict flags must agree too — that is the tool's headline answer.
 for case, js in zip(CASES, js_results):
-    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
-    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
-    cfg.setdefault("max_ctx", 1048576)
+    cfg = cfg_for(case)
     py = compute(cfg)
     if py["fits"] != js["fits"] or py["comfortable"] != js["comfortable"]:
         print(f"  FAIL {case['name']}: verdict differs "
@@ -424,9 +569,7 @@ for case, js in zip(CASES, js_results):
 for case, js in zip(CASES, js_results):
     if case["name"] not in CONTRACTS:
         continue
-    cfg = {k: v for k, v in case.items() if k not in ("name", "card")}
-    cfg["gpu"] = case.get("card") or GPUS[case["gpu"]]
-    cfg.setdefault("max_ctx", 1048576)
+    cfg = cfg_for(case)
     py = compute(cfg)
     for label, pk, jk, want, tol in CONTRACTS[case["name"]]:
         for engine, got in (("python", py[pk]), ("js", dig(js, jk))):
@@ -457,7 +600,8 @@ for case, js in zip(CASES, js_results):
 # since DP partitions the request stream rather than the cache.
 # index.html's side of the same invariant is in model.test.js.
 PROP_CFG = {"params": 70, "bpp": 2, "layers": 80, "kv_heads": 8,
-            "h_dim": 128, "ctx": 8192, "conc": 16, "max_ctx": 1048576}
+            "h_dim": 128, "ctx": 8192, "conc": 16, "max_ctx": 1048576,
+            "perfKey": GPUS["h100-80"]["perfKey"]}
 prop_bad, prop_n, prop_dp, prop_split = [], 0, 0, 0
 for _n in (1, 2, 4, 5, 8, 9, 10, 12, 16, 20, 24, 40, 64, 100, 128):
     # devices=2 as well, because the split is sized in devices and a board count
@@ -554,8 +698,11 @@ else:
 # about 4x optimistic. The commit that scopes single-stream and TTFT to a
 # replica has to move these numbers deliberately. index.html's side carries the
 # same literals in model.test.js.
+# perfKey off the same H100 row every cfg below runs on: this sweep reads
+# single_tok, which a cfg with no constants does not have.
 _IC_CFG = {"params": 0.5, "active": 100, "bpp": 2, "layers": 4, "kv_heads": 1,
-           "h_dim": 64, "ctx": 512, "conc": 1, "max_ctx": 1048576}
+           "h_dim": 64, "ctx": 512, "conc": 1, "max_ctx": 1048576,
+           "perfKey": GPUS["h100-80"]["perfKey"]}
 _pcie9 = 0.55 - 0.05 * math.log2(9 / 2)
 for _n, _nv, _want in ((1, True, 1.0), (1, False, 1.0),
                        (8, True, 0.85), (8, False, 0.45),
@@ -620,11 +767,11 @@ else:
     drift = []
     for key in sorted(GPUS):
         # Numeric fields compare with a tolerance; everything else — names,
-        # vendor, form, the caps object, the optional default flag — is an
-        # exact match, and .get() rather than [] so a field present on one
-        # side only reads as drift instead of raising.
+        # vendor, perfKey, form, the caps object, the optional default flag —
+        # is an exact match, and .get() rather than [] so a field present on
+        # one side only reads as drift instead of raising.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
-                  "name", "vendor", "devices", "form", "caps", "default"):
+                  "name", "vendor", "perfKey", "devices", "form", "caps", "default"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:
