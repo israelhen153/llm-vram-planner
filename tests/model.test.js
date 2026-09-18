@@ -3427,5 +3427,131 @@ test('the notice retracts itself once the user fixes the field', () => {
     'renderRestoreNotice is never re-run, so the notice cannot retract');
 });
 
+/* ---- what today's cards display ------------------------------------------
+ *
+ * Every other test in this file is differential: it renders a card with
+ * constants beside the same card without them, and holds the difference to the
+ * throughput figures. That catches anything added to one of the two. It is
+ * blind to anything added to both — a sentence invented and shown on every card
+ * in the catalog is identical on both sides, so the comparison sees nothing.
+ * X2 in the sabotage corpus is exactly that shape, and it stayed green through
+ * all 474 tests by sitting inside the one element the comparison is told may
+ * differ.
+ *
+ * A comparison needs something to compare against. This is it: what the page
+ * renders today, recorded. Any change to any of it fails, whether or not the
+ * change was meant — which is the whole point, and also the whole cost.
+ *
+ * Deliberate display change?  UPDATE_GOLDEN=1 node tests/model.test.js
+ * then read the diff before committing. That diff is the only place a claim
+ * added to every card at once becomes visible.
+ */
+console.log('\nWhat today\'s cards display');
+
+const GOLDEN_PAGE = path.join(__dirname, 'golden', 'page.json');
+
+/* Every catalog row at one canonical load, then the axes that change what the
+   page *says* rather than what it computes, on one card. Named, so a diff names
+   the case that moved. Deliberately not the absent-constants probe grid: that
+   one exists to vary everything, and a golden that wide would be updated so
+   often nobody would read the diff. */
+const goldenCases = () => {
+  const dense8B = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
+  const cases = Object.keys(GPU_TABLE).sort().map(slug =>
+    [`${slug} — 8B bf16, 16 at 8K`, asState(GPU_TABLE[slug], 1, dense8B)]);
+  const h = GPU_TABLE['h100-80'], t4 = GPU_TABLE['t4-16'];
+  return cases.concat([
+    ['h100-80 x8 NVLink — 70B bf16', asState(h, 8, { params: 70, layers: 80 })],
+    ['h100-80 x8 PCIe — 70B bf16, the fabric note',
+     asState(h, 8, { params: 70, layers: 80, hasNVLink: false })],
+    ['h100-80 x16 PCIe — past one NVLink domain, so the heuristic caveat',
+     asState(h, 16, { params: 70, layers: 80, hasNVLink: false })],
+    ['h100-80 x1 — 70B bf16 does not fit, so the verdict and the board advice',
+     asState(h, 1, { params: 70, layers: 80 })],
+    ['h100-80 x2 — 30B MoE, the shared-expert note',
+     asState(h, 2, { ...dense8B, params: 30, layers: 48, activePercent: 10, sharedExperts: 1 })],
+    ['h100-80 x2 — 26B sliding window', asState(h, 2, { ...dense8B, params: 26, layers: 30,
+      headDim: 256, activePercent: 15, attnMode: 'swa', swaWindow: 1024, swaLocalLayers: 25 })],
+    ['h100-80 x2 — 671B MLA', asState(h, 2, { ...dense8B, params: 671, layers: 61, kvHeads: 128,
+      headDim: 56, activePercent: 5, sharedExperts: 1, attnMode: 'mla', mlaLatentDim: 576 })],
+    ['h100-80 x1 — fp8 weights on silicon that has the tensor cores',
+     asState(h, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+    ['t4-16 x1 — fp8 weights on silicon that does not, so the caveat',
+     asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+    ['h100-80 x1 — 256 at 1K, so the KV queue warning',
+     asState(h, 1, { ...dense8B, contextLength: 1024, concurrency: 256 })],
+    ['h100-80 x1 — a 32K context behind an 8K cached prefix',
+     asState(h, 1, { ...dense8B, contextLength: 32768, concurrency: 4,
+                     sharedPrefix: 8192, prefixCaching: true })],
+    ['h100-80 x1 — GGUF weights, which renderCommand branches on',
+     asState(h, 1, { ...dense8B, bytesPerParam: 0.63, quantMethod: 'gguf' })],
+    ['h100-80 x1 — a model imported by id rather than named by a preset',
+     asState(h, 1, { ...dense8B, hfModelId: 'org/imported-8b' })],
+    /* Hardware with no measured constants. Synthetic, because no catalog row is
+       like this until the AMD rows land — and that is the point: what the page
+       says instead of a figure is as much "what it displays" as the figure was,
+       and the with/without comparisons cannot pin it, since it is the very thing
+       they are comparing. A gauge with no text drawn on this side is invisible
+       to them and visible here. */
+    ['(no constants) h100-80 x1 — 8B bf16, the reason in place of the figures',
+     asState({ ...h, perfKey: 'no-such-key' }, 1, dense8B)],
+    ['(no constants) h100-80 x8 PCIe — 70B bf16, past one domain',
+     asState({ ...h, perfKey: 'no-such-key' }, 8,
+             { params: 70, layers: 80, kvHeads: 8, headDim: 128, activePercent: 100,
+               hasNVLink: false })],
+    ['(no constants) t4-16 x1 — fp8 on silicon without the tensor cores',
+     asState({ ...t4, perfKey: 'no-such-key' }, 1,
+             { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+  ]);
+};
+
+/* Object keys in source order would make the golden depend on the order the
+   renderers happened to write their elements in, which is not something this
+   file should pin. */
+const stable = (v) => Array.isArray(v) ? v.map(stable)
+  : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])]))
+    : v;
+
+const captureGolden = () => stable(Object.fromEntries(goldenCases().map(([name, st]) => {
+  const s = renderEverything(st);
+  return [name, { html: s.html, written: s.written, props: s.props }];
+})));
+
+test('every card still displays exactly what the golden records', () => {
+  const now = captureGolden();
+  if (process.env.UPDATE_GOLDEN) {
+    fs.writeFileSync(GOLDEN_PAGE, JSON.stringify(now, null, 1) + '\n');
+    console.log(`       (rewrote ${path.relative(ROOT, GOLDEN_PAGE)} — read the diff)`);
+    return;
+  }
+  assert.ok(fs.existsSync(GOLDEN_PAGE),
+    `${path.relative(ROOT, GOLDEN_PAGE)} is missing — UPDATE_GOLDEN=1 writes it`);
+  const golden = JSON.parse(fs.readFileSync(GOLDEN_PAGE, 'utf8'));
+
+  /* Report what moved, not that something did: a golden whose failure says only
+     "not equal" is a golden nobody updates honestly. */
+  const moved = [];
+  const walk = (a, b, trail) => {
+    if (JSON.stringify(a) === JSON.stringify(b)) return;
+    const aObj = a && typeof a === 'object' && !Array.isArray(a);
+    const bObj = b && typeof b === 'object' && !Array.isArray(b);
+    if (aObj && bObj) {
+      for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])])
+        walk(a[k], b[k], trail.concat(k));
+      return;
+    }
+    moved.push({ at: trail.join(' / '), was: a, now: b });
+  };
+  walk(golden, now, []);
+  if (!moved.length) return;
+  const shown = moved.slice(0, 6).map(({ at, was, now: n }) =>
+    `  ${at}\n    was: ${was === undefined ? '(absent)' : JSON.stringify(String(was)).slice(0, 220)}` +
+    `\n    now: ${n === undefined ? '(absent)' : JSON.stringify(String(n)).slice(0, 220)}`).join('\n');
+  assert.fail(`${moved.length} recorded surface(s) changed. If every one of these was ` +
+    `meant, UPDATE_GOLDEN=1 node tests/model.test.js and commit the diff.\n${shown}` +
+    (moved.length > 6 ? `\n  ... and ${moved.length - 6} more` : ''));
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
