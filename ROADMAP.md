@@ -90,6 +90,18 @@ command and cost figures are unaffected, and its throughput reads as not modelle
 the reason, on every surface including the PDF. No shipped number moved — every row
 today names the constants it was already computed with.
 
+### The documents say what the tool shows — shipped, not yet released
+
+Every display test compared a card with performance constants against the same card
+without, and held the difference to the throughput figures. That catches a claim added
+to one of them and is blind to a claim added to both, so a sentence invented and shown
+on *every* card passed the whole suite — as did an extra line in every PDF's notes.
+
+What the page renders and what the PDF emits is now recorded and compared against: a
+card cannot gain a figure, a caveat or a reassurance without the change showing up. It
+records what a reader sees rather than the markup carrying it, so renaming a class costs
+nothing while a reworded label costs a review.
+
 ### AMD / ROCm — researched, not yet built
 
 One change lands first:
