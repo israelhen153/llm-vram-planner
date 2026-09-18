@@ -3513,9 +3513,38 @@ const stable = (v) => Array.isArray(v) ? v.map(stable)
     ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])]))
     : v;
 
+/* What a reader takes off a surface, rather than the markup that carries it.
+   Tag names, nesting and class names are dropped: no reader sees them, and
+   renaming a class is the commonest change there is — charging a full golden
+   update for it teaches people to regenerate without reading the diff, which
+   is the one way this test can fail silently.
+   Attribute *values* are kept and sorted, because that is where a figure hides
+   when it has no text: a bar's width, a meter's value, an aria-valuenow, a
+   title, an href. Sorted, so reordering two attributes is not a change. */
+const readerView = (markup) => {
+  const raw = String(markup ?? '');
+  /* A style attribute is a list, not a string: `width:40%;background:red` and
+     `background:red;width:40%` style the same box. Sorted declaration by
+     declaration so reordering them is not a change, while every value — a bar's
+     width among them — is still recorded. */
+  const normalise = (name, value) => name.toLowerCase() !== 'style' ? value
+    : value.split(';').map(d => d.trim()).filter(Boolean).sort().join(';');
+  const attrs = [...raw.matchAll(/\s([a-zA-Z][\w-]*)="([^"]*)"/g)]
+    .filter(([, name]) => name.toLowerCase() !== 'class')
+    .map(([, name, value]) => `${name}=${normalise(name, value)}`).sort();
+  const text = raw
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ').trim();
+  return attrs.length ? { text, attrs } : text;
+};
+
 const captureGolden = () => stable(Object.fromEntries(goldenCases().map(([name, st]) => {
   const s = renderEverything(st);
-  return [name, { html: s.html, written: s.written, props: s.props }];
+  const view = (rec) => Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, readerView(v)]));
+  /* props holds values that were never markup — hidden, style.display, a data-*
+     — so they are recorded as they were set, not run through the tag stripper. */
+  return [name, { shows: view(s.html), text: view(s.written), props: s.props }];
 })));
 
 /* The golden is only as good as what it renders, and its case list is a literal.

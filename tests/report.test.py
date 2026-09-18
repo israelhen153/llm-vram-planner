@@ -2227,13 +2227,37 @@ def golden_cases():
     return cases
 
 
+GOLDEN_ATTR = re.compile(r'\s([a-zA-Z][\w-]*)="([^"]*)"')
+GOLDEN_TAG = re.compile(r"<[^>]*>")
+
+
+def reader_view(raw):
+    """What a reader takes off a string, rather than the markup carrying it.
+
+    The same rule tests/model.test.js applies to the page, for the same reason:
+    reportlab's own markup (<b>, <font>, <br/>) is not shown to anyone, and
+    charging a full golden update for touching it teaches people to regenerate
+    without reading the diff — the one way this test can fail silently.
+
+    Attribute values are kept and sorted, because a figure with no text hides in
+    one; `class` is dropped, because no reader sees a class name."""
+    text = str(raw)
+    attrs = sorted(f"{name}={value}" for name, value in GOLDEN_ATTR.findall(text)
+                   if name.lower() != "class")
+    body = GOLDEN_TAG.sub(" ", text)
+    for entity, ch in (("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")):
+        body = body.replace(entity, ch)
+    body = re.sub(r"\s+", " ", body).strip()
+    return {"text": body, "attrs": attrs} if attrs else body
+
+
 def capture_golden():
     out = {}
     for label, cfg in golden_cases():
         strings = story_strings(cfg)
         for rx, placeholder in golden_clocks():
             strings = [rx.sub(placeholder, s) for s in strings]
-        out[label] = strings
+        out[label] = [reader_view(s) for s in strings]
     return out
 
 
