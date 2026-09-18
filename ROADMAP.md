@@ -80,15 +80,21 @@ The README and this roadmap were corrected against the code, and tests now fail 
 the counts and constants they quote drift from the source. The share images are
 generated from the tool rather than drawn, and a test fails when they stop matching it.
 
+### Unmodelled hardware says so — shipped, not yet released
+
+A card without performance constants of its own would silently borrow NVIDIA's, and the
+AMD cards would have been the first. Every catalog row now names the constants its
+silicon was measured with, and the model looks them up by that name rather than by who
+made the card. A row whose name has no entry gets no constants at all: its VRAM, fit,
+command and cost figures are unaffected, and its throughput reads as not modelled, with
+the reason, on every surface including the PDF. No shipped number moved — every row
+today names the constants it was already computed with.
+
 ### AMD / ROCm — researched, not yet built
 
-Two changes land first:
+One change lands first:
 
-1. **Unmodelled hardware says so.** A card without performance constants of its own
-   would silently borrow NVIDIA's, and the AMD cards would have been the first. After
-   this change its VRAM, fit, command and cost figures are unaffected, and its
-   throughput reads as not modelled, with the reason.
-2. **Prices name their source.** Each price shows the provider, SKU, region and date it
+1. **Prices name their source.** Each price shows the provider, SKU, region and date it
    was read, or says that its source is not recorded, and prices that have drifted move
    to current published rates. No row presents one number as three providers' price.
 
