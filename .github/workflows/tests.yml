@@ -1,0 +1,59 @@
+# Run the suite on every pull request, and again on master after the merge.
+#
+# Why both: a pull request is tested against its own head, so two branches that
+# each pass alone can still break master together — one adds a field, the other
+# adds a builder that does not carry it, and neither PR ever sees the other.
+# The push run is what notices that, and it is the reason this job exists at all.
+#
+# Until this existed the suite ran in CI only inside the price-refresh job, on a
+# schedule. That is how a missing reportlab reached master in the first place:
+# the suite had quietly needed it for some time, every local machine had it
+# installed for PDFs, and the first clean runner to try was a scheduled job
+# nobody was watching. See #13.
+name: Tests
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  # Per branch, and a new push supersedes the run it interrupts. Master is keyed
+  # separately from the PR that merged into it, so a merge never cancels its own
+  # post-merge run.
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read # this job only reads the tree; it opens and pushes nothing
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install reportlab
+        run: pip install reportlab
+        # The only third-party package the suite needs. tests/report.test.py
+        # imports generate_report.py as a real module and that module imports
+        # reportlab at the top, so the suite exits before its first assertion
+        # without it. Everything else the tests touch is the standard library:
+        # tests/assets.test.py reads PNG headers with struct rather than pillow,
+        # and tools/price_check.py uses urllib, so no network client is needed
+        # here either — nothing in this job reaches the internet.
+
+      - name: Run the full suite
+        run: ./tests/run.sh
+        # Stops at the first failing suite, so a failure early hides later ones.
+        # That is tests/run.sh's own behaviour and is deliberate; the log names
+        # which suite stopped it.
