@@ -3518,6 +3518,41 @@ const captureGolden = () => stable(Object.fromEntries(goldenCases().map(([name, 
   return [name, { html: s.html, written: s.written, props: s.props }];
 })));
 
+/* The golden is only as good as what it renders, and its case list is a literal.
+   Every other literal list in this file that decides coverage is checked against
+   what the tool actually ships — the probe grid is, the renderer list is — so
+   this one is too. Derived from the cases themselves, never restated. */
+test('the golden records every catalog row, and the shapes that change what the page says', () => {
+  const cases = goldenCases();
+  const states = cases.map(([, st]) => st);
+  const named = cases.map(([name]) => name);
+  const missing = Object.keys(GPU_TABLE).filter(slug => !named.some(n => n.startsWith(`${slug} `)));
+  assert.deepStrictEqual(missing, [], `the golden stopped recording catalog rows: ${missing}`);
+  const modelled = st => computeInference(st).throughputModelled;
+  const shapes = {
+    'a card with constants': sts => sts.some(modelled),
+    'a card with none': sts => sts.some(st => !modelled(st)),
+    'one board': sts => sts.some(st => st.gpuCount === 1),
+    'past one NVLink domain': sts => sts.some(st => st.gpuCount * (st.gpuDevices || 1) > 8),
+    'PCIe': sts => sts.some(st => !st.hasNVLink),
+    'a model that does not fit': sts => sts.some(st => !computeInference(st).fits),
+    'a mixture of experts': sts => sts.some(st => st.activePercent < 100),
+    'sliding-window attention': sts => sts.some(st => st.attnMode === 'swa'),
+    'MLA': sts => sts.some(st => st.attnMode === 'mla'),
+    'fp8 weights on silicon with the tensor cores': sts =>
+      sts.some(st => st.quantMethod === 'fp8' && st.gpuFp8),
+    'fp8 weights on silicon without them': sts =>
+      sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
+    'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
+    'a shared prefix': sts => sts.some(st => st.sharedPrefix > 0),
+    'a batch the KV cache cannot hold': sts =>
+      sts.some(st => computeInference(st).batchLimitedByKV),
+    'a model imported by id': sts => sts.some(st => !!st.hfModelId),
+  };
+  const gone = Object.entries(shapes).filter(([, hits]) => !hits(states)).map(([n]) => n);
+  assert.deepStrictEqual(gone, [], `the golden no longer records: ${gone.join(', ')}`);
+});
+
 test('every card still displays exactly what the golden records', () => {
   const now = captureGolden();
   if (process.env.UPDATE_GOLDEN) {

@@ -2277,6 +2277,43 @@ def check_the_report_still_says_what_the_golden_records():
         + (f"\n  ... and {len(moved) - 6} more" if len(moved) > 6 else ""))
 
 
+def check_the_golden_records_the_shapes_that_matter():
+    """The case list is a literal, and every literal in this file that decides
+    coverage is checked against what the tool ships. Derived from the cases, so
+    a case dropped from the list fails here rather than silently narrowing the
+    golden the next time someone regenerates it."""
+    cases = golden_cases()
+    cfgs = [cfg for _, cfg in cases]
+    named = [label for label, _ in cases]
+    missing = [slug for slug in gr.GPUS if not any(n.startswith(slug + " ") for n in named)]
+    assert not missing, f"the golden stopped recording catalog rows: {missing}"
+
+    def comp(cfg):
+        return gr.compute(cfg)
+
+    shapes = {
+        "a card with constants": lambda cs: any(comp(c)["throughput_modelled"] for c in cs),
+        "a card with none": lambda cs: any(not comp(c)["throughput_modelled"] for c in cs),
+        "one board": lambda cs: any(c["n_gpu"] == 1 for c in cs),
+        "past one NVLink domain": lambda cs: any(gr.device_count_for(c) > 8 for c in cs),
+        "PCIe": lambda cs: any(not c.get("nvlink") for c in cs),
+        "a model that does not fit": lambda cs: any(not comp(c)["fits"] for c in cs),
+        "fp8 weights on silicon with the tensor cores":
+            lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["caps"]["fp8"] for c in cs),
+        "fp8 weights on silicon without them":
+            lambda cs: any(c.get("quant") == "fp8" and not c["gpu"]["caps"]["fp8"] for c in cs),
+        "a batch the KV cache cannot hold":
+            lambda cs: any(comp(c)["batch_limited"] for c in cs),
+        "a model imported by id": lambda cs: any(c.get("hf_model") for c in cs),
+    }
+    gone = [name for name, hits in shapes.items() if not hits(cfgs)]
+    assert not gone, "the golden no longer records: " + ", ".join(gone)
+
+
+test("the golden records every catalog row, and the shapes that change what the report says",
+     check_the_golden_records_the_shapes_that_matter)
+
+
 test("the report still says exactly what the golden records",
      check_the_report_still_says_what_the_golden_records)
 
