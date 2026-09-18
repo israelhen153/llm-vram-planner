@@ -1317,6 +1317,12 @@ const renderHarness = (inputs = {}) => {
   });
   const cache = {};
   const document = {
+    /* The browser tab. Nothing in index.html writes it today, so this records a
+       surface that is empty — and an empty recorded surface is how a figure put
+       there later becomes visible. It is as much in front of a reader as a tile:
+       it is the window's name. */
+    get title() { return (props['(document)'] || {}).title || ''; },
+    set title(v) { (props['(document)'] = props['(document)'] || {}).title = String(v); },
     getElementById: (id) => (cache[id] = cache[id] || el(id)),
     // Executive mode is on: renderExecutiveSummary() returns immediately
     // otherwise, and this suite exists to read what it writes.
