@@ -177,6 +177,7 @@ tools/make_assets.py    Regenerates the README and social images from the tool
 tools/price_check.py    Repo-side job: re-reads published GPU prices, reports what moved
 docs/MODEL.md           Every formula, constant and limitation, explained
 docs/research/          Working notes behind catalog entries
+docs/skills/            Project knowledge Claude Code loads; run docs/skills/link.sh once
 setup.sh                Fork setup — repoints analytics at your account, or strips it
 tests/run.sh            Full suite — node, python3 and reportlab
 tests/model.test.js     VRAM, throughput and TTFT math
@@ -187,11 +188,15 @@ tests/price_check.test.py  Per-source parsing/validation: a changed page shape m
 tests/assets.test.py    The published images can still be regenerated
 tests/golden            What the cards display today, recorded — the reference
                         the with/without comparisons have nothing to compare to
+tests/sabotage          Reintroduces each fixed bug and checks the suite goes red —
+                        a green revert is a test gap, which is the point
 CONTRIBUTING.md         How to add benchmarks
 ROADMAP.md              Version plan
 ```
 
 The model is implemented twice — once in `index.html` so the tool needs no backend, once in `generate_report.py` so the PDF needs no browser. `tests/parity.test.py` diffs the two engines field by field; if you change the math in one, change it in both or the suite fails.
+
+`docs/skills/` holds notes Claude Code reads automatically — where the known traps are in this engine, and what a cold check has already missed. They live under `docs/` because they are project knowledge that goes stale when the code moves, so they are versioned with it; `.claude/` is gitignored and holds only symlinks. **After cloning, or after pulling a new one, run `docs/skills/link.sh`** — it is idempotent, and it is a no-op if you do not use Claude Code.
 
 ---
 
