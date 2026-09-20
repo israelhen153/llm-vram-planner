@@ -3617,5 +3617,38 @@ test('every card still displays exactly what the golden records', () => {
     (moved.length > 6 ? `\n  ... and ${moved.length - 6} more` : ''));
 });
 
+/* The sabotage corpus documents itself in tests/sabotage/README.md — which driver
+   covers what, and which residual risks are still open. That prose is how the next
+   cold check decides where to start, so a driver missing from it is a driver nobody
+   runs. Derived from the directory, never enumerated, for the same reason the
+   project-structure guard above is: an enumerated list is the thing that goes stale.
+
+   This guards the mechanical half only. Whether the residual-risk section is still
+   true is judgement, and no test can hold it. */
+test('the sabotage README names every driver, and no driver it does not have', () => {
+  const dir = path.join(ROOT, 'tests', 'sabotage');
+  const doc = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+  const onDisk = fs.readdirSync(dir)
+    .filter(f => /^sab.*\.(py|sh)$/.test(f))
+    .sort();
+  assert.ok(onDisk.length > 0, 'no sabotage drivers found — has the directory moved?');
+
+  const named = new Set((doc.match(/`sab[0-9a-z]*\.(?:py|sh)`/g) || [])
+    .map(s => s.replace(/`/g, '')));
+
+  const missing = onDisk.filter(f => !named.has(f));
+  assert.deepStrictEqual(missing, [],
+    `tests/sabotage/README.md does not name: ${missing.join(', ')}`);
+
+  const phantom = [...named].filter(f => !onDisk.includes(f));
+  assert.deepStrictEqual(phantom, [],
+    `tests/sabotage/README.md names drivers that do not exist: ${phantom.join(', ')}`);
+
+  /* The shared judge is what makes a driver's verdict mean anything, so its absence
+     must fail here rather than at 2am inside a check. */
+  assert.ok(fs.existsSync(path.join(dir, 'suites.sh')),
+    'tests/sabotage/suites.sh is missing — the drivers have nothing to judge with');
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

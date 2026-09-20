@@ -196,6 +196,8 @@ ROADMAP.md              Version plan
 
 The model is implemented twice — once in `index.html` so the tool needs no backend, once in `generate_report.py` so the PDF needs no browser. `tests/parity.test.py` diffs the two engines field by field; if you change the math in one, change it in both or the suite fails.
 
+`docs/skills/` holds notes Claude Code reads automatically — where the known traps are in this engine, and what a cold check has already missed. They live under `docs/` because they are project knowledge that goes stale when the code moves, so they are versioned with it; `.claude/` is gitignored and holds only symlinks. **After cloning, or after pulling a new one, run `docs/skills/link.sh`** — it is idempotent, and it is a no-op if you do not use Claude Code.
+
 ---
 
 MIT License · Built by an engineer who got tired of OOM crashes.
