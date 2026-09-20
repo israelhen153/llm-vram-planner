@@ -12,6 +12,13 @@ cd "$(git -C "$HERE" rev-parse --show-toplevel)"
 
 [ -x "$HERE/suites.sh" ] || { echo "missing $HERE/suites.sh — cannot judge anything" >&2; exit 2; }
 
+# Same reason the Python drivers prove a green baseline: a suite already red for an
+# unrelated reason makes every sabotage read as caught, silently.
+if "$HERE/suites.sh" "baseline (no sabotage applied)" 1 2>&1 | grep -q 'RED'; then
+  echo "refusing to judge: a suite is already red on the unmodified tree" >&2
+  exit 2
+fi
+
 caught=0; survived=0
 for slug in l40s-48 a100-40; do
   name="M13/M14 $slug.perfKey = 'nvdia', synced into both engines"

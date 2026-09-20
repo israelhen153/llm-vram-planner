@@ -3648,6 +3648,18 @@ test('the sabotage README names every driver, and no driver it does not have', (
      must fail here rather than at 2am inside a check. */
   assert.ok(fs.existsSync(path.join(dir, 'suites.sh')),
     'tests/sabotage/suites.sh is missing — the drivers have nothing to judge with');
+
+  /* A driver judges a sabotage by a suite going red. One already red for an unrelated
+     reason makes every sabotage read as caught, silently, and a whole run is then 269
+     false catches that look exactly like real ones. Every driver must refuse to judge
+     against a red baseline — and this is derived from the directory rather than a list,
+     because the first attempt at this fix keyed off a string and missed two drivers. */
+  const unguarded = onDisk.filter(f => {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    return !/require_green_baseline|already red on the unmodified/.test(src);
+  });
+  assert.deepStrictEqual(unguarded, [],
+    `these drivers would judge against a red baseline: ${unguarded.join(', ')}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
