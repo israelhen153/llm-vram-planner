@@ -23,4 +23,7 @@ python3 tests/price_check.test.py
 echo "== published images (tools/make_assets.py) =="
 python3 tests/assets.test.py
 
+echo "== benchmark coverage (benchmarks/data.json) =="
+python3 tests/coverage.test.py
+
 echo "All suites passed."

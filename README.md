@@ -186,6 +186,7 @@ tests/report.test.py    The PDF generator and the text it emits
 tests/sync.test.py      Generated blocks round-trip and cannot be poisoned
 tests/price_check.test.py  Per-source parsing/validation: a changed page shape must abort, not misfire
 tests/assets.test.py    The published images can still be regenerated
+tests/coverage.test.py  What the benchmark dataset actually covers, and that it stops shrinking
 tests/golden            What the cards display today, recorded — the reference
                         the with/without comparisons have nothing to compare to
 tests/sabotage          Reintroduces each fixed bug and checks the suite goes red —
