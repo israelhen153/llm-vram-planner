@@ -19,7 +19,9 @@ if [ "$#" -gt 0 ]; then
 else
   # Derived, not enumerated: a driver added later is picked up without editing
   # this file, which is how the round-2 list went stale the first time.
-  mapfile -t drivers < <(cd "$HERE" && ls sab*.py | sed 's/\.py$//' | sort -V)
+  # Both extensions — the first version of this globbed *.py only and silently
+  # skipped sab3.sh, which is the same failure it was written to prevent.
+  mapfile -t drivers < <(cd "$HERE" && ls sab*.py sab*.sh 2>/dev/null | sed 's/\.\(py\|sh\)$//' | sort -V)
 fi
 
 # The drivers restore with `git checkout --`, which restores the index rather
@@ -35,7 +37,7 @@ fail=0
 for d in "${drivers[@]}"; do
   log="$LOGDIR/$d.log"
   printf '%-10s ' "$d"
-  python3 "$HERE/$d.py" > "$log" 2>&1; rc=$?
+  if [ -f "$HERE/$d.py" ]; then "$HERE/$d.py" > "$log" 2>&1; else bash "$HERE/$d.sh" > "$log" 2>&1; fi; rc=$?
   echo "driver exit $rc" >> "$log"
   # Two output shapes, because not every driver uses sab.py's summary: the shared
   # machinery prints "N caught, M survived", while a single-sabotage driver prints
