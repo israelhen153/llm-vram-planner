@@ -3,6 +3,7 @@
 from a DOM node the JS harness stubs to empty), a leak gated on a selected
 preset (probes never select one), and stdout from generate()."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import IDX, GR, JS_EXEC_UNKNOWN, PY_EXPLAIN

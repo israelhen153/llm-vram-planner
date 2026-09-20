@@ -2,6 +2,7 @@
 """Second batch: leaks the suites' regexes may not see, and the benchmark panel
 drawn for a card without constants. Same machinery as sab.py."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import IDX, GR, JS_EXEC_UNKNOWN, JS_TP_TILE, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, PY_NOTMOD_ROW, PY_EXPLAIN

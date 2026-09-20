@@ -2,6 +2,7 @@
 """Leaks conditioned on state axes the no-constants probes never vary, and a
 figure in a reportlab attribute the story spy never harvests."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import IDX, GR, JS_TP_TILE, JS_BADGE, PY_EXPLAIN, PY_NOTMOD_ROW
