@@ -69,6 +69,33 @@ Equally: every probe ran at `devices: 2` while every catalog row is `devices: 1`
 leak gated on single-chip cards until round 2 found it. Derive probe parameters from
 `data/gpus.json`, not from whichever fixture was convenient.
 
+## compare/ — proving a change moved nothing
+
+The drivers ask *would the suite notice if the bug came back*. `compare/` asks the other
+question: **did this change move any number it was not supposed to move?**
+
+```
+node    tests/sabotage/compare/nochange.js  [base-ref]
+python3 tests/sabotage/compare/nochange.py  [base-ref] [stride] [pdf_stride]
+```
+
+Both compare the working tree against `base-ref` (default `master`): the JS engine over
+every catalog row and a grid of states, the Python engine over `compute()`, the command,
+the advice, the PDF's story strings and real PDF bytes with the clock pinned, plus
+`from_json` and `interactive_mode`. A commit that is meant to add rows without touching
+existing figures should print zeros everywhere.
+
+Both sides come from **git**, not from checked-in copies. The originals loaded 475 KB of
+snapshotted engines, which go stale the moment either side moves — and a comparison against
+a stale "master" reports zero differences for the wrong reason.
+
+**No field is exempt.** The originals excused `perfKey`, because the commit they were
+written for was the one adding it. That exemption was asymmetric, so it reported five false
+differences as soon as both sides had the field — and it would have *hidden* a real
+`perfKey` change in any later commit. The AMD rows are exactly such a commit: their keys are
+not `nvidia`, and the old check asserted they would be. When a change legitimately adds a
+field, read the diff this prints rather than silencing it.
+
 ## Accepted residual risk
 
 Hardening stopped after round 3. These were accepted then and are **still open**:
