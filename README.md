@@ -177,6 +177,7 @@ tools/make_assets.py    Regenerates the README and social images from the tool
 tools/price_check.py    Repo-side job: re-reads published GPU prices, reports what moved
 docs/MODEL.md           Every formula, constant and limitation, explained
 docs/research/          Working notes behind catalog entries
+docs/skills/            Project knowledge Claude Code loads; run docs/skills/link.sh once
 setup.sh                Fork setup — repoints analytics at your account, or strips it
 tests/run.sh            Full suite — node, python3 and reportlab
 tests/model.test.js     VRAM, throughput and TTFT math
