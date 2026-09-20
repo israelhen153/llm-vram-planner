@@ -187,6 +187,8 @@ tests/price_check.test.py  Per-source parsing/validation: a changed page shape m
 tests/assets.test.py    The published images can still be regenerated
 tests/golden            What the cards display today, recorded — the reference
                         the with/without comparisons have nothing to compare to
+tests/sabotage          Reintroduces each fixed bug and checks the suite goes red —
+                        a green revert is a test gap, which is the point
 CONTRIBUTING.md         How to add benchmarks
 ROADMAP.md              Version plan
 ```
