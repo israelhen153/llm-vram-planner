@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Round 3: attacks on the assumptions behind the 5f8e581 rules."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import (IDX, GR, JS_TP_TILE, JS_TP_RETURN, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_NOTES_UNKNOWN,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Attacks on the new tests at 416a42e. Same machinery as sab.py."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import (IDX, GR, JS_TP_TILE, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, JS_NOTES_UNKNOWN,

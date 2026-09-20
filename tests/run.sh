@@ -5,6 +5,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# First, deliberately. This one reports what the rest of the suite is verifying, and
+# run.sh is `set -e`: last, it printed only when everything else already passed, which
+# is exactly when nobody needs telling.
+echo "== benchmark coverage (benchmarks/data.json) =="
+python3 tests/coverage.test.py
+
 echo "== model math (index.html) =="
 node tests/model.test.js
 
@@ -22,8 +28,5 @@ python3 tests/price_check.test.py
 
 echo "== published images (tools/make_assets.py) =="
 python3 tests/assets.test.py
-
-echo "== benchmark coverage (benchmarks/data.json) =="
-python3 tests/coverage.test.py
 
 echo "All suites passed."
