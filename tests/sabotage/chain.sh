@@ -77,4 +77,8 @@ if [ -n "$(git status --porcelain)" ]; then
   git status --short >&2
   exit 1
 fi
+# Belt and braces: a driver run under an older copy of sab.py, or invoked directly,
+# can still leave one behind.
+find "$HERE" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+
 exit $fail

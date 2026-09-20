@@ -2,6 +2,7 @@
 """W11 again with the link on a word the reason-piece filter does not match on:
 was the href read, or did the <a> merely split 'do not transfer' in the raw markup?"""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import IDX, GR, JS_UNMODELLED_NOTE

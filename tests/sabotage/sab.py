@@ -7,6 +7,13 @@ sabotage, and restores every touched file with `git checkout --`.
 Usage: python3 tests/sabotage/sab.py [name-substring ...]   (no args = all)
 """
 import os, re, subprocess, sys
+
+# No __pycache__. The drivers import each other, so a run used to leave one behind;
+# it is gitignored, which means git cannot remove the directory on a branch switch,
+# which leaves an unlisted tests/sabotage behind and turns the project-structure
+# guard red on a branch that has nothing to do with this. It has cost two people a
+# confusing red suite, so it stops being created.
+sys.dont_write_bytecode = True
 # The repo root, however deep this file is filed. Asking git rather than counting
 # "..", because counting is what breaks silently when this directory moves: the
 # sabotages would then be applied to whatever tree the wrong path happens to name.

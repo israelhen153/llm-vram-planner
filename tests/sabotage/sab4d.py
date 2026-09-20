@@ -4,6 +4,7 @@ figures are moved. Give the max-batch card an invisible dependency on one
 (a trailing space keyed on computeBound), then withhold the card for the
 unknown card."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import IDX, GR, JS_TP_RETURN

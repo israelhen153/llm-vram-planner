@@ -3,6 +3,7 @@
 inside a MAY_DIFFER element (so it is 'text the card with constants shows'),
 and a figure carried only in an href."""
 import os, sys
+sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from sab import IDX, GR, JS_TP_TILE, JS_UNMODELLED_NOTE

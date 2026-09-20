@@ -3660,6 +3660,18 @@ test('the sabotage README names every driver, and no driver it does not have', (
   });
   assert.deepStrictEqual(unguarded, [],
     `these drivers would judge against a red baseline: ${unguarded.join(', ')}`);
+
+  /* The drivers import each other. A run that leaves __pycache__ behind leaves a
+     gitignored directory git cannot remove on a branch switch, which strands an
+     unlisted tests/sabotage and turns the guard above red on a branch that has
+     nothing to do with this work. It cost two people a confusing red suite before
+     it was fixed, so the fix is pinned rather than remembered. */
+  const importers = onDisk.filter(f => f.endsWith('.py'))
+    .filter(f => /^import\s|^from\s/m.test(fs.readFileSync(path.join(dir, f), 'utf8')));
+  const writesBytecode = importers.filter(f =>
+    !/dont_write_bytecode\s*=\s*True/.test(fs.readFileSync(path.join(dir, f), 'utf8')));
+  assert.deepStrictEqual(writesBytecode, [],
+    `these drivers would leave __pycache__ behind: ${writesBytecode.join(', ')}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
