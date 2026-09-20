@@ -157,6 +157,33 @@ asserts every key resolves to a catalog row.
    - Driver version (`nvidia-smi`)
    - Any relevant context (PCIe vs SXM, cooling, etc.)
 
+## How a change reaches master
+
+`master` is protected. Nothing lands on it except through a pull request whose tests pass,
+and the rule applies to the repository owner too — a rule that exempts the person most
+likely to be in a hurry is decoration.
+
+What is enforced, as of 2026-09-20:
+
+| Rule | Effect |
+|---|---|
+| Pull request required (0 approvals) | No direct pushes, including the owner's. Zero approvals because a solo maintainer cannot approve their own PR |
+| Status check `suite` must pass | The full `./tests/run.sh`, run by `.github/workflows/tests.yml` |
+| Branch must be up to date with master | Your branch must contain master's tip, so CI runs against the **combined** result |
+| Force pushes and deletion blocked | Master's history cannot be rewritten or removed |
+| Merged branches auto-delete | Keeps the branch list meaningful |
+
+**Why the up-to-date rule is the one that matters.** A pull request is tested against its own
+head. Two branches that each pass alone can still break master together — one adds a field,
+the other adds a builder that does not carry it, and neither PR ever sees the other. This
+repository has the shape that invites it: the model is implemented twice, four hand-built
+state builders must mirror `readInputState()`, and `tests/golden/` pins what every card
+displays. Requiring the branch to be current forces master's tip into it and re-runs the
+suite against the combination, which is the only run that can see the collision.
+
+The practical cost: when master moves, merge it into your branch and let CI run again before
+merging. That is the friction doing its job.
+
 ## Other contributions
 
 - **Bug reports**: [open an issue](https://github.com/israelhen153/llm-vram-planner/issues) with steps to reproduce
