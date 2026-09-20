@@ -21,7 +21,16 @@ else
   # this file, which is how the round-2 list went stale the first time.
   # Both extensions — the first version of this globbed *.py only and silently
   # skipped sab3.sh, which is the same failure it was written to prevent.
-  mapfile -t drivers < <(cd "$HERE" && ls sab*.py sab*.sh 2>/dev/null | sed 's/\.\(py\|sh\)$//' | sort -V)
+  mapfile -t drivers < <(cd "$HERE" && ls sab*.py sab*.sh 2>/dev/null | sed 's/\.\(py\|sh\)$//' | sort -V -u)
+  # A .py and a .sh sharing a basename collapse to one entry here and the dispatch
+  # below always picks .py, so the .sh would be discovered and never executed —
+  # silently, which is the failure this discovery exists to prevent. Refuse instead.
+  for d in "${drivers[@]}"; do
+    if [ -f "$HERE/$d.py" ] && [ -f "$HERE/$d.sh" ]; then
+      echo "refusing to run: $d.py and $d.sh both exist — one would never execute" >&2
+      exit 1
+    fi
+  done
 fi
 
 # The drivers restore with `git checkout --`, which restores the index rather
@@ -46,6 +55,14 @@ for d in "${drivers[@]}"; do
   # false alarm that teaches people to ignore the runner.
   summary="$(grep -oE '[0-9]+ caught, [0-9]+ survived' "$log" | tail -1)"
   survivors="$(grep -c -- '<-- SURVIVED' "$log")"
+  # Between drivers, not just at the ends. Every driver restores with a blanket
+  # `git checkout --` over the engine files, so a driver that fails to restore is
+  # silently cleaned up by the next one and the final check sees a clean tree.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "$d left the tree dirty -> $log"; git status --short >&2
+    git checkout -- . 2>/dev/null
+    fail=1; continue
+  fi
   if [ "$rc" -ne 0 ]; then
     echo "driver errored (exit $rc) -> $log"; fail=1
   elif [ "$survivors" -gt 0 ] || { [ -n "$summary" ] && ! grep -q '0 survived' <<<"$summary"; }; then

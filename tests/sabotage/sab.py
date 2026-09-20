@@ -34,6 +34,19 @@ def run_suites():
     return res
 
 
+def require_green_baseline():
+    """A sabotage is judged by a suite going red. If a suite is ALREADY red for an
+    unrelated reason — a flaky test, a missing dependency, an unrelated regression in
+    the same commit — then every sabotage in the run reads as caught, with no warning
+    and no way to tell it from a genuine catch. The run is worthless and looks perfect.
+
+    So prove the tree judges green before judging anything against it."""
+    red = [k for k, v in run_suites().items() if v[0] != 0]
+    if red:
+        sys.exit(f"refusing to judge: {', '.join(red)} already red on the unmodified "
+                 f"tree, so every sabotage would read as caught")
+
+
 def apply(edits):
     """edits: list of (file, old, new, count). Returns the files touched."""
     touched = []
@@ -359,12 +372,14 @@ if __name__ == "__main__":
     else:
         names = [n for n in S if not pats or any(p.lower() in n.lower() for p in pats)]
     print(f"{len(names)} sabotage(s)")
-    survived = []
+    require_green_baseline()
+    survived, unapplied = [], []
     for name in names:
         try:
             touched = apply(S[name])
         except Exception as e:
             print(f"  !! {name}: could not apply: {e}")
+            unapplied.append(name)
             restore([IDX, GR, SY])
             continue
         try:
@@ -381,6 +396,12 @@ if __name__ == "__main__":
                 first = (fails or errs or ["(no FAIL line)"])[0]
                 bits.append(f"{k}[{tally[1] if tally else '?'} failed: {first[:110]}]")
             print(f"  red    {name}\n         " + "\n         ".join(bits))
-    print(f"\n{len(names) - len(survived)} caught, {len(survived)} survived")
+    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
+          f"{len(survived)} survived"
+          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
     for s in survived:
         print("  SURVIVED: " + s)
+    if unapplied:
+        # A sabotage that never reached the tree judged nothing. Counting it as
+        # caught is how a drifted driver reports a clean run forever.
+        sys.exit(2)

@@ -21,12 +21,14 @@ S["S3 py: generate() prints 'Rough decode: ~<n> tok/s per user' to stdout for a 
 if __name__ == "__main__":
     names = list(S)
     print(f"{len(names)} sabotage(s)")
-    survived = []
+    sab.require_green_baseline()
+    survived, unapplied = [], []
     for name in names:
         try:
             touched = sab.apply(S[name])
         except Exception as e:
             print(f"  !! {name}: could not apply: {e}")
+            unapplied.append(name)
             sab.restore([IDX, GR])
             continue
         try:
@@ -43,6 +45,12 @@ if __name__ == "__main__":
                 first = (fails or errs or ["(no FAIL line)"])[0]
                 bits.append(f"{k}[{tally[1] if tally else '?'} failed: {first[:120]}]")
             print(f"  red    {name}\n         " + "\n         ".join(bits))
-    print(f"\n{len(names) - len(survived)} caught, {len(survived)} survived")
+    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
+          f"{len(survived)} survived"
+          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
     for s in survived:
         print("  SURVIVED: " + s)
+    if unapplied:
+        # A sabotage that never reached the tree judged nothing. Counting it as
+        # caught is how a drifted driver reports a clean run forever.
+        sys.exit(2)
