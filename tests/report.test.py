@@ -42,6 +42,7 @@ Checked:
 Run:  python3 tests/report.test.py
 """
 import contextlib
+from datetime import datetime
 import io
 import json
 import math
@@ -2137,6 +2138,208 @@ def check_a_card_without_constants_gets_a_real_pdf():
 
 test("a card without constants goes through the CLI builder to a real PDF",
      check_a_card_without_constants_gets_a_real_pdf)
+
+
+# ---- what today's cards put in the PDF -------------------------------------
+# The same hole tests/model.test.js closes for the page, on this side. Every
+# display check above is differential: the report with constants against the
+# same report without, held to the throughput figures. It catches a sentence
+# added to one of them and is blind to a sentence added to both — a note
+# appended for every card in the catalog reads identically on both sides, so
+# the comparison has nothing to notice.
+#
+# That is not hypothetical here: appending one line to the notes, for every
+# card, unconditionally, passes the whole suite.
+#
+# So this records what generate() actually emits today. story_strings() is the
+# spy the absent-constants checks use — the story, KeepTogether's children,
+# bullets, table cells, drawings, the header and footer callbacks, the document
+# metadata, and anything printed to either stream while the document was built.
+# If a reader can end up seeing it, it is in here.
+#
+# Deliberate change?  UPDATE_GOLDEN=1 python3 tests/report.test.py
+# then read the diff before committing it.
+print("\nWhat today's cards put in the PDF")
+
+GOLDEN_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "report.json")
+
+# Two clocks run through the document: the cover's "Generated <date> at <time>"
+# and the footer's own date. Both change with the day, so both are replaced —
+# and the replacement keeps the shape, so a document that stops dating itself
+# still fails.
+#
+# The footer's is matched as today's literal date, not as any date-shaped
+# string. A recorded price carries the date it was read (fix/cost-provenance),
+# and that is content: it belongs in the golden, and a regex for \d{4}-\d{2}-\d{2}
+# would quietly blank it. Only the clock reads as today.
+def golden_clocks():
+    today = datetime.now().strftime("%Y-%m-%d")
+    return (
+        (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated <date> at <time>"),
+        (re.compile(r"\b" + re.escape(today) + r"\b"), "<today>"),
+    )
+
+
+def golden_cases():
+    """Every catalog row at one canonical load, then the axes that change what
+    the report says rather than what it computes, then the same without
+    constants — mirroring tests/model.test.js's cases so a change that shows up
+    on one side can be looked for on the other."""
+    dense8b = dict(gr.arch_fields(gr.PRESETS["llama31-8b"]))
+    seventy = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]))
+
+    def cfg(card, boards, arch=None, **over):
+        base = dict(arch or dense8b, bpp=2, ctx=8192, conc=16, n_gpu=boards, gpu=card,
+                    nvlink=True, kv_bpp=2, vendor=card["vendor"], perfKey=card["perfKey"],
+                    hf_model=None, model_name=None, preset="llama31-8b")
+        base.update(over)
+        return base
+
+    cases = [(f"{slug} — 8B bf16, 16 at 8K", cfg(gr.GPUS[slug], 1))
+             for slug in sorted(gr.GPUS)]
+    h, t4 = gr.GPUS["h100-80"], gr.GPUS["t4-16"]
+    keyless_h, keyless_t4 = dict(h, perfKey="no-such-key"), dict(t4, perfKey="no-such-key")
+    cases += [
+        ("h100-80 x8 NVLink — 70B bf16", cfg(h, 8, seventy, preset="llama31-70b")),
+        ("h100-80 x8 PCIe — 70B bf16, the fabric note",
+         cfg(h, 8, seventy, preset="llama31-70b", nvlink=False)),
+        ("h100-80 x16 PCIe — past one NVLink domain, so the heuristic caveat",
+         cfg(h, 16, seventy, preset="llama31-70b", nvlink=False)),
+        ("h100-80 x1 — 70B bf16 does not fit, so the verdict and the board advice",
+         cfg(h, 1, seventy, preset="llama31-70b")),
+        ("h100-80 x1 — fp8 weights on silicon that has the tensor cores",
+         cfg(h, 1, bpp=1, quant="fp8")),
+        ("t4-16 x1 — fp8 weights on silicon that does not, so the caveat",
+         cfg(t4, 1, bpp=1, quant="fp8")),
+        ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
+        ("h100-80 x1 — a model imported by id rather than named by a preset",
+         cfg(h, 1, hf_model="org/imported-8b", model_name="imported-8b", preset=None)),
+        # No catalog row is keyless until the AMD rows land. What the report says
+        # in place of a figure is as much "what it emits" as the figure was, and
+        # the comparisons cannot pin it — it is the thing they are comparing.
+        ("(no constants) h100-80 x1 — 8B bf16, the reason in place of the figures",
+         cfg(keyless_h, 1)),
+        ("(no constants) h100-80 x8 PCIe — 70B bf16, past one domain",
+         cfg(keyless_h, 8, seventy, preset="llama31-70b", nvlink=False)),
+        ("(no constants) t4-16 x1 — fp8 on silicon without the tensor cores",
+         cfg(keyless_t4, 1, bpp=1, quant="fp8")),
+    ]
+    return cases
+
+
+GOLDEN_ATTR = re.compile(r'\s([a-zA-Z][\w-]*)="([^"]*)"')
+GOLDEN_TAG = re.compile(r"<[^>]*>")
+
+
+def reader_view(raw):
+    """What a reader takes off a string, rather than the markup carrying it.
+
+    The same rule tests/model.test.js applies to the page, for the same reason:
+    reportlab's own markup (<b>, <font>, <br/>) is not shown to anyone, and
+    charging a full golden update for touching it teaches people to regenerate
+    without reading the diff — the one way this test can fail silently.
+
+    Attribute values are kept and sorted, because a figure with no text hides in
+    one; `class` is dropped, because no reader sees a class name."""
+    text = str(raw)
+    attrs = sorted(f"{name}={value}" for name, value in GOLDEN_ATTR.findall(text)
+                   if name.lower() != "class")
+    body = GOLDEN_TAG.sub(" ", text)
+    for entity, ch in (("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")):
+        body = body.replace(entity, ch)
+    body = re.sub(r"\s+", " ", body).strip()
+    return {"text": body, "attrs": attrs} if attrs else body
+
+
+def capture_golden():
+    out = {}
+    for label, cfg in golden_cases():
+        strings = story_strings(cfg)
+        for rx, placeholder in golden_clocks():
+            strings = [rx.sub(placeholder, s) for s in strings]
+        out[label] = [reader_view(s) for s in strings]
+    return out
+
+
+def check_the_report_still_says_what_the_golden_records():
+    now = capture_golden()
+    if os.environ.get("UPDATE_GOLDEN"):
+        os.makedirs(os.path.dirname(GOLDEN_REPORT), exist_ok=True)
+        with open(GOLDEN_REPORT, "w", encoding="utf-8") as fh:
+            json.dump(now, fh, indent=1, ensure_ascii=False, sort_keys=True)
+            fh.write("\n")
+        print(f"       (rewrote {GOLDEN_REPORT} — read the diff)")
+        return
+    assert os.path.exists(GOLDEN_REPORT), (
+        f"{GOLDEN_REPORT} is missing — UPDATE_GOLDEN=1 python3 tests/report.test.py writes it")
+    with open(GOLDEN_REPORT, encoding="utf-8") as fh:
+        golden = json.load(fh)
+
+    # What moved, not that something did: a golden whose failure says only "not
+    # equal" is a golden nobody updates honestly.
+    moved = []
+    for label in sorted(set(golden) | set(now)):
+        was, has = golden.get(label), now.get(label)
+        if was == has:
+            continue
+        if was is None or has is None:
+            moved.append((label, "(case absent)" if was is None else "(case removed)", ""))
+            continue
+        for i in range(max(len(was), len(has))):
+            a = was[i] if i < len(was) else None
+            b = has[i] if i < len(has) else None
+            if a != b:
+                moved.append((f"{label} / string {i}",
+                              "(absent)" if a is None else a, "(absent)" if b is None else b))
+    if not moved:
+        return
+    shown = "\n".join(f"  {at}\n    was: {str(a)[:220]!r}\n    now: {str(b)[:220]!r}"
+                      for at, a, b in moved[:6])
+    raise AssertionError(
+        f"{len(moved)} recorded string(s) changed. If every one of these was meant, "
+        f"UPDATE_GOLDEN=1 python3 tests/report.test.py and commit the diff.\n{shown}"
+        + (f"\n  ... and {len(moved) - 6} more" if len(moved) > 6 else ""))
+
+
+def check_the_golden_records_the_shapes_that_matter():
+    """The case list is a literal, and every literal in this file that decides
+    coverage is checked against what the tool ships. Derived from the cases, so
+    a case dropped from the list fails here rather than silently narrowing the
+    golden the next time someone regenerates it."""
+    cases = golden_cases()
+    cfgs = [cfg for _, cfg in cases]
+    named = [label for label, _ in cases]
+    missing = [slug for slug in gr.GPUS if not any(n.startswith(slug + " ") for n in named)]
+    assert not missing, f"the golden stopped recording catalog rows: {missing}"
+
+    def comp(cfg):
+        return gr.compute(cfg)
+
+    shapes = {
+        "a card with constants": lambda cs: any(comp(c)["throughput_modelled"] for c in cs),
+        "a card with none": lambda cs: any(not comp(c)["throughput_modelled"] for c in cs),
+        "one board": lambda cs: any(c["n_gpu"] == 1 for c in cs),
+        "past one NVLink domain": lambda cs: any(gr.device_count_for(c) > 8 for c in cs),
+        "PCIe": lambda cs: any(not c.get("nvlink") for c in cs),
+        "a model that does not fit": lambda cs: any(not comp(c)["fits"] for c in cs),
+        "fp8 weights on silicon with the tensor cores":
+            lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["caps"]["fp8"] for c in cs),
+        "fp8 weights on silicon without them":
+            lambda cs: any(c.get("quant") == "fp8" and not c["gpu"]["caps"]["fp8"] for c in cs),
+        "a batch the KV cache cannot hold":
+            lambda cs: any(comp(c)["batch_limited"] for c in cs),
+        "a model imported by id": lambda cs: any(c.get("hf_model") for c in cs),
+    }
+    gone = [name for name, hits in shapes.items() if not hits(cfgs)]
+    assert not gone, "the golden no longer records: " + ", ".join(gone)
+
+
+test("the golden records every catalog row, and the shapes that change what the report says",
+     check_the_golden_records_the_shapes_that_matter)
+
+
+test("the report still says exactly what the golden records",
+     check_the_report_still_says_what_the_golden_records)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
