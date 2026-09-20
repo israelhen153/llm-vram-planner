@@ -6,8 +6,6 @@
 
 Everything targets NVIDIA datacenter and consumer GPUs with vLLM.
 
-
-
 - [x] VRAM calculator (inference + training)
 - [x] Multi-GPU with TP/DP split and topology warnings
 - [x] vLLM command generator
@@ -40,7 +38,7 @@ it, so per-device figures were optimistic above 8 devices. Fixed in v1.1 — see
 
 ## v1.1.0 — AMD, and correct above 8 GPUs
 
-Two halves. The second one is done and awaiting release.
+The correctness work is done and awaiting release. AMD is next.
 
 ### Correct above 8 GPUs — shipped, not yet released
 
@@ -57,7 +55,60 @@ cluster total by one device's capacity is circular. Mixture-of-experts is delibe
 held at the old divisor and says so on every surface. Full write-up in
 [docs/MODEL.md §4](docs/MODEL.md).
 
-### AMD / ROCm — not started
+### A throughput ceiling that holds for FP8 — shipped, not yet released
+
+The compute ceiling and time to first token were charged at 16-bit cost whatever
+precision was selected. On cards with native FP8 that understated the ceiling by half —
+real FP8 serving beat the figure labelled a ceiling — and doubled time to first token.
+Both are now charged at the precision the matrix multiplies actually run in. FP8
+computes in 8 bits and gets the speed-up. AWQ, GPTQ and GGUF dequantize to 16 bits
+before multiplying, so they get none; their gain is in memory bandwidth, which the model
+already counts. Cards that run FP8 weights without FP8 compute say so beside the figure.
+The observed range, which is re-derived from the measured runs, moved with it.
+
+### A weekly price check — shipped, not yet released
+
+Moved up from v1.2. `tools/price_check.py` reads published prices from Azure, AWS,
+Lambda, CoreWeave and Vast.ai. A weekly job runs it and opens a pull request when a
+price is confirmed or has moved. It never pushes, and any move over 40% is left for a
+person to judge. A confirmed price records the provider, SKU, region and date it was
+read. The catalog's current prices predate the check and are corrected next.
+
+### Documents and images that match the tool — shipped, not yet released
+
+The README and this roadmap were corrected against the code, and tests now fail when
+the counts and constants they quote drift from the source. The share images are
+generated from the tool rather than drawn, and a test fails when they stop matching it.
+
+### Unmodelled hardware says so — shipped, not yet released
+
+A card without performance constants of its own would silently borrow NVIDIA's, and the
+AMD cards would have been the first. Every catalog row now names the constants its
+silicon was measured with, and the model looks them up by that name rather than by who
+made the card. A row whose name has no entry gets no constants at all: its VRAM, fit,
+command and cost figures are unaffected, and its throughput reads as not modelled, with
+the reason, on every surface including the PDF. No shipped number moved — every row
+today names the constants it was already computed with.
+
+### The documents say what the tool shows — shipped, not yet released
+
+Every display test compared a card with performance constants against the same card
+without, and held the difference to the throughput figures. That catches a claim added
+to one of them and is blind to a claim added to both, so a sentence invented and shown
+on *every* card passed the whole suite — as did an extra line in every PDF's notes.
+
+What the page renders and what the PDF emits is now recorded and compared against: a
+card cannot gain a figure, a caveat or a reassurance without the change showing up. It
+records what a reader sees rather than the markup carrying it, so renaming a class costs
+nothing while a reworded label costs a review.
+
+### AMD / ROCm — researched, not yet built
+
+One change lands first:
+
+1. **Prices name their source.** Each price shows the provider, SKU, region and date it
+   was read, or says that its source is not recorded, and prices that have drifted move
+   to current published rates. No row presents one number as three providers' price.
 
 **GPUs to add:**
 - MI210 (64GB HBM2e, 1.6 TB/s)
@@ -68,12 +119,14 @@ held at the old divisor and says so on every surface. Full write-up in
 
 **What changes:**
 - GPU dropdown gets an AMD section with correct VRAM, bandwidth, pricing
-- AMD gets its own MBU/MFU constants instead of borrowing NVIDIA's
+- AMD never borrows NVIDIA's MBU/MFU constants. The published ROCm measurements are
+  not yet enough to derive constants of its own, so AMD cards ship with full VRAM, fit,
+  command and cost figures, and throughput marked as not modelled until they are
 - ROCm guidance: the `rocm/vllm` image and `HIP_VISIBLE_DEVICES`. **vLLM has no
   `--device` flag** — an earlier draft of this roadmap promised one, and it does not
   exist. Which accelerator you get is decided by the image and the environment.
 - FP8 gated off CDNA2 (MI210, MI250X); it needs CDNA3
-- Cost data for AMD GPUs (CoreWeave, Azure, Lambda pricing)
+- Cost data for AMD GPUs, each price with a named, dated source
 - Benchmark data structure already supports it — it just needs entries
 
 **What doesn't change:**
@@ -91,10 +144,11 @@ held at the old divisor and says so on every surface. Full write-up in
 ## v1.2.0 — Repo-side pipeline + catalog import
 
 Keeping the baked-in data fresh without giving the tool a runtime network dependency.
+The first piece, the weekly price check, shipped early in v1.1: it opens a PR against
+`data/gpus.json`, the file stays baked into the single HTML file, and the tool stays
+offline.
 
 **What changes:**
-- A scheduled job opens a PR against `data/gpus.json` when prices move. The file stays
-  baked into the single HTML file; the tool stays offline.
 - Catalog import, for the air-gapped "my card isn't in your list" case
 - Benchmark ingestion in CI, so contributed entries are validated on arrival
 
