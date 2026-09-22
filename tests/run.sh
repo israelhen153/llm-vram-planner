@@ -33,6 +33,9 @@ python3 tests/price_check.test.py
 echo "== CI workflows (.github/workflows) =="
 python3 tests/workflow.test.py
 
+echo "== the sabotage corpus can reach the engine (tests/sabotage/anchors.py) =="
+python3 tests/corpus.test.py
+
 echo "== published images (tools/make_assets.py) =="
 python3 tests/assets.test.py
 

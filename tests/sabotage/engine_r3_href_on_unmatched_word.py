@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""W11 again with the link on a word the reason-piece filter does not match on:
+was the href read, or did the <a> merely split 'do not transfer' in the raw markup?"""
+import os, sys
+sys.dont_write_bytecode = True   # see the note in harness.py
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import run_driver
+from anchors import INDEX_HTML, REPORT_PY, JS_UNMODELLED_NOTE
+
+JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"
+S = {"W11b js: the figure rides in an href on 'memory-bandwidth' inside the reason": [
+    (INDEX_HTML, JS_UNMODELLED_NOTE, JS_UNMODELLED_NOTE.replace("has no published memory-bandwidth or compute utilisation", f"has no published <a href=\"https://example.com/why?est=${{{JS_DECODE_ESTIMATE}}}\" style=\"color:inherit\">memory-bandwidth</a> or compute utilisation"), 1)]}
+
+if __name__ == "__main__":
+    run_driver(S)

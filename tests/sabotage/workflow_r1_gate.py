@@ -17,13 +17,13 @@ name anything. They are the reason the guard is positional and derived rather th
 a list of fields, and they are what the NEXT round should try to get past.
 """
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
+from harness import run_driver
 
 WF = ".github/workflows/price-refresh.yml"
 DELIV = "        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}"
-BODY = "      - name: Tell the PR body what the suite did\n" + DELIV
+BODY = "      - name: Tell the PR body what the suite did\n        id: body\n" + DELIV
 
 S = {
     # --- the original defects, reverted one at a time -----------------------
@@ -38,7 +38,7 @@ S = {
     "A4 pipefail dropped, so tee supplies the suite step's exit code":
         [(WF, "          set -o pipefail\n", "", 1)],
     "A5 the bot regenerates and commits the golden it is measured against":
-        [(WF, "            assets/*.png", "            assets/*.png\n            tests/golden/page.json", 1)],
+        [(WF, "            assets/\n", "            assets/\n            tests/golden/page.json\n", 1)],
 
     # --- ways the guard could be satisfied while meaning nothing ------------
     "B6 the suite step stops running the suite":
@@ -68,10 +68,10 @@ S = {
              "          fi\n\n"
              "      - name: Tell the PR body what the suite did", 1)],
     "C13 only the step that explains the red suite is gated on the suite":
-        [(WF, BODY, "      - name: Tell the PR body what the suite did\n"
+        [(WF, BODY, "      - name: Tell the PR body what the suite did\n        id: body\n"
              "        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' && steps.suite.outcome == 'success' }}", 1)],
     "C14 the same step reverted to a bare, implicitly success()-gated condition":
-        [(WF, BODY, "      - name: Tell the PR body what the suite did\n"
+        [(WF, BODY, "      - name: Tell the PR body what the suite did\n        id: body\n"
              "        if: steps.diff.outputs.changed == 'true'", 1)],
     "C15 the job-level permissions block is removed":
         [(WF, "    permissions:\n      contents: write # to push the branch the PR step opens\n"
@@ -86,32 +86,4 @@ S = {
 }
 
 if __name__ == "__main__":
-    # Same shape as every other driver on purpose — see the note in sab5c.py.
-    names = [n for n in S if not sys.argv[1:] or any(a in n for a in sys.argv[1:])]
-    print(f"{len(names)} sabotage(s)")
-    sab.require_green_baseline()
-    survived, unapplied = [], []
-    for name in names:
-        try:
-            touched = sab.apply(S[name])
-        except Exception as e:
-            print(f"  !! {name}: could not apply: {e}")
-            unapplied.append(name)
-            sab.restore([WF])
-            continue
-        try:
-            res = sab.run_suites()
-        finally:
-            sab.restore(touched)
-        red = {k: v for k, v in res.items() if v[0] != 0}
-        if not red:
-            survived.append(name)
-            print(f"  GREEN  {name}   <-- SURVIVED")
-        else:
-            for k, (rc, fails, errs, tally) in red.items():
-                print(f"  red    {name}\n         {k}[{tally[1] if tally else '?'} failed: {(fails or errs or ['?'])[0][:150]}]")
-    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
-          f"{len(survived)} survived"
-          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
-    if unapplied:
-        sys.exit(2)
+    run_driver(S)

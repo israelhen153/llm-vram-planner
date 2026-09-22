@@ -186,6 +186,7 @@ tests/report.test.py    The PDF generator and the text it emits
 tests/sync.test.py      Generated blocks round-trip and cannot be poisoned
 tests/price_check.test.py  Per-source parsing/validation: a changed page shape must abort, not misfire
 tests/workflow.test.py  The CI workflows — the price job must be able to report what it finds
+tests/corpus.test.py    The sabotage corpus can still find the engine text it attacks
 tests/assets.test.py    The published images can still be regenerated
 tests/coverage.test.py  What the benchmark dataset actually covers, and that it stops shrinking
 tests/golden            What the cards display today, recorded — the reference

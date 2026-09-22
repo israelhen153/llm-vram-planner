@@ -17,9 +17,9 @@ because an echo has no pipe. Two prior rounds' findings reinstated by
 misdirecting identity rather than by touching either rule.
 """
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
+from harness import run_driver
 
 WF = ".github/workflows/price-refresh.yml"
 
@@ -70,32 +70,4 @@ S = {
 }
 
 if __name__ == "__main__":
-    # Same shape as every other driver on purpose — see the note in sab5c.py.
-    names = [n for n in S if not sys.argv[1:] or any(a in n for a in sys.argv[1:])]
-    print(f"{len(names)} sabotage(s)")
-    sab.require_green_baseline()
-    survived, unapplied = [], []
-    for name in names:
-        try:
-            touched = sab.apply(S[name])
-        except Exception as e:
-            print(f"  !! {name}: could not apply: {e}")
-            unapplied.append(name)
-            sab.restore([WF])
-            continue
-        try:
-            res = sab.run_suites()
-        finally:
-            sab.restore(touched)
-        red = {k: v for k, v in res.items() if v[0] != 0}
-        if not red:
-            survived.append(name)
-            print(f"  GREEN  {name}   <-- SURVIVED")
-        else:
-            for k, (rc, fails, errs, tally) in red.items():
-                print(f"  red    {name}\n         {k}[{tally[1] if tally else '?'} failed: {(fails or errs or ['?'])[0][:150]}]")
-    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
-          f"{len(survived)} survived"
-          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
-    if unapplied:
-        sys.exit(2)
+    run_driver(S)
