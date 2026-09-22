@@ -49,6 +49,7 @@ fails loudly rather than silently testing nothing.
 | `sab5.py` | 3 | Attacks on the assumptions behind round 2's rules — fixed vendor, fixed key, fixed device count |
 | `sab5b.py` | 3 | A borrowed-constant estimate shown identically for both cards, and a figure carried only in an `href` |
 | `sab5c.py` | 3 | The same `href` attack on a word the reason-piece filter does not match — was the href read, or did the `<a>` merely split the raw markup? |
+| `sab7.py` | 2 | The round-1 guard's own reader and rules: a delivery condition gated on the suite in a FOLDED second line, a step respelled until the reader and its own count check both dropped it, an object filter that gates delivery while naming no step, a test run moved upstream of the gate, and `.conclusion` for `.outcome` |
 | `sab6.py` | 1 | `.github/workflows/price-refresh.yml`: the gate that left the price job able to succeed only by finding nothing, and the seven ways a cold check rebuilt it afterwards without touching a guarded field |
 
 `suites.sh` is the shared judge: it runs the suites that can rule on a sabotage and prints
