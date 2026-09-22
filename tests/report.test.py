@@ -2298,15 +2298,32 @@ GOLDEN_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden
 # and the replacement keeps the shape, so a document that stops dating itself
 # still fails.
 #
-# The footer's is matched as today's literal date, not as any date-shaped
-# string. A recorded price carries the date it was read (fix/cost-provenance),
-# and that is content: it belongs in the golden, and a regex for \d{4}-\d{2}-\d{2}
-# would quietly blank it. Only the clock reads as today.
+# The footer's used to be matched as today's literal date value (\b<today>\b)
+# rather than by where it sits — which caught the footer, but a \b word
+# boundary is satisfied just as well by a date sitting inside a longer
+# sentence, and a recorded price carries the date it was read
+# (fix/cost-provenance) *as* a sentence: "...read 2026-09-22. Specialized...".
+# The day this ran was also the day every price on the catalog was read, so
+# every one of those embedded dates got blanked into the golden too — and
+# every day after, today's clock no longer equals that recorded date, so the
+# blanking stops firing and the golden and a fresh run permanently disagree.
+# \A...\Z instead of \b...\b: the footer's date is drawn as nothing but that
+# date (see the drawRightString call it comes from), so it is the *entire*
+# captured string, never a fragment of a longer one — the one shape a
+# recorded, sentence-embedded date can never take. That is what makes this
+# "by context", not by value: it keys on the string's shape, not on whether
+# its value happens to match today.
+#
+# Both placeholders use [brackets], not <angle brackets>: reader_view() strips
+# anything matching <[^>]*> as reportlab markup (<b>, <br/>, ...), so an
+# angle-bracket placeholder inserted *before* reader_view() runs is stripped
+# right back out — "Generated <date> at <time>" golden as "Generated  at ",
+# both clocks scrubbed to invisible rather than to a readable placeholder.
 def golden_clocks():
     today = datetime.now().strftime("%Y-%m-%d")
     return (
-        (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated <date> at <time>"),
-        (re.compile(r"\b" + re.escape(today) + r"\b"), "<today>"),
+        (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated [date] at [time]"),
+        (re.compile(r"\A" + re.escape(today) + r"\Z"), "[today]"),
     )
 
 
