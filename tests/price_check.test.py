@@ -983,11 +983,31 @@ test("_needed_kinds sees every source kind actually used in SOURCE_MAP", check_n
 # fix/cost-provenance's test 5: a later hand-edit to a price without updating
 # its provenance must fail. Checked against the committed file, not a fixture,
 # because that is the one place a stale price-vs-provenance pair would
-# actually ship. within the 1% confirm floor, not exact equality: CONFIRMED
-# refreshes provenance without rewriting a price that moved less than that
+# actually ship. Not exact equality: CONFIRMED refreshes provenance without
+# rewriting a price that moved less than CONFIRM_THRESHOLD
 # (check_apply_writes_the_reading_not_the_proposed_value_as_price above pins
 # that priceSource.price is the reading, not an echo of the catalog value),
-# so the two are allowed to differ by up to CONFIRM_THRESHOLD, never more.
+# so a legitimately-confirmed row can drift from its recorded reading by a
+# little and still be exactly what it claims to be.
+#
+# Cold-check finding: using CONFIRM_THRESHOLD (1%) itself as this test's own
+# floor left a gap a hand-edit can hide in. h100-80/hyper -- the one real row
+# with any drift at all -- sits at 0.081% (12.30 vs. the recorded 12.29); the
+# cold check's sabotage moved it to 12.40 and 12.41, 0.895% and 0.976%, both
+# comfortably under a 1% floor and both a hand-edit with no fetch behind it
+# at all. A relative floor tied to CONFIRM_THRESHOLD cannot both admit
+# whatever a legitimate CONFIRMED run might someday produce (which the
+# tool's own design allows up to 1%) and reject an adversarial edit that
+# stays just under that same number -- the two are the same shape of gap by
+# construction. This halves the tolerance instead of matching it exactly:
+# still >6x the one real drift on record, so it does not fail real data, and
+# comfortably below both of the cold check's edits, which is what actually
+# matters here. It does not close the gap in principle -- a sufficiently
+# careful edit stays under any fixed relative floor -- but it closes the
+# specific one this run demonstrated, without fabricating precision this
+# file does not have about what a future legitimate CONFIRMED drift could
+# look like.
+PRICE_DRIFT_TOLERANCE = pc.CONFIRM_THRESHOLD / 2
 print("\nThe real catalog: every priceSource.price still agrees with its own row's price")
 
 def check_every_real_price_source_matches_its_own_price():
@@ -1001,14 +1021,66 @@ def check_every_real_price_source_matches_its_own_price():
             price = src["price"]
             catalog = row[tier]
             delta = abs(catalog - price) / price if price else float("inf")
-            if delta > pc.CONFIRM_THRESHOLD + 1e-9:
+            if delta > PRICE_DRIFT_TOLERANCE + 1e-9:
                 bad.append(f"{slug}/{tier}: catalog={catalog} priceSource.price={price} "
-                           f"({delta:+.1%}, past the {pc.CONFIRM_THRESHOLD:.0%} confirm floor)")
+                           f"({delta:+.2%}, past the {PRICE_DRIFT_TOLERANCE:.1%} drift floor this "
+                           f"test holds real rows to)")
     assert checked > 0, "no row in data/gpus.json carries a priceSource — nothing was actually checked"
     assert not bad, "price moved without its provenance being refreshed:\n       " + "\n       ".join(bad)
 
-test("every sourced tier's catalog price is within the confirm floor of its recorded priceSource.price",
+test("every sourced tier's catalog price is within the drift floor of its recorded priceSource.price",
      check_every_real_price_source_matches_its_own_price)
+
+
+def check_every_real_price_source_is_backed_by_an_automated_source():
+    """Cold-check finding: nothing tied priceSource's presence to SOURCE_MAP.
+    An invented priceSource on rtx6000ada-48/spot (a tier SOURCE_MAP marks
+    "manual": no automatable source exists) round-tripped as if a real fetch
+    confirmed it, and the price-drift check above passed too, since a
+    number invented to equal the catalog value trivially agrees with itself.
+    A tier with a priceSource must be one price_check.py's own SOURCE_MAP
+    says it can actually fetch — the only way it could have gotten one."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier in row.get("priceSource", {}):
+            checked += 1
+            cfg = pc.SOURCE_MAP.get(slug, {}).get(tier)
+            if not cfg or "primary" not in cfg:
+                bad.append(f"{slug}/{tier}: carries a priceSource, but SOURCE_MAP has no "
+                           f"automated source for it (manual reason: "
+                           f"{(cfg or {}).get('manual', '<no SOURCE_MAP entry at all>')!r})")
+    assert checked > 0, "no row in data/gpus.json carries a priceSource — nothing was actually checked"
+    assert not bad, "priceSource recorded for a tier with no automated source:\n       " + "\n       ".join(bad)
+
+test("every real priceSource is on a tier SOURCE_MAP actually marks automatable",
+     check_every_real_price_source_is_backed_by_an_automated_source)
+
+
+def check_every_real_price_source_field_is_non_empty():
+    """Cold-check finding: a sourced tier with an empty date rendered as
+    "... · read " on the page and crashed the PDF generator with a
+    KeyError — neither engine's crash (or silent blank) is a real check,
+    and a missing key (vs. an empty string) hits a different code path in
+    each. Every field is required and required to be a genuinely non-blank
+    string, checked directly against the data rather than however each
+    renderer happens to fail when it is not."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            for field in ("provider", "sku", "region", "date"):
+                value = src.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    bad.append(f"{slug}/{tier}.{field}: {value!r} — must be a non-empty string")
+    assert checked > 0, "no row in data/gpus.json carries a priceSource — nothing was actually checked"
+    assert not bad, "priceSource field missing or blank:\n       " + "\n       ".join(bad)
+
+test("every real priceSource's provider/sku/region/date is a non-empty string",
+     check_every_real_price_source_field_is_non_empty)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
