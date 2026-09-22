@@ -20,8 +20,8 @@ Never `git stash` — the stack is shared across worktrees.
 
 ```
 tests/sabotage/chain.sh                 # every driver, ~15 min
-tests/sabotage/chain.sh sab5 sab5b      # round 3 only, ~3 min
-python3 tests/sabotage/sab.py W11       # one sabotage by name
+tests/sabotage/chain.sh engine_r3_fixed_assumptions engine_r3_identical_estimate_and_href engine_r3_href_on_unmatched_word   # engine round 3, ~3 min
+python3 tests/sabotage/engine_r1_throughput_leaks.py W11   # one sabotage by name
 ```
 
 `N caught, 0 survived` is the pass. `<-- SURVIVED` means the suite did not notice — write the

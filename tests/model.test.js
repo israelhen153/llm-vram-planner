@@ -3628,12 +3628,19 @@ test('every card still displays exactly what the golden records', () => {
 test('the sabotage README names every driver, and no driver it does not have', () => {
   const dir = path.join(ROOT, 'tests', 'sabotage');
   const doc = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
-  const onDisk = fs.readdirSync(dir)
-    .filter(f => /^sab.*\.(py|sh)$/.test(f))
-    .sort();
+  /* A driver is named for what it attacks — engine_* or workflow_* — and every other
+     script here must be a named support file. Without the second half, a driver
+     misnamed out of the pattern would drop out of every check below in silence,
+     which is the failure this whole corpus exists to catch in other code. */
+  const SUPPORT = ['harness.py', 'anchors.py', 'chain.sh', 'suites.sh'];
+  const scripts = fs.readdirSync(dir).filter(f => /\.(py|sh)$/.test(f));
+  const onDisk = scripts.filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f)).sort();
+  const stray = scripts.filter(f => !onDisk.includes(f) && !SUPPORT.includes(f));
+  assert.deepStrictEqual(stray, [],
+    `tests/sabotage holds scripts that are neither drivers nor support files: ${stray.join(', ')}`);
   assert.ok(onDisk.length > 0, 'no sabotage drivers found — has the directory moved?');
 
-  const named = new Set((doc.match(/`sab[0-9a-z]*\.(?:py|sh)`/g) || [])
+  const named = new Set((doc.match(/`(?:engine|workflow)_[0-9a-z_]+\.(?:py|sh)`/g) || [])
     .map(s => s.replace(/`/g, '')));
 
   const missing = onDisk.filter(f => !named.has(f));
@@ -3656,10 +3663,17 @@ test('the sabotage README names every driver, and no driver it does not have', (
      because the first attempt at this fix keyed off a string and missed two drivers. */
   const unguarded = onDisk.filter(f => {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
-    return !/require_green_baseline|already red on the unmodified/.test(src);
+    return !/run_driver\(|require_green_baseline|already red on the unmodified/.test(src);
   });
   assert.deepStrictEqual(unguarded, [],
     `these drivers would judge against a red baseline: ${unguarded.join(', ')}`);
+  /* Every Python driver now proves its baseline by calling harness.run_driver, so the
+     proof lives in one place — and one deleted line there would disarm all of them at
+     once while every driver above still read as guarded. Pin it where it lives. */
+  const harness = fs.readFileSync(path.join(dir, 'harness.py'), 'utf8');
+  const runDriver = harness.slice(harness.indexOf('def run_driver(')).split(/\ndef /)[0];
+  assert.ok(harness.includes('def run_driver(') && /require_green_baseline\(\)/.test(runDriver),
+    'harness.run_driver no longer proves a green baseline, so no Python driver does');
 
   /* The drivers import each other. A run that leaves __pycache__ behind leaves a
      gitignored directory git cannot remove on a branch switch, which strands an

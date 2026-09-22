@@ -8,7 +8,7 @@ that has not read the diff — see `.claude/skills/sabotage-corpus/`.
 
 ## Why it lives here
 
-These drivers are coupled to the code they attack. `sab5.py` knows `perfKey`, the renderer
+These drivers are coupled to the code they attack. `engine_r3_fixed_assumptions.py` knows `perfKey`, the renderer
 names and the PDF's `KeepTogether` / `bulletText` structure. A copy that drifts from the
 engine is worse than no copy, because it still reports green. Versioned here, a refactor
 that breaks a driver breaks it visibly, in the same commit.
@@ -20,9 +20,10 @@ gone and invisible to anyone who cloned the repo.
 
 ```
 tests/sabotage/chain.sh                 # every driver
-tests/sabotage/chain.sh sab5 sab5b      # named drivers
+tests/sabotage/chain.sh engine_r3_fixed_assumptions engine_r3_identical_estimate_and_href   # named drivers
 LOGDIR=path tests/sabotage/chain.sh     # logs elsewhere (default: tmp/sabotage, gitignored)
-python3 tests/sabotage/sab.py W11       # one sabotage, by name substring
+python3 tests/sabotage/engine_r1_throughput_leaks.py W11     # one sabotage, by name substring
+python3 tests/sabotage/engine_r1_throughput_leaks.py --from H8   # from one sabotage onwards
 ```
 
 **Commit before running.** The drivers restore with `git checkout -- <file>`, which restores
@@ -36,29 +37,49 @@ Each driver applies a list of exact-string edits to committed files, refusing if
 string is not found the expected number of times — so a driver that has drifted from the code
 fails loudly rather than silently testing nothing.
 
+### How the files are named
+
+A driver's name says what it attacks and which review round produced it:
+`engine_*` drivers attack the model in `index.html` and `generate_report.py`, `workflow_*` drivers
+attack `.github/workflows/price-refresh.yml` and the guard in `tests/workflow.test.py`, and `rN` is
+the round. `ls` therefore lists each family in the order its rounds escalated. `workflow_live_*`
+came from a real run rather than a review.
+
+Two files are not drivers:
+
+- **`harness.py`** — the machinery every driver shares: `apply_edits`, `restore_files`,
+  `run_judging_suites`, `require_green_baseline`, and `run_driver`, the one loop every Python driver
+  calls. There used to be fifteen copies of that loop in six different shapes.
+- **`anchors.py`** — the exact excerpts of the engine files that `engine_*` sabotages anchor their
+  edits on, plus `INDEX_HTML`, `REPORT_PY` and `SYNC_PY`, the paths they edit.
+
+Until 2026-09-22 the drivers were `sab.py`, `sab2.py` … `sab10.py`, and `sab.py` was both the
+harness and the biggest driver. The rename changed no sabotage: all 330 in the Python drivers were
+compared as resolved values before and after, and every one was identical.
+
 | Driver | Round | What it attacks |
 |---|---|---|
-| `sab.py` | 1 | The machinery, and the bulk of the corpus: throughput figures leaking into each of the four JS surfaces and the PDF when a card has no measured constants |
-| `sab2.py` | 1 | Leaks the suites' regexes may not see, and the benchmark panel drawn for a card without constants |
-| `sab3.sh` | 1 | A `perfKey` typo on one catalog row, propagated through `tools/sync_data.py` into both generated blocks — the shape of a real contributor mistake |
-| `sab4.py` | 2 | Attacks on the tests round 1 produced |
-| `sab4b.py` | 2 | Leaks conditioned on state axes the probes never vary, and a figure in a reportlab attribute the spy never harvests |
-| `sab4c.py` | 2 | Views fed from outside the harness: the copied report's command block, a leak gated on a selected preset, and stdout from `generate()` |
-| `sab4d.py` | 2 | An invisible dependency on a throughput figure in the max-batch card, which the identity test exempts |
-| `sab4e.py` | 2 | An attribute figure on an element the CARD split does not expose, and a no-number speed claim inside the PDF explanation |
-| `sab5.py` | 3 | Attacks on the assumptions behind round 2's rules — fixed vendor, fixed key, fixed device count |
-| `sab5b.py` | 3 | A borrowed-constant estimate shown identically for both cards, and a figure carried only in an `href` |
-| `sab5c.py` | 3 | The same `href` attack on a word the reason-piece filter does not match — was the href read, or did the `<a>` merely split the raw markup? |
-| `sab10.py` | 4 | The guard's own helper: six shell-quoting shapes that hid a test run from `executes()` (quoted argument, command substitution, `$'...'`, an apostrophe in a comment that opens a span across newlines), plus a rule that passed by not looking, a negative pathspec, `UPDATE_GOLDEN` through `env:`, and the gate — which nothing pinned at all |
-| `sab9.py` | live | Not from a review: what the first real run of the fixed price job found. `add-paths` listed `assets/*.png` and make_assets.py writes three files there, so the manifest recording index.html's hash was regenerated and then left behind, failing the asset gate on every price PR |
-| `sab8.py` | 3 | The round-2 guard's bindings: a second job in the same file carrying the original bug where every rule read one literal job key, a job-level `if:` that retires the job as "skipped", a decoy `echo` that takes `id: suite` so the PR body reports its outcome forever, and `format()` hiding a filename from the path regex |
-| `sab7.py` | 2 | The round-1 guard's own reader and rules: a delivery condition gated on the suite in a FOLDED second line, a step respelled until the reader and its own count check both dropped it, an object filter that gates delivery while naming no step, a test run moved upstream of the gate, and `.conclusion` for `.outcome` |
-| `sab6.py` | 1 | `.github/workflows/price-refresh.yml`: the gate that left the price job able to succeed only by finding nothing, and the seven ways a cold check rebuilt it afterwards without touching a guarded field |
+| `engine_r1_throughput_leaks.py` | 1 | The bulk of the corpus: throughput figures leaking into each of the four JS surfaces and the PDF when a card has no measured constants |
+| `engine_r1_regex_blind_spots.py` | 1 | Leaks the suites' regexes may not see, and the benchmark panel drawn for a card without constants |
+| `engine_r1_perfkey_typo.sh` | 1 | A `perfKey` typo on one catalog row, propagated through `tools/sync_data.py` into both generated blocks — the shape of a real contributor mistake |
+| `engine_r2_attacks_on_new_tests.py` | 2 | Attacks on the tests round 1 produced |
+| `engine_r2_unvaried_state_axes.py` | 2 | Leaks conditioned on state axes the probes never vary, and a figure in a reportlab attribute the spy never harvests |
+| `engine_r2_views_outside_harness.py` | 2 | Views fed from outside the JS test harness: the copied report's command block, a leak gated on a selected preset, and stdout from `generate()` |
+| `engine_r2_invisible_dependency.py` | 2 | An invisible dependency on a throughput figure in the max-batch card, which the identity test exempts |
+| `engine_r2_hidden_attributes.py` | 2 | An attribute figure on an element the CARD split does not expose, and a no-number speed claim inside the PDF explanation |
+| `engine_r3_fixed_assumptions.py` | 3 | Attacks on the assumptions behind round 2's rules — fixed vendor, fixed key, fixed device count |
+| `engine_r3_identical_estimate_and_href.py` | 3 | A borrowed-constant estimate shown identically for both cards, and a figure carried only in an `href` |
+| `engine_r3_href_on_unmatched_word.py` | 3 | The same `href` attack on a word the reason-piece filter does not match — was the href read, or did the `<a>` merely split the raw markup? |
+| `workflow_r1_gate.py` | 1 | The gate that left the price job able to succeed only by finding nothing, and the seven ways a cold check rebuilt it afterwards without touching a guarded field |
+| `workflow_r2_yaml_reader.py` | 2 | The round-1 guard's own reader and rules: a delivery condition gated on the suite in a FOLDED second line, a step respelled until the reader and its own count check both dropped it, an object filter that gates delivery while naming no step, a test run moved upstream of the gate, and `.conclusion` for `.outcome` |
+| `workflow_r3_name_bindings.py` | 3 | The round-2 guard's bindings: a second job in the same file carrying the original bug where every rule read one literal job key, a job-level `if:` that retires the job as "skipped", a decoy `echo` that takes `id: suite` so the PR body reports its outcome forever, and `format()` hiding a filename from the path regex |
+| `workflow_live_first_run.py` | live | Not from a review: what the first real run of the fixed price job found. `add-paths` listed `assets/*.png` and make_assets.py writes three files there, so the manifest recording index.html's hash was regenerated and then left behind, failing the asset gate on every price PR |
+| `workflow_r4_shell_quoting.py` | 4 | The guard's own helper: six shell-quoting shapes that hid a test run from `executes()` (quoted argument, command substitution, `$'...'`, an apostrophe in a comment that opens a span across newlines), plus a rule that passed by not looking, a negative pathspec, `UPDATE_GOLDEN` through `env:`, and the gate — which nothing pinned at all |
 
-`suites.sh` is the shared judge: it runs the suites that can rule on a sabotage and prints
-one line each. `assets.test.py` is deliberately excluded — it hashes `index.html` and goes red on
+The suites that judge a sabotage are listed once, in `harness.py`'s `JUDGING_SUITES`, and
+`suites.sh` runs the same set for the one bash driver, printing one line each. `assets.test.py` is deliberately excluded — it hashes `index.html` and goes red on
 any edit, so it would report every sabotage as caught regardless of what the sabotage did.
-`workflow.test.py` joined the judges with `sab6.py`: without it a workflow sabotage reads green,
+`workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
 because none of the other five opens `.github/`.
 
 Rounds escalate: round 2 found gaps round 1 left, round 3 found gaps round 2 left. That is
@@ -126,6 +147,6 @@ These were accepted after round 3 and have since been **closed by the golden** (
   drifted from the code. Fix the driver in the commit that moved the code.
 
 A driver that exits 0 having judged nothing is the worst outcome, because it reads as a pass.
-`sab3.sh` did exactly that until 2026-09-20: it called a helper that no longer existed, ran no
+`engine_r1_perfkey_typo.sh` (then `sab3.sh`) did exactly that until 2026-09-20: it called a helper that no longer existed, ran no
 suite, restored cleanly and returned success. Every driver now fails loudly when it cannot
 judge, and `chain.sh` treats a non-zero exit as a finding rather than noise.
