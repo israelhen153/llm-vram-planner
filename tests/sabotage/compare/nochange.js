@@ -23,7 +23,16 @@ function atRef(ref, rel) {
   fs.writeFileSync(tmp, blob);
   return tmp;
 }
-const STRIDE = Number(process.argv[2] || 13);
+/* argv[3], not argv[2]: argv[2] is BASE_REF above, and reading both from it made
+   `nochange.js <ref>` set STRIDE = NaN. `n % NaN === 0` is never true, so the whole
+   render comparison rendered nothing and printed "0 configurations, 0 differing
+   surfaces" — a clean bill of health from a comparison that compared nothing, on
+   exactly the documented invocation. */
+const STRIDE = Number(process.argv[3] || 13);
+if (!Number.isInteger(STRIDE) || STRIDE < 1) {
+  console.error(`stride must be a positive integer, got ${process.argv[3]}`);
+  process.exit(2);
+}
 
 function load(file) {
   const html = fs.readFileSync(file, 'utf8');
@@ -181,3 +190,11 @@ console.log(`computeInference: ${n} configurations, ${computeDiffs} field differ
 console.log(`  fields only in new: [${[...newOnly].join(', ')}]  only in master: [${[...oldOnly].join(', ')}]`);
 console.log(`renderers + copied report + command + advice: ${rendered} configurations, ${renderDiffs} differing surfaces`);
 for (const d of diffSamples) console.log('  ' + d);
+
+/* A comparison that compared nothing is not a pass. Without this the tool only
+   printed, so there was no way for it to fail at all — which is how a NaN stride
+   went unnoticed. */
+if (n === 0 || rendered === 0) {
+  console.error(`compared nothing (compute ${n}, rendered ${rendered}) — this proves nothing`);
+  process.exit(1);
+}
