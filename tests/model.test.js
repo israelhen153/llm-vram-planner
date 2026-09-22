@@ -2282,13 +2282,60 @@ test('every cost surface names a source or says "not recorded", discovered not e
         // mentions a tier (renderExecutiveSummary never shows spec) still
         // correctly skips it; a surface that shows the marker but not the
         // rest of the expected label now fails instead of going uncounted.
-        for (const tier of ['hyper', 'spec', 'spot']) {
+        /* Anchored on the TIER's own name, and asserted on the segment that
+           follows it — not on the provider name, and not by membership.
+
+           Round-2 cold check took the previous shape apart fourteen ways. The
+           marker was the provider name, so a label deleted outright left no
+           marker and `continue` skipped the tier: an empty field where the
+           source must be, uncounted. And `text.includes(expected)` is true of
+           any text that merely CONTAINS the label, so hyper's and spec's
+           labels could be swapped between rows (Lambda's SKU printed under
+           Azure's price), or a composite appended after a correct label, and
+           the assertion still passed.
+
+           A tier name is present whether or not its label rendered, so the
+           skip is gone. The segment runs to the next tier's marker, so a label
+           in the wrong row lands in the wrong segment. And what is left of the
+           segment once the expected label is removed may carry prices and
+           lowercase words, but no capital letter and no letter joined to a
+           letter by a comma, slash or ampersand — which is what every invented
+           provider and every re-appended composite looks like, without this
+           test needing to know a single provider's name. */
+        const TIER_MARK = { hyper: /Hyperscaler|Hyper:/g, spec: /Specialized|Spec:/g,
+                            spot: /Spot \/ marketplace|Spot:/g };
+        /* Tags out first: these surfaces are HTML, and a style attribute is
+           not something the page says. Replaced by a space so nothing joins. */
+        const plain = text.replace(/<[^>]*>/g, ' ');
+        const bounds = [];
+        for (const [tier, re] of Object.entries(TIER_MARK))
+          for (const m of plain.matchAll(re)) bounds.push({ tier, at: m.index, end: m.index + m[0].length });
+        bounds.sort((a, b) => a.at - b.at);
+        for (let i = 0; i < bounds.length; i++) {
+          const { tier, end } = bounds[i];
+          const segment = plain.slice(end, i + 1 < bounds.length ? bounds[i + 1].at : undefined);
           const expected = priceSourceLabel(st, tier);
-          const marker = expected === 'not recorded' ? 'not recorded' : expected.split(' · ')[0];
-          if (!text.includes(marker)) continue;
-          assert.ok(text.includes(expected),
-            `${label}/${id}/${tier}: shows "${marker}" but not the full expected label ` +
-            `${JSON.stringify(expected)}: ${text.slice(0, 300)}`);
+          assert.ok(segment.includes(expected),
+            `${label}/${id}/${tier}: the text after this tier's own name is not its source. ` +
+            `expected ${JSON.stringify(expected)}, segment ${JSON.stringify(segment.slice(0, 200))}`);
+          /* Only the text that sits between this tier's name and its price:
+             what precedes the label, and what follows it up to the next price
+             figure. A surface's trailing disclaimer comes after every price and
+             belongs to no tier, so bounding at the next `$` keeps it out of a
+             tier's residue without this test having to know it is there. */
+          const at = segment.indexOf(expected);
+          const before = segment.slice(0, at);
+          const after = segment.slice(at + expected.length);
+          // ...or the next element boundary, which a stripped tag leaves as a run
+          // of spaces. The exec summary puts its next row straight after the
+          // label with no price between them.
+          const residue = before + ' ' + after.split(/\s{2,}|\n|\$/)[0];
+          assert.ok(!/[A-Z]/.test(residue),
+            `${label}/${id}/${tier}: names something beside its source — ` +
+            `${JSON.stringify(residue.slice(0, 160))}`);
+          assert.ok(!/[A-Za-z]\s*[,/&]\s*[A-Za-z]/.test(residue),
+            `${label}/${id}/${tier}: a second provider is joined onto its source — ` +
+            `${JSON.stringify(residue.slice(0, 160))}`);
           if (expected === 'not recorded') mixedNotRecordedHit++; else mixedSourcedHit++;
         }
       }
