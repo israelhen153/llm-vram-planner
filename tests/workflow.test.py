@@ -138,6 +138,26 @@ def suite_step():
     return find(price_steps, _block=lambda b: "tests/run.sh" in b)
 
 
+def run_script(step):
+    """The step's shell, and only the shell — no comments, no surrounding prose.
+    The `# pipefail is load-bearing` comment sitting beside this very script is
+    why: a check that reads the whole block lets a sentence about a safeguard
+    stand in for the safeguard, and passes after it is deleted."""
+    out, inside = [], False
+    for line in step["_block"].split("\n"):
+        if re.match(r"^        run: \|\s*$", line):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if line.strip() and not line.startswith("          "):
+            break
+        if line.strip().startswith("#"):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def add_paths():
     """The files the bot is allowed to commit — the `add-paths:` block itself,
     not the step's prose. Reading the whole block would let a comment that names
@@ -208,12 +228,13 @@ def check_the_piped_suite_cannot_report_a_false_pass():
     say the suite passed while the branch is red. Classifying on an exit code
     that was never the suite's is how the sabotage corpus reported hundreds of
     false catches."""
-    s = suite_step()
-    if "|" not in s["_block"].replace("run: |", ""):
-        return  # not piped; nothing to mask the exit code
-    assert "pipefail" in s["_block"], (
-        "the suite's output is piped without pipefail, so its failure is masked "
-        "by the last command in the pipe")
+    script = run_script(suite_step())
+    assert "tests/run.sh" in script, "the suite step's shell no longer runs the suite"
+    if "|" not in script:
+        return  # not piped; nothing stands between the suite and the exit code
+    assert "pipefail" in script, (
+        "the suite's output is piped without pipefail, so the pipe's last command "
+        "supplies the exit code and every red suite records as a pass")
 
 test("piping the suite's output cannot turn a red suite into a reported pass",
      check_the_piped_suite_cannot_report_a_false_pass)
