@@ -1622,6 +1622,15 @@ print("\nCost provenance: a named source, or \"not recorded\" said plainly, neve
 OLD_COMPOSITES = ("AWS/GCP/Azure", "Lambda/CoreWeave", "Vast.ai)",
                   "AWS, GCP, Azure on-demand", "Lambda, CoreWeave, RunPod", "Vast.ai, spot instances")
 PROVIDER_NAMES_LIST = ("Azure", "AWS", "Lambda", "CoreWeave", "Vast.ai")
+# General, not exact: two or more provider-ish names joined by a comma or
+# slash, wherever they occur — mirrors tests/model.test.js's MULTI_PROVIDER,
+# added after a cold-check sabotage appended " (AWS, GCP, Azure)" after an
+# otherwise-correct JS label and none of the three exact phrases above
+# matched a shorter list in a different shape. A real sourced label never
+# joins two provider names this way.
+MULTI_PROVIDER = re.compile(
+    r"\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,/]\s*"
+    r"(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}")
 
 
 def check_price_source_label_format_is_a_fixed_expectation():
@@ -1703,6 +1712,8 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
             assert composite not in whole_blob, (
                 f"{label}: the composite provider list ({composite!r}) appears somewhere in the "
                 f"PDF, even outside the cost table")
+        m = MULTI_PROVIDER.search(whole_blob)
+        assert not m, f"{label}: two or more providers named together ({m.group(0)!r}) somewhere in the PDF"
         assert "per-board/hr estimates" not in whole_blob, (
             f"{label}: still calls GPU prices \"estimates\" — some tiers are sourced, dated, "
             f"attributed figures, not guesses")

@@ -2194,9 +2194,26 @@ test('every cost surface names a source or says "not recorded", discovered not e
     k => /^render/.test(k) && typeof renderHarness()[k] === 'function');
 
   const OLD_COMPOSITES = [/AWS,\s*GCP,\s*Azure on-demand/i, /Lambda,\s*CoreWeave,\s*RunPod/i,
-                          /Vast\.ai,\s*spot instances/i];
+                          /Vast\.ai,\s*spot instances/i,
+                          // Cold-check finding 1f: appending " (AWS, GCP, Azure)" after an
+                          // otherwise-correct sourced label survived, because none of the
+                          // three exact phrases above matches a shorter list in a different
+                          // shape. General instead of exact: two or more provider-ish names
+                          // joined by a comma or slash, wherever they occur — a real sourced
+                          // label never joins two provider names this way (its own two
+                          // tiers, if both sourced, are separated by the rest of a sentence,
+                          // not a bare comma or slash), so this cannot true-positive on a
+                          // correct render, only on a reintroduced list.
+                          /\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,\/]\s*(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}/];
   const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
-  const COST = /\$[\d,]+\.\d{2}/;
+  // Cold-check finding: renderExecutiveSummary's "Monthly cost range" rounds
+  // to whole dollars ("$657", never "$657.00"), so a cents-only pattern
+  // never discovered that surface at all — not scoped out on purpose, the
+  // sweep just never looked at it, and three cold-check sabotages that
+  // targeted only the exec summary (a composite name beside its source, a
+  // dropped region, a composite fallback) went uncaught because of it. The
+  // decimal point is now optional.
+  const COST = /\$[\d,]+(?:\.\d{2})?/;
 
   // h100-80 carries mixed provenance today (hyper+spec sourced, spot not) —
   // real catalog shape, not invented. rtx5090-32 has no automatable source on
