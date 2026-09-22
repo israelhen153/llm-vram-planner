@@ -169,6 +169,23 @@ test(f"every workflow parses and every step is named ({len(present)} files)",
      check_every_workflow_parses)
 
 
+def check_the_required_status_check_still_exists():
+    """master's protection requires a status check named `suite`, and a status
+    check is named after the JOB, so `tests.yml`'s job key is load-bearing on a
+    setting that lives outside this repository and is invisible from inside it.
+    Renaming it does not fail anything here or there — the required context
+    simply never reports again. CONTRIBUTING.md documents the rule; this is what
+    holds the name it documents."""
+    tests = load(os.path.join(WORKFLOWS, "tests.yml"))
+    assert "suite" in tests["jobs"], (
+        f"tests.yml no longer has a job named `suite`, it has "
+        f"{sorted(tests['jobs'])}. master's branch protection requires a status "
+        f"check called `suite`; renaming the job retires the gate silently.")
+
+test("tests.yml still provides the status check master's protection requires",
+     check_the_required_status_check_still_exists)
+
+
 print("\nThe rules bind to the job that actually does the work")
 
 

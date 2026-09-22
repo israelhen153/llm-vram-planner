@@ -61,8 +61,12 @@ S = {
     "R04 format() hides a filename nothing writes from the path rule":
         [(WF, "            ${{ runner.temp }}/suite.log",
               "            ${{ format('{0}/suite-output.log', runner.temp) }}", 1)],
-    "R05 the job is renamed, which used to crash outside any named test":
-        [(WF, "  price-check:\n", "  price-check-renamed:\n", 1)],
+    # Renaming price-check is NOT a defect any more — the guard finds the job by
+    # what it does, so the key is free. The name that IS load-bearing is the other
+    # one: a status check is named after its job, and master's protection requires
+    # `suite`. That coupling lives in a GitHub setting, invisible from the tree.
+    "R05 tests.yml's job renamed, retiring the required status check silently":
+        [(".github/workflows/tests.yml", "jobs:\n  suite:", "jobs:\n  full-suite:", 1)],
 }
 
 if __name__ == "__main__":
