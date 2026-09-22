@@ -33,9 +33,12 @@ S = {
               "      - name: Locate the suite\n        id: suite\n"
               "        continue-on-error: true\n        run: ./tests/run.sh --help\n\n"
               "      - name: Run the full suite — recorded, not obeyed", 1)],
+    # The body must not lose the second command. Deleting the printf that carries
+    # it is the whole sabotage — the first version of this also deleted a line of
+    # prose and left the command in place, so it read as a survivor when nothing
+    # about the body had actually changed.
     "P05 the body names one golden again, when set -e hides the second":
-        [(WF, "              printf 'If the moves are right, there are TWO goldens to regenerate on this\\n'",
-              "              printf 'If the moves are right: UPDATE_GOLDEN=1 node tests/model.test.js\\n'", 1)],
+        [(WF, "              printf 'UPDATE_GOLDEN=1 python3 tests/report.test.py  # what the PDF says\\n'\n", "", 1)],
 }
 
 if __name__ == "__main__":
