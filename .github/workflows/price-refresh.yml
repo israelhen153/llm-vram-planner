@@ -134,9 +134,17 @@ jobs:
         # skipped the PR step and threw the report away with it.
         #
         # The red is diagnostic, so it is carried to a human: into the PR body
-        # below, onto the PR's own `suite` check, and into the artifact. Deciding
-        # whether those 32 surfaces were meant is the review, and regenerating
-        # the golden on this branch is how it is recorded — see CONTRIBUTING.md.
+        # below, and into the artifact. NOT onto the PR's own `suite` check —
+        # this comment claimed that and was wrong. A PR opened with GITHUB_TOKEN
+        # "creates workflow runs in an approval-required state ... a user with
+        # write access can start the runs by selecting Approve workflows to run",
+        # so that check reports nothing until someone clicks. The PR body is the
+        # only channel that speaks without being asked, which is why the step
+        # below is fed `.outcome` and not `.conclusion`: one word there and the
+        # body reports every red suite as a pass, with no backstop anywhere.
+        #
+        # Deciding whether those 32 surfaces were meant is the review, and
+        # regenerating the golden on this branch is how it is recorded.
 
       - name: Tell the PR body what the suite did
         if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
