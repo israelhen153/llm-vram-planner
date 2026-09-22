@@ -429,7 +429,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Throughput and TTFT: not modelled. No measured utilisation is published for T4 16 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× T4 16 GB) - Hyperscaler: $0.76/hr · $555/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Throughput and TTFT: not modelled. No measured utilisation is published for T4 16 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -457,7 +457,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $0.15–$0.76"
+    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $0.15–$0.53"
    },
    "cost-output": {
     "attrs": [
@@ -487,7 +487,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.76 $0.76 $555 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.53 $0.53 $387 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -509,7 +509,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $110 – $555/mo Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $110 – $387/mo Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -637,7 +637,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 40 GB - Total VRAM: 40 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 40 GiB (FITS) ## Capacity - Max context (1 user): 156K - Max concurrent @ 8K: 19 - Single-stream decode: ~64 tok/s - Aggregate @ 16 concurrent: ~525 tok/s - TTFT: ~934 ms ## Cost (1× A100 40 GB) - Hyperscaler: $3.67/hr · $2,679/mo - Specialized: $1.29/hr · $942/mo - Spot: $0.63/hr · $460/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 40 GB - Total VRAM: 40 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 40 GiB (FITS) ## Capacity - Max context (1 user): 156K - Max concurrent @ 8K: 19 - Single-stream decode: ~64 tok/s - Aggregate @ 16 concurrent: ~525 tok/s - TTFT: ~934 ms ## Cost (1× A100 40 GB) - Hyperscaler: $3.40/hr · $2,482/mo - Specialized: $1.29/hr · $942/mo - Spot: $0.63/hr · $460/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -664,7 +664,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× A100 40 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 40 Max ctx (1u) 156K Max users @8K 19 Per-user / aggregate ~64 / 525 tok/s Cost/hr $0.63–$3.67"
+    "text": "8B model GPU 1× A100 40 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 40 Max ctx (1u) 156K Max users @8K 19 Per-user / aggregate ~64 / 525 tok/s Cost/hr $0.63–$3.40"
    },
    "cost-output": {
     "attrs": [
@@ -694,7 +694,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $3.67 $3.67 $2,679 Specialized Lambda, CoreWeave, RunPod $1.29 $1.29 $942 Spot / marketplace Vast.ai, spot instances $0.63 $0.63 $460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $3.40 $3.40 $2,482 Specialized Lambda, CoreWeave, RunPod $1.29 $1.29 $942 Spot / marketplace Vast.ai, spot instances $0.63 $0.63 $460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -710,7 +710,7 @@
      "style=color:var(--success-text)",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× A100 40 GB VRAM used 32.6 GiB / 40 GiB per device (81%) Max concurrent users (8K context) 19 Speed per user ~64 tokens/sec Total server throughput ~525 tokens/sec Monthly cost range $460 – $2,679/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× A100 40 GB VRAM used 32.6 GiB / 40 GiB per device (81%) Max concurrent users (8K context) 19 Speed per user ~64 tokens/sec Total server throughput ~525 tokens/sec Monthly cost range $460 – $2,482/mo Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -840,7 +840,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~84 tok/s - Aggregate @ 16 concurrent: ~688 tok/s - TTFT: ~934 ms ## Cost (1× A100 80 GB) - Hyperscaler: $4.50/hr · $3,285/mo - Specialized: $1.79/hr · $1,307/mo - Spot: $0.99/hr · $723/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~84 tok/s - Aggregate @ 16 concurrent: ~688 tok/s - TTFT: ~934 ms ## Cost (1× A100 80 GB) - Hyperscaler: $4.10/hr · $2,993/mo - Specialized: $1.79/hr · $1,307/mo - Spot: $0.99/hr · $723/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -867,7 +867,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× A100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~84 / 688 tok/s Cost/hr $0.99–$4.50"
+    "text": "8B model GPU 1× A100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~84 / 688 tok/s Cost/hr $0.99–$4.10"
    },
    "cost-output": {
     "attrs": [
@@ -897,7 +897,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $4.50 $4.50 $3,285 Specialized Lambda, CoreWeave, RunPod $1.79 $1.79 $1,307 Spot / marketplace Vast.ai, spot instances $0.99 $0.99 $723 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $4.10 $4.10 $2,993 Specialized Lambda, CoreWeave, RunPod $1.79 $1.79 $1,307 Spot / marketplace Vast.ai, spot instances $0.99 $0.99 $723 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -913,7 +913,7 @@
      "style=color:var(--success-text)",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× A100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~84 tokens/sec Total server throughput ~688 tokens/sec Monthly cost range $723 – $3,285/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× A100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~84 tokens/sec Total server throughput ~688 tokens/sec Monthly cost range $723 – $2,993/mo Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1043,7 +1043,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× B200 192 GB - Total VRAM: 192 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 192 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 156 - Single-stream decode: ~328 tok/s - Aggregate @ 16 concurrent: ~2.7K tok/s - TTFT: ~129 ms ## Cost (1× B200 192 GB) - Hyperscaler: $14.24/hr · $10,395/mo - Specialized: $5.50/hr · $4,015/mo - Spot: $2.12/hr · $1,548/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× B200 192 GB - Total VRAM: 192 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 192 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 156 - Single-stream decode: ~328 tok/s - Aggregate @ 16 concurrent: ~2.7K tok/s - TTFT: ~129 ms ## Cost (1× B200 192 GB) - Hyperscaler: $14.24/hr · $10,395/mo - Specialized: $6.69/hr · $4,884/mo - Spot: $2.12/hr · $1,548/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -1100,7 +1100,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $14.24 $14.24 $10,395 Specialized Lambda, CoreWeave, RunPod $5.50 $5.50 $4,015 Spot / marketplace Vast.ai, spot instances $2.12 $2.12 $1,548 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $14.24 $14.24 $10,395 Specialized Lambda, CoreWeave, RunPod $6.69 $6.69 $4,884 Spot / marketplace Vast.ai, spot instances $2.12 $2.12 $1,548 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4059,7 +4059,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H200 141 GB - Total VRAM: 141 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 141 GiB (FITS) ## Capacity - Max context (1 user): 883K - Max concurrent @ 8K: 110 - Single-stream decode: ~197 tok/s - Aggregate @ 16 concurrent: ~1.6K tok/s - TTFT: ~294 ms ## Cost (1× H200 141 GB) - Hyperscaler: $10.60/hr · $7,738/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.50/hr · $1,825/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H200 141 GB - Total VRAM: 141 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 141 GiB (FITS) ## Capacity - Max context (1 user): 883K - Max concurrent @ 8K: 110 - Single-stream decode: ~197 tok/s - Aggregate @ 16 concurrent: ~1.6K tok/s - TTFT: ~294 ms ## Cost (1× H200 141 GB) - Hyperscaler: $7.91/hr · $5,774/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.50/hr · $1,825/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4086,7 +4086,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H200 141 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 141 Max ctx (1u) 883K Max users @8K 110 Per-user / aggregate ~197 / 1.6K tok/s Cost/hr $2.50–$10.60"
+    "text": "8B model GPU 1× H200 141 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 141 Max ctx (1u) 883K Max users @8K 110 Per-user / aggregate ~197 / 1.6K tok/s Cost/hr $2.50–$7.91"
    },
    "cost-output": {
     "attrs": [
@@ -4116,7 +4116,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $10.60 $10.60 $7,738 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.50 $2.50 $1,825 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $7.91 $7.91 $5,774 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.50 $2.50 $1,825 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4132,7 +4132,7 @@
      "style=color:var(--success-text)",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H200 141 GB VRAM used 32.6 GiB / 141 GiB per device (23%) Max concurrent users (8K context) 110 Speed per user ~197 tokens/sec Total server throughput ~1.6K tokens/sec Monthly cost range $1,825 – $7,738/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H200 141 GB VRAM used 32.6 GiB / 141 GiB per device (23%) Max concurrent users (8K context) 110 Speed per user ~197 tokens/sec Total server throughput ~1.6K tokens/sec Monthly cost range $1,825 – $5,774/mo Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -4473,7 +4473,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× L40S 48 GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~35 tok/s - Aggregate @ 16 concurrent: ~292 tok/s - TTFT: ~805 ms ## Cost (1× L40S 48 GB) - Hyperscaler: $2.80/hr · $2,044/mo - Specialized: $1.30/hr · $949/mo - Spot: $0.90/hr · $657/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× L40S 48 GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~35 tok/s - Aggregate @ 16 concurrent: ~292 tok/s - TTFT: ~805 ms ## Cost (1× L40S 48 GB) - Hyperscaler: $1.86/hr · $1,358/mo - Specialized: $1.30/hr · $949/mo - Spot: $0.90/hr · $657/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4500,7 +4500,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× L40S 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~35 / 292 tok/s Cost/hr $0.90–$2.80"
+    "text": "8B model GPU 1× L40S 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~35 / 292 tok/s Cost/hr $0.90–$1.86"
    },
    "cost-output": {
     "attrs": [
@@ -4530,7 +4530,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $2.80 $2.80 $2,044 Specialized Lambda, CoreWeave, RunPod $1.30 $1.30 $949 Spot / marketplace Vast.ai, spot instances $0.90 $0.90 $657 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $1.86 $1.86 $1,358 Specialized Lambda, CoreWeave, RunPod $1.30 $1.30 $949 Spot / marketplace Vast.ai, spot instances $0.90 $0.90 $657 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4546,7 +4546,7 @@
      "style=color:var(--success-text)",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× L40S 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~35 tokens/sec Total server throughput ~292 tokens/sec Monthly cost range $657 – $2,044/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× L40S 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~35 tokens/sec Total server throughput ~292 tokens/sec Monthly cost range $657 – $1,358/mo Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -5301,7 +5301,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX PRO 6000 96 GB - Total VRAM: 96 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 96 GiB (FITS) ## Capacity - Max context (1 user): 559K - Max concurrent @ 8K: 69 - Single-stream decode: ~73 tok/s - Aggregate @ 16 concurrent: ~605 tok/s - TTFT: ~578 ms ## Cost (1× RTX PRO 6000 96 GB) - Hyperscaler: $5.00/hr · $3,650/mo - Specialized: $3.50/hr · $2,555/mo - Spot: $2.00/hr · $1,460/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX PRO 6000 96 GB - Total VRAM: 96 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 96 GiB (FITS) ## Capacity - Max context (1 user): 559K - Max concurrent @ 8K: 69 - Single-stream decode: ~73 tok/s - Aggregate @ 16 concurrent: ~605 tok/s - TTFT: ~578 ms ## Cost (1× RTX PRO 6000 96 GB) - Hyperscaler: $5.00/hr · $3,650/mo - Specialized: $2.50/hr · $1,825/mo - Spot: $2.00/hr · $1,460/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5358,7 +5358,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $5.00 $5.00 $3,650 Specialized Lambda, CoreWeave, RunPod $3.50 $3.50 $2,555 Spot / marketplace Vast.ai, spot instances $2.00 $2.00 $1,460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $5.00 $5.00 $3,650 Specialized Lambda, CoreWeave, RunPod $2.50 $2.50 $1,825 Spot / marketplace Vast.ai, spot instances $2.00 $2.00 $1,460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5504,7 +5504,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Single-stream decode: ~25 tok/s - Aggregate @ 5 concurrent: ~84 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.76/hr · $555/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Single-stream decode: ~25 tok/s - Aggregate @ 5 concurrent: ~84 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5532,7 +5532,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate ~25 / 84 tok/s no FP8 tensor cores — aggregate is the FP16 ceiling Cost/hr $0.15–$0.76"
+    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate ~25 / 84 tok/s no FP8 tensor cores — aggregate is the FP16 ceiling Cost/hr $0.15–$0.53"
    },
    "cost-output": {
     "attrs": [
@@ -5562,7 +5562,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.76 $0.76 $555 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.53 $0.53 $387 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5584,7 +5584,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed per user ~25 tokens/sec Total server throughput ~84 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $110 – $555/mo Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed per user ~25 tokens/sec Total server throughput ~84 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $110 – $387/mo Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5720,7 +5720,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~13 tok/s - Aggregate @ 1 concurrent: ~13 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.76/hr · $555/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~13 tok/s - Aggregate @ 1 concurrent: ~13 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5747,7 +5747,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× T4 16 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 16 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~13 / 13 tok/s Cost/hr $0.15–$0.76"
+    "text": "8B model GPU 1× T4 16 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 16 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~13 / 13 tok/s Cost/hr $0.15–$0.53"
    },
    "cost-output": {
     "attrs": [
@@ -5777,7 +5777,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.76 $0.76 $555 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.53 $0.53 $387 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5798,7 +5798,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 32.6 GiB / 16 GiB per device (203%) Max concurrent users (8K context) 0 Speed per user ~13 tokens/sec Total server throughput ~13 tokens/sec Monthly cost range $110 – $555/mo Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 32.6 GiB / 16 GiB per device (203%) Max concurrent users (8K context) 0 Speed per user ~13 tokens/sec Total server throughput ~13 tokens/sec Monthly cost range $110 – $387/mo Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
