@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sabotage driver. Each sabotage is a list of exact-string edits to committed
 files; the driver applies them (refusing if a target string is not found the
-expected number of times), runs the five judging suites, prints one line per
+expected number of times), runs the judging suites, prints one line per
 sabotage, and restores every touched file with `git checkout --`.
 
 Usage: python3 tests/sabotage/sab.py [name-substring ...]   (no args = all)
@@ -26,7 +26,8 @@ SUITES = [("model", ["node", "tests/model.test.js"]),
           ("parity", ["python3", "tests/parity.test.py"]),
           ("report", ["python3", "tests/report.test.py"]),
           ("sync", ["python3", "tests/sync.test.py"]),
-          ("price", ["python3", "tests/price_check.test.py"])]
+          ("price", ["python3", "tests/price_check.test.py"]),
+          ("workflow", ["python3", "tests/workflow.test.py"])]
 
 
 def run_suites():
