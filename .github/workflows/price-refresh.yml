@@ -8,6 +8,15 @@
 # the PR sits for the owner to review and merge by hand, the same as every
 # other change in this repo.
 #
+# The suite runs here but does not gate the pull request, and that is the whole
+# point of the job rather than a relaxed standard. A price move rewrites what
+# every card displays and tests/golden/page.json records those strings verbatim,
+# so any genuine price change turns the suite red. Gating on it made the job
+# unable to ever propose one: it would apply the moves, fail, skip the PR step,
+# and discard the report. The suite's result is reported instead — in the PR
+# body, on the PR's own `suite` check, and in the artifact, which now uploads on
+# every run rather than only on the runs that found nothing.
+#
 # This job needs no secrets: every source in tools/price_check.py's
 # SOURCE_MAP is queried unauthenticated (verified live while the tool was
 # built — see the PR that introduced it). If a source later requires a key
@@ -93,10 +102,58 @@ jobs:
       - name: Regenerate published images (index.html changed)
         if: steps.diff.outputs.changed == 'true'
         run: python3 tools/make_assets.py
-
-      - name: Run the full suite before proposing anything
+      - name: Run the full suite — recorded, not obeyed
+        id: suite
         if: steps.diff.outputs.changed == 'true'
-        run: ./tests/run.sh
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./tests/run.sh 2>&1 | tee "$RUNNER_TEMP/suite.log"
+        # Deliberately not a gate, and the pipefail is load-bearing: the default
+        # shell is `bash -e`, so without it `tee` would return 0 and every red
+        # suite would record as a pass.
+        #
+        # Why this may not gate the PR: tests/golden/page.json records what every
+        # card displays, prices included, verbatim. So `every card still displays
+        # exactly what the golden records` fails on *any* real price move — a red
+        # suite here is the expected outcome of this job doing its job, not a
+        # reason to withhold the result. Gating on it meant the job could never
+        # once propose a price change. The first scheduled run (2026-09-21,
+        # 35596156657) applied its moves, changed 32 recorded surfaces, went red,
+        # skipped the PR step and threw the report away with it.
+        #
+        # The red is diagnostic, so it is carried to a human: into the PR body
+        # below, onto the PR's own `suite` check, and into the artifact. Deciding
+        # whether those 32 surfaces were meant is the review, and regenerating
+        # the golden on this branch is how it is recorded — see CONTRIBUTING.md.
+
+      - name: Tell the PR body what the suite did
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          SUITE: ${{ steps.suite.outcome }}
+        run: |
+          REPORT="$RUNNER_TEMP/price-check-report.md"
+          # `>>` also creates it, which is what keeps the PR step below from
+          # failing on a missing body-path if the tool wrote no report.
+          {
+            printf '\n\n---\n\n'
+            if [ "$SUITE" = 'success' ]; then
+              printf '**The full suite passed on this branch.** No recorded surface moved,\n'
+              printf 'so nothing here changes what a card displays.\n'
+            else
+              printf '**The full suite is RED on this branch, and that is expected.**\n\n'
+              printf 'A price move rewrites what the cards display, and `tests/golden/page.json`\n'
+              printf 'records those strings verbatim. Read the tail below before assuming that\n'
+              printf 'is the whole story — a suite can be red for a reason that has nothing to\n'
+              printf 'do with prices, and this job cannot tell the difference:\n\n'
+              printf '```\n'
+              tail -n 25 "$RUNNER_TEMP/suite.log" 2>/dev/null || printf '(no suite log)\n'
+              printf '```\n\n'
+              printf 'If the moves are right: `UPDATE_GOLDEN=1 node tests/model.test.js` on this\n'
+              printf 'branch, commit the diff, and read it — the diff is the review. Moves over\n'
+              printf '40%% are flagged by the tool and left unapplied; they are a separate job.\n'
+            fi
+          } >> "$REPORT"
 
       - name: Open a pull request (never pushes to master)
         if: steps.diff.outputs.changed == 'true'
@@ -116,11 +173,21 @@ jobs:
             index.html
             generate_report.py
             assets/*.png
+          # tests/golden/page.json is deliberately absent from that list. The bot
+          # proposes prices; a person decides the display strings moved for the
+          # right reason and regenerates the golden themselves.
 
-      - name: Upload the report even when nothing changed
-        if: steps.diff.outputs.changed == 'false'
+      - name: Upload the report, whatever happened
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: price-check-report
-          path: ${{ runner.temp }}/price-check-report.md
+          # Was `changed == 'false'` — the report survived only on the runs that
+          # had nothing to say, and evaporated on exactly the runs worth keeping.
+          # Both 2026-09-17's report (recoverable only from closed PR #12's body)
+          # and 2026-09-21's (not recoverable at all) were lost this way.
+          path: |
+            ${{ runner.temp }}/price-check-report.md
+            ${{ runner.temp }}/suite.log
+          if-no-files-found: warn
           retention-days: 90
