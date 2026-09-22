@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Run the whole suite. Needs node, python3 and reportlab — reportlab only because
-# tests/report.test.py imports generate_report.py as a real module. The project
-# deliberately has no build step, and the tests keep it that way.
+# Run the whole suite. Needs node, python3, reportlab and pyyaml. reportlab only
+# because tests/report.test.py imports generate_report.py as a real module; pyyaml
+# only because tests/workflow.test.py judges what GitHub will do with a workflow
+# file, and a guard that reads YAML differently from YAML is wrong by construction
+# — a hand-rolled reader there passed a workflow that reinstated the bug it was
+# written to prevent. The project deliberately has no build step, and the tests
+# keep it that way.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,6 +29,9 @@ python3 tests/sync.test.py
 
 echo "== price-refresh sanity checks (tools/price_check.py) =="
 python3 tests/price_check.test.py
+
+echo "== CI workflows (.github/workflows) =="
+python3 tests/workflow.test.py
 
 echo "== published images (tools/make_assets.py) =="
 python3 tests/assets.test.py
