@@ -87,6 +87,8 @@ const stateFor = (gpu, o = {}) => ({
        would put every test on the ungated path and hide a gate that only ever
        fires on real hardware flags. */
     gpuFp8: !!(gpu.caps && gpu.caps.fp8),
+    // Cost provenance, off the row like every other GPU field above.
+    priceSource: gpu.priceSource,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1176,6 +1178,12 @@ const asState = (card, count, extra = {}) => ({
   gpuHyperCost: card.hyper, gpuSpecCost: card.spec, gpuSpotCost: card.spot,
   // Off the row, as readInputState() does — see the same line in state() above.
   gpuFp8: !!(card.caps && card.caps.fp8),
+  // Cost provenance, off the row like everything above. Left undefined for
+  // every synthetic card here (dualGCD, single, the perfKey overrides) since
+  // none of them carries one — readInputState() leaves it undefined too, off
+  // a real row with no confirmed source, and priceSourceLabel() treats that
+  // as "not recorded" rather than throwing.
+  priceSource: card.priceSource,
   gpuName: card.name, ...extra,
 });
 // The same silicon described as one dual-device board, or as two single-device

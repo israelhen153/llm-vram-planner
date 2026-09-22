@@ -121,6 +121,32 @@ def supports_nvlink(gpu):
     return gpu.get("form") == "sxm"
 
 
+# Display names for the providers tools/price_check.py's SOURCE_MAP fetches
+# from. The catalog stores the lowercase source id ('azure', 'aws', ...);
+# this is only for the label a reader sees. Mirrored by PROVIDER_NAMES in
+# index.html — nothing enforces the two staying identical beyond both being
+# short, hand-written, and unlikely to move, the same as the tier names.
+PROVIDER_NAMES = {"azure": "Azure", "aws": "AWS", "lambda": "Lambda",
+                   "coreweave": "CoreWeave", "vast": "Vast.ai"}
+
+
+def price_source_label(gpu, tier):
+    """Two states for a cost figure's provenance, and only two: sourced —
+    name the provider, its own SKU string verbatim, the region, and the day
+    it was read — or "not recorded", said plainly. Replaces the old
+    three-provider tier description ("Hyperscaler (AWS/GCP/Azure)" etc.),
+    which named every vendor in a tier whether or not it supplied the number
+    on the page — the defect fix/cost-provenance exists to remove. Mirrored
+    by priceSourceLabel() in index.html; each engine's own tests check its
+    own surfaces independently, since there is no shared render path between
+    an HTML page and a PDF to diff against."""
+    src = (gpu.get("priceSource") or {}).get(tier)
+    if not src:
+        return "not recorded"
+    provider = PROVIDER_NAMES.get(src["provider"], src["provider"])
+    return f"{provider} · {src['sku']} · {src['region']} · read {src['date']}"
+
+
 def nvlink_for(gpu, requested):
     """The interconnect this card will actually have, saying so when that is not
     what was asked for. The interactive path prints a line when it skips the
@@ -996,17 +1022,23 @@ class ReportCard:
 
         # ---- Cost ----
         story.append(Paragraph("Cost estimate", self.styles["SectionHead"]))
+        # Tier names only, matching index.html's renderCost() exactly — the old
+        # parenthetical ("Hyperscaler (AWS/GCP/Azure)") named every provider a
+        # tier could come from whether or not it supplied *this* number, the
+        # same defect the composite sub-labels on the web tool had. Which
+        # provider actually did is now price_source_label(), printed below
+        # the table rather than crammed into a column this table already has.
         cost_data = [
             ["Provider tier", "Per board/hr", f"Total/hr ({cfg['n_gpu']}×)", "Monthly (730h)"],
-            ["Hyperscaler (AWS/GCP/Azure)",
+            ["Hyperscaler",
              f"${gpu['hyper']:.2f}",
              f"${c['hourly_hyper']:.2f}",
              f"${round(c['hourly_hyper']*730):,}"],
-            ["Specialized (Lambda/CoreWeave)",
+            ["Specialized",
              f"${gpu['spec']:.2f}",
              f"${c['hourly_spec']:.2f}",
              f"${round(c['hourly_spec']*730):,}"],
-            ["Spot / marketplace (Vast.ai)",
+            ["Spot / marketplace",
              f"${gpu['spot']:.2f}",
              f"${c['hourly_spot']:.2f}",
              f"${round(c['hourly_spot']*730):,}"],
@@ -1031,6 +1063,17 @@ class ReportCard:
         story.append(Paragraph(
             "Prices per board/hr as of mid-2026. Vary by region, commitment, and availability. "
             "Reserved instances typically 30-60% off hyperscaler on-demand. Spot can be interrupted.",
+            self.styles["Small"]
+        ))
+        # One line per tier, always — never omitted for a tier with no source,
+        # never a provider name the catalog cannot back with a reading. This is
+        # the artifact README.md calls procurement-ready, so what forwarded a
+        # number to a buyer also forwards where it came from, or says plainly
+        # that nothing automated has confirmed it.
+        story.append(Paragraph(
+            f"Source — Hyperscaler: {price_source_label(gpu, 'hyper')}. "
+            f"Specialized: {price_source_label(gpu, 'spec')}. "
+            f"Spot: {price_source_label(gpu, 'spot')}.",
             self.styles["Small"]
         ))
         story.append(Spacer(1, 3*mm))
