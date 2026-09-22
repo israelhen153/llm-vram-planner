@@ -1,12 +1,18 @@
-"""Exact text in the engine files that engine sabotages anchor their edits on.
+"""What engine sabotages are built from: the text they anchor on, and the parts
+they assemble their payloads out of.
 
-Each constant is a verbatim excerpt of index.html or generate_report.py. A
-sabotage finds one and replaces it with a broken version. If the engine is
-edited and an excerpt stops matching, every sabotage anchored on it refuses to
-apply — which is the point: a stale anchor fails loudly, rather than letting a
-sabotage quietly miss its target and count as caught.
+Most constants here are verbatim excerpts of index.html (JS_*),
+generate_report.py (PY_*) or tools/sync_data.py (SYNC_*). A sabotage finds one
+and replaces it with a broken version. If the engine is edited and an excerpt
+stops matching, every sabotage anchored on it refuses to apply — which is the
+point: a stale anchor fails loudly, rather than letting a sabotage quietly miss
+its target and count as caught.
 
-JS_* excerpts are from index.html, PY_* from generate_report.py.
+Six are NOT excerpts and will never be found in the engine, by design:
+JS_FIELDS and PY_FIELDS list the throughput fields a sabotage is generated for,
+JS_PERF and PY_PERF map constant names onto their PERF keys, and JS_UNSUPPRESS
+and PY_UNSUPPRESS are payload templates — a block that re-derives throughput
+from NVIDIA's constants, with FIELD replaced per sabotage before it is inserted.
 """
 # index.html anchors
 JS_LOOKUP = ("  const P = typeof state.perfKey === 'string' && Object.hasOwn(PERF, state.perfKey)\n"
