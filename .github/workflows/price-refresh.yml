@@ -147,6 +147,7 @@ jobs:
         # regenerating the golden on this branch is how it is recorded.
 
       - name: Tell the PR body what the suite did
+        id: body
         if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
         env:
           SUITE: ${{ steps.suite.outcome }}

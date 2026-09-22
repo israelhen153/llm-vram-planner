@@ -27,7 +27,9 @@ Run:  python3 tests/workflow.test.py
 import fnmatch
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -130,24 +132,9 @@ def shell(step):
 SUITE_SHELL = 'set -o pipefail\n./tests/run.sh 2>&1 | tee "$RUNNER_TEMP/suite.log"'
 
 
-def executes(step, pattern):
-    """Does this step's shell RUN something matching `pattern`, as opposed to
-    printing its name? Quoted spans are removed first, because that is what
-    separates a command from a message about one: `node tests/model.test.js` runs
-    it, `printf \'... tests/run.sh is set -e ...\'` does not.
-
-    An earlier version anchored to the start of a line instead, and was wrong in
-    the other direction: it missed `node tests/model.test.js`, because the path is
-    the argument and not the command. A sabotage that had been caught for two
-    rounds went green.
-
-    This helper exists because the distinction has now caught five checks in this
-    file out, in both directions: a comment naming tests/golden, a comment
-    explaining pipefail, a printf of `UPDATE_GOLDEN=1 ...` as the instruction a
-    reviewer follows, and a printf naming tests/run.sh while explaining why the
-    log stops where it does. shell() already drops comments; this drops prose.
-    Every claim in this file about what a step DOES goes through here."""
-    return re.search(pattern, QUOTED.sub(" ", shell(step))) is not None
+# The steps whose shell is pinned whole below. Every OTHER step is forbidden
+# from naming tests/ at all — see check_only_the_pinned_steps_go_near_the_tests.
+PINNED = ("suite", "body", "gate")
 
 
 def suite_step():
@@ -156,6 +143,10 @@ def suite_step():
 
 def gate_step():
     return only(lambda s: s.get("id") == "diff", "with id: diff (the real gate)")
+
+
+def body_step():
+    return only(lambda s: s.get("id") == "body", "with id: body (it writes the PR body)")
 
 
 def uses_in(job, action):
@@ -303,21 +294,67 @@ test("no delivery step reports success when it failed to deliver",
      check_no_delivery_step_swallows_its_own_failure)
 
 
-def check_nothing_upstream_of_the_gate_runs_the_tests():
-    """The tail rule starts after the suite, but the real gate is before it: the
-    `diff` step carries no `if:`, so it is implicitly success()-gated, and
-    anything that fails above it leaves `changed` unset and delivers nothing.
-    Moving a test run up there rebuilds the deadlock outside the tail entirely."""
-    upstream = STEPS()[:STEPS().index(gate_step())]
-    for st in upstream:
-        assert not executes(st, r"tests/") and "tests/" not in str(st.get("uses", "")), (
-            f"step {label(st)!r} runs something under tests/ before the gate that "
-            f"decides whether there is anything to propose. A failure there skips "
-            f"the gate itself, so `changed` is never set and nothing is delivered "
-            f"— the original deadlock, rebuilt upstream of every rule below.")
+GATE_SHELL = ('if git diff --quiet -- data/gpus.json index.html generate_report.py; then\n'
+              '  echo "changed=false" >> "$GITHUB_OUTPUT"\n'
+              'else\n'
+              '  echo "changed=true" >> "$GITHUB_OUTPUT"\n'
+              'fi')
 
-test("nothing upstream of the gate can redden the job with a test",
-     check_nothing_upstream_of_the_gate_runs_the_tests)
+
+def check_the_gate_still_asks_whether_anything_moved():
+    """`changed` is what every delivery step is conditioned on, so whatever sets
+    it decides whether this job can ever propose anything — and nothing pinned it.
+    `echo "changed=false" >> "$GITHUB_OUTPUT"` makes the job green every week and
+    silent forever: the original bug's twin, reached from the other end.
+
+    Pinned whole, and pinned in place: it has to run AFTER the step that applies
+    prices, or it diffs a tree nothing has touched yet. Moving it up to "skip the
+    install when there is nothing to do" is a plausible refactor that quietly
+    does that."""
+    g = gate_step()
+    got = shell(g).strip()
+    assert got == GATE_SHELL, (
+        f"the gate's shell is not what this file guarantees.\n"
+        f"  expected: {GATE_SHELL!r}\n  found:    {got!r}")
+    steps = STEPS()
+    applier = only(lambda s: "price_check.py" in shell(s), "that applies prices")
+    assert steps.index(applier) < steps.index(g) < steps.index(suite_step()), (
+        "the gate must sit after the step that applies prices and before the "
+        "suite; anywhere else it diffs a tree nothing has changed yet")
+
+test("the gate still asks whether anything moved, and asks it in the right place",
+     check_the_gate_still_asks_whether_anything_moved)
+
+
+def check_only_the_pinned_steps_go_near_the_tests():
+    """Flipped from "does this step RUN the suite" to "may this step MENTION it".
+
+    The old rule asked the first question with a helper that stripped quoted
+    spans and then looked. That cannot work: `node "tests/model.test.js"` hides
+    the path in quotes, `LOG="$(./tests/run.sh)"` hides it in a substitution, and
+    an apostrophe in a trailing comment opens a span that runs to the next quote
+    ANYWHERE LATER IN THE SCRIPT — `[^']*` crosses newlines — swallowing an
+    unquoted test run on the following line. Six shapes, all reinstating the
+    original deadlock, all green. No regex over quote pairs tokenises shell; that
+    is the same mistake as the hand-rolled YAML reader, made again one language
+    down.
+
+    So the question is one that text can answer honestly. The three steps that
+    legitimately go near tests/ have their shells pinned whole — suite, gate and
+    body — and every other step is forbidden from naming it at all. There is no
+    quoting trick that helps, because nothing is being interpreted."""
+    for jobname, st in all_steps():
+        if st.get("id") in PINNED:
+            continue
+        where = shell(st) + " " + str(st.get("uses", ""))
+        assert "tests/" not in where, (
+            f"{jobname}:{label(st)!r} names tests/ and is not one of the pinned "
+            f"steps {PINNED}. A step that can run a test before the gate reddens "
+            f"the job and skips it — nothing is delivered, which is the deadlock "
+            f"this file exists to end. Pin the step, or do not name tests/.")
+
+test("only the steps whose shell is pinned go near the tests",
+     check_only_the_pinned_steps_go_near_the_tests)
 
 
 def check_the_body_reports_the_suites_real_result():
@@ -357,41 +394,22 @@ def check_the_suite_step_is_the_step_that_runs_the_suite():
         f"  found:    {got!r}\n"
         f"Change it deliberately here if the change is deliberate — everything "
         f"else about the suite is asserted through this one binding.")
-    others = [f"{j}:{label(st)}" for j, st in all_steps()
-              if st is not s and executes(st, r"tests/run\.sh")]
-    assert not others, (
-        f"another step runs the suite: {others}. Only the step above may, or the "
-        f"shell pinned here stops being the thing that decides what red means.")
+    # Which steps may go near tests/ at all is settled in the rule below. Here
+    # there is nothing left to check: this step's shell is the literal above.
 
 
 test("the step carrying id: suite is the one that runs the suite",
      check_the_suite_step_is_the_step_that_runs_the_suite)
 
 
-def check_the_pr_body_names_every_golden_a_reviewer_must_regenerate():
-    """tests/run.sh is `set -e`, so the log the body quotes stops at the FIRST
-    red suite and never mentions the others. Today that hid the report golden —
-    27 of the 59 strings that moved — behind the model golden, and the body named
-    only the one command the log happened to show.
-
-    Derived from the tree: every test that can rewrite a file under tests/golden/
-    must be named in the body. A third golden added later forces the body to
-    mention it, rather than being discovered by whoever is regenerating at the
-    time."""
+def regen_tests():
+    """Which tests regenerate a golden, counted against tests/golden/ itself so
+    the derivation cannot come back short and quietly ask for less."""
     tests_dir = os.path.join(ROOT, "tests")
-    # Which tests regenerate a golden, derived — and then CHECKED FOR
-    # COMPLETENESS, which is the part that matters. The first version matched a
-    # write expression and silently resolved to one file instead of two, so the
-    # rule asked for less than it meant and a sabotage that removed the second
-    # command passed it. A derivation that can come back short is a rule that can
-    # pass vacuously, so it is measured against the directory it describes.
-    golden_dir = os.path.join(tests_dir, "golden")
-    goldens = [f for f in os.listdir(golden_dir) if not f.startswith(".")]
-    regen = []
+    goldens = [f for f in os.listdir(os.path.join(tests_dir, "golden")) if not f.startswith(".")]
     me = os.path.basename(__file__)
+    regen = []
     for f in sorted(os.listdir(tests_dir)):
-        # This file names both terms because it counts the goldens; it regenerates
-        # none. A rule cannot be its own subject.
         if ".test." not in f or f == me:
             continue
         src = open(os.path.join(tests_dir, f), encoding="utf-8", errors="replace").read()
@@ -401,16 +419,44 @@ def check_the_pr_body_names_every_golden_a_reviewer_must_regenerate():
         f"{len(goldens)} files in tests/golden/ ({sorted(goldens)}) but {len(regen)} "
         f"test(s) appear to regenerate one ({regen}). This rule cannot ask for what "
         f"it cannot count, so it fails rather than asking for less.")
+    return regen
 
-    body = only(lambda s: "$RUNNER_TEMP" in shell(s) and "printf" in shell(s),
-                "that writes the PR body")
-    text = shell(body)
-    missing = [f for f in regen if f not in text]
-    assert not missing, (
-        f"the PR body does not tell a reviewer how to regenerate {missing}. "
-        f"The suite is set -e, so the log it quotes stops at the first red one "
-        f"and the rest are invisible — naming {sorted(regen)} is the only way "
-        f"a reviewer learns there is more than one.")
+
+def check_the_pr_body_names_every_golden_a_reviewer_must_regenerate():
+    """RUN the body script and read what it writes, rather than searching its
+    source for the strings it ought to contain.
+
+    Searching the source is satisfied by a trailing comment, by an unused
+    variable holding the names, by the commands sitting in the `success` branch
+    where a red run never reaches them, and by a second step that prints them to
+    stdout instead of to the report. All four were green. The script's OUTPUT is
+    the thing a reviewer actually reads, so that is what gets asserted — the same
+    move as pinning a shell whole, one level up.
+
+    Run in a temp dir with a fake RUNNER_TEMP. It touches nothing else: no
+    secrets, no network, and the only thing it writes is the report."""
+    body = body_step()
+    script = body.get("run")
+    assert script, "the body step has no shell"
+    env_decl = body.get("env") or {}
+    assert "SUITE" in env_decl, "the body step no longer takes SUITE from the environment"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, RUNNER_TEMP=tmp, SUITE="failure")
+        open(os.path.join(tmp, "suite.log"), "w").write("FAIL a golden\n154 passed, 1 failed\n")
+        r = subprocess.run(["bash", "-e", "-c", script], env=env,
+                           capture_output=True, text=True, cwd=tmp, timeout=60)
+        assert r.returncode == 0, f"the body script failed on a red suite: {r.stderr[-400:]}"
+        report = os.path.join(tmp, "price-check-report.md")
+        assert os.path.exists(report), "the body script wrote no report on a red suite"
+        written = open(report, encoding="utf-8").read()
+
+    for t in regen_tests():
+        assert re.search(rf"UPDATE_GOLDEN=\S+\s+\S+\s+tests/{re.escape(t)}", written), (
+            f"the PR body a red run actually produces does not tell a reviewer to run "
+            f"UPDATE_GOLDEN=... tests/{t}. tests/run.sh is set -e, so the log it quotes "
+            f"stops at the first red suite and the rest are invisible.\n\n"
+            f"--- what it wrote ---\n{written[-700:]}")
 
 test("the PR body names every golden a reviewer has to regenerate",
      check_the_pr_body_names_every_golden_a_reviewer_must_regenerate)
@@ -514,40 +560,57 @@ test("no with: block hides a path behind an expression",
      check_no_with_block_hides_a_path_behind_an_expression)
 
 
-def check_add_paths_carries_everything_the_job_regenerates():
-    """A price move rewrites index.html, so the job regenerates the published
-    images — and tools/make_assets.py writes THREE files into assets/, the third
-    being manifest.json, which records the hash of the index.html they were built
-    from. add-paths said `assets/*.png`, so the bot regenerated the manifest
-    correctly and then left it behind, and every price PR failed the asset gate
-    against a hash from before the prices moved.
+# A contract, so it is a literal. Every derived version of this rule was
+# defeated by an idiom it did not know: `python3 -m tools.make_assets` and
+# `cd tools && python3 make_assets.py` both slipped past the substring that
+# decided whether to run the rule at all (it `return`ed, so it passed by not
+# looking); `open(f'{ASSETS}/sizes.json','w')` slipped past the extraction of
+# what make_assets writes; and `:!assets/manifest.json` slipped past the
+# matching, because git applies exclude pathspecs after the includes and the
+# rule only checked that something matched.
+ADD_PATHS = ["data/gpus.json", "index.html", "generate_report.py", "assets/"]
 
-    Derived from the tool, not from a list written here: whatever make_assets
-    writes under assets/ must be matched by some pathspec the PR carries, so a
-    fourth output is covered the day it is added."""
-    if not any("tools/make_assets.py" in shell(st) for _, st in all_steps()):
-        return                          # the job no longer regenerates images
-    src = open(os.path.join(ROOT, "tools", "make_assets.py"), encoding="utf-8").read()
-    written = set(re.findall(r"os\.path\.join\(ASSETS,\s*'([^']+)'\)", src))
-    for var in re.findall(r"os\.path\.join\(ASSETS,\s*([A-Z_]+)\)", src):
-        m = re.search(rf"^{var}\s*=\s*'([^']+)'", src, re.M)
-        assert m, f"tools/make_assets.py writes assets/{{{var}}} and this rule cannot resolve it"
-        written.add(m.group(1))
-    assert written, "cannot tell what tools/make_assets.py writes — has it been restructured?"
 
+def check_add_paths_is_exactly_what_the_bot_may_commit():
+    """`assets/` and not `assets/*.png`: tools/make_assets.py writes THREE files
+    there, and the third is manifest.json, recording the hash of the index.html
+    the images were built from. The glob carried two and dropped the manifest, so
+    every price PR failed the asset gate against a hash from before the prices
+    moved. A directory covers the fourth output the day someone adds one.
+
+    tests/golden/ is absent deliberately: the bot proposes prices, a person
+    decides the display strings moved for the right reason."""
     pr = uses_in(JOB(), PR_ACTION)
-    specs = [p.strip() for p in str((pr.get("with") or {}).get("add-paths", "")).split("\n") if p.strip()]
-    for name in sorted(written):
-        target = f"assets/{name}"
-        covered = any(fnmatch.fnmatch(target, sp) or target.startswith(sp.rstrip("/") + "/")
-                      or sp.rstrip("/") == "assets" for sp in specs)
-        assert covered, (
-            f"tools/make_assets.py writes {target}, and add-paths ({specs}) does not "
-            f"carry it. The job regenerates it and the PR leaves it behind, which is "
-            f"how every price PR came to fail the asset gate on a stale hash.")
+    raw = str((pr.get("with") or {}).get("add-paths", ""))
+    # The action splits on newlines AND commas (utils.ts getStringAsArray), so a
+    # rule that splits on newlines alone reads a different list from the one git
+    # is handed.
+    specs = [p.strip() for p in re.split(r"[\n,]+", raw) if p.strip()]
+    assert specs == ADD_PATHS, (
+        f"add-paths is {specs}, and this file guarantees {ADD_PATHS}.\n"
+        f"Changing what the bot may commit is a decision, not a detail: narrowing "
+        f"it drops a regenerated file and the PR fails its own suite, widening it "
+        f"lets the bot approve its own change.")
+    assert not any(sp.startswith(":") or sp.startswith("!") for sp in specs), (
+        "a negative pathspec in add-paths: git runs every match through the "
+        "excludes afterwards, so this subtracts without any entry looking wrong")
 
-test("add-paths carries every file the job regenerates",
-     check_add_paths_carries_everything_the_job_regenerates)
+
+def check_make_assets_writes_only_where_the_bot_can_carry_it():
+    """The literal above covers assets/ completely, so the remaining question is
+    whether make_assets still writes only there."""
+    src = open(os.path.join(ROOT, "tools", "make_assets.py"), encoding="utf-8").read()
+    stray = [m for m in re.findall(r"""open\(\s*['"]([^'"]+)['"]\s*,\s*['"][wa]""", src)
+             if not m.startswith("assets/")]
+    assert not stray, (
+        f"tools/make_assets.py writes outside assets/: {stray}. add-paths carries "
+        f"assets/ and nothing else, so those files are regenerated and left behind.")
+
+test("add-paths is exactly the set the bot may commit",
+     check_add_paths_is_exactly_what_the_bot_may_commit)
+
+test("tools/make_assets.py writes only where add-paths can carry it",
+     check_make_assets_writes_only_where_the_bot_can_carry_it)
 
 
 print("\nThe job proposes; a person decides")
@@ -575,6 +638,12 @@ def check_the_bot_never_commits_the_golden():
         # the printf that carries this line to the reviewer starts with `printf`.
         assert not re.search(r"^\s*UPDATE_GOLDEN=", shell(st), re.M), (
             f"step {label(st)!r} regenerates a golden inside the job")
+        # And through the back door: `env: UPDATE_GOLDEN: "1"` on the suite step
+        # rewrites both goldens with no shell line to find, the suite then passes,
+        # and the body reports that it passed.
+        assert "UPDATE_GOLDEN" not in str(st.get("env") or ""), (
+            f"step {label(st)!r} sets UPDATE_GOLDEN in its environment, so the "
+            f"suite rewrites the goldens instead of judging against them")
 
 test("the price PR never carries a regenerated golden", check_the_bot_never_commits_the_golden)
 
