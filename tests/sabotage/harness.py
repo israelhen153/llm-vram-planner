@@ -25,7 +25,7 @@ ROOT = subprocess.check_output(
     cwd=os.path.dirname(os.path.abspath(__file__)), text=True).strip()
 os.chdir(ROOT)
 
-SUITES = [("model", ["node", "tests/model.test.js"]),
+JUDGING_SUITES = [("model", ["node", "tests/model.test.js"]),
           ("parity", ["python3", "tests/parity.test.py"]),
           ("report", ["python3", "tests/report.test.py"]),
           ("sync", ["python3", "tests/sync.test.py"]),
@@ -33,9 +33,9 @@ SUITES = [("model", ["node", "tests/model.test.js"]),
           ("workflow", ["python3", "tests/workflow.test.py"])]
 
 
-def run_suites():
+def run_judging_suites():
     res = {}
-    for name, cmd in SUITES:
+    for name, cmd in JUDGING_SUITES:
         p = subprocess.run(cmd, capture_output=True, text=True)
         out = p.stdout + p.stderr
         fails = [l.strip() for l in out.splitlines() if l.lstrip().startswith("FAIL")]
@@ -52,13 +52,13 @@ def require_green_baseline():
     and no way to tell it from a genuine catch. The run is worthless and looks perfect.
 
     So prove the tree judges green before judging anything against it."""
-    red = [k for k, v in run_suites().items() if v[0] != 0]
+    red = [k for k, v in run_judging_suites().items() if v[0] != 0]
     if red:
         sys.exit(f"refusing to judge: {', '.join(red)} already red on the unmodified "
                  f"tree, so every sabotage would read as caught")
 
 
-def apply(edits):
+def apply_edits(edits):
     """edits: list of (file, old, new, count). Returns the files touched."""
     touched = []
     for f, old, new, count in edits:
@@ -72,7 +72,7 @@ def apply(edits):
     return touched
 
 
-def restore(files):
+def restore_files(files):
     # Every file a suite can rewrite, not only the ones edited: tests/sync.test.py
     # runs the real sync against the real engines, so a sabotaged tools/sync_data.py
     # regenerates both GPU_TABLE blocks under the test.
@@ -118,16 +118,16 @@ def run_driver(sabotages):
     survived, unapplied = [], []
     for name in names:
         try:
-            touched = apply(sabotages[name])
+            touched = apply_edits(sabotages[name])
         except Exception as e:
             print(f"  !! {name}: could not apply: {e}")
             unapplied.append(name)
-            restore(touchable)
+            restore_files(touchable)
             continue
         try:
-            results = run_suites()
+            results = run_judging_suites()
         finally:
-            restore(touched)
+            restore_files(touched)
         red = {suite: r for suite, r in results.items() if r[0] != 0}
         if not red:
             survived.append(name)

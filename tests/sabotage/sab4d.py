@@ -8,16 +8,16 @@ sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
 from harness import run_driver
-from sab import IDX, GR, JS_TP_RETURN
+from sab import INDEX_HTML, REPORT_PY, JS_TP_RETURN
 
 MAXBATCH = "  const maxBatchCard = `<div class=\"reverse-card\"><p class=\"label\">Max batch at this context</p><p class=\"value\">${computed.maxBatchByKV} seq</p><p class=\"sub\">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div>`;\n"
 
 S = {}
 S["T1 js: max-batch card withheld for the unknown card, exempted by an invisible computeBound dependency"] = [
-    (IDX, MAXBATCH, MAXBATCH.replace("</p></div>`;\n", "</p>${computed.computeBound ? ' ' : ''}</div>`;\n"), 1),
-    (IDX, JS_TP_RETURN, JS_TP_RETURN.replace("</div>${maxBatchCard}</div>${queueWarning}", "</div></div>${queueWarning}"), 1)]
+    (INDEX_HTML, MAXBATCH, MAXBATCH.replace("</p></div>`;\n", "</p>${computed.computeBound ? ' ' : ''}</div>`;\n"), 1),
+    (INDEX_HTML, JS_TP_RETURN, JS_TP_RETURN.replace("</div>${maxBatchCard}</div>${queueWarning}", "</div></div>${queueWarning}"), 1)]
 S["T1b js (control): max-batch card withheld without the exemption trick"] = [
-    (IDX, JS_TP_RETURN, JS_TP_RETURN.replace("</div>${maxBatchCard}</div>${queueWarning}", "</div></div>${queueWarning}"), 1)]
+    (INDEX_HTML, JS_TP_RETURN, JS_TP_RETURN.replace("</div>${maxBatchCard}</div>${queueWarning}", "</div></div>${queueWarning}"), 1)]
 
 if __name__ == "__main__":
     run_driver(S)

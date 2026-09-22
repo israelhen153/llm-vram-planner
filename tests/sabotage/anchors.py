@@ -124,4 +124,7 @@ PY_RET_FITS = "        \"fits\": fits, \"comfortable\": comfortable,\n"
 PY_COST_HEAD = "        story.append(Paragraph(\"Cost estimate\", self.styles[\"SectionHead\"]))\n"
 SYNC_FIELDS = "              \"vendor\", \"perfKey\", \"devices\", \"form\", \"caps\")\n"
 
-IDX, GR, SY = "index.html", "generate_report.py", "tools/sync_data.py"
+# The three engine files a sabotage edits.
+INDEX_HTML = "index.html"
+REPORT_PY = "generate_report.py"
+SYNC_PY = "tools/sync_data.py"
