@@ -3952,6 +3952,14 @@ test('the sabotage README names every driver, and no driver it does not have', (
      unlisted tests/sabotage and turns the guard above red on a branch that has
      nothing to do with this work. It cost two people a confusing red suite before
      it was fixed, so the fix is pinned rather than remembered. */
+  /* chain.sh executes a driver directly, so one committed without the executable
+     bit errors with 126 and the whole run exits non-zero — which is how
+     engine_r4_cost_provenance.py failed to run at all on the commit that added
+     it. Loud, but only twenty minutes in; this says it in a second. */
+  const notExecutable = onDisk.filter(f => !(fs.statSync(path.join(dir, f)).mode & 0o111));
+  assert.deepStrictEqual(notExecutable, [],
+    `these drivers are not executable, so chain.sh cannot run them: ${notExecutable.join(', ')}`);
+
   const importers = onDisk.filter(f => f.endsWith('.py'))
     .filter(f => /^import\s|^from\s/m.test(fs.readFileSync(path.join(dir, f), 'utf8')));
   const writesBytecode = importers.filter(f =>
