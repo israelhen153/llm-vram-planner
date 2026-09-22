@@ -24,6 +24,7 @@ YAML. pyyaml is the sixth dependency and it is cheaper than being wrong.
 
 Run:  python3 tests/workflow.test.py
 """
+import fnmatch
 import os
 import re
 import sys
@@ -126,6 +127,21 @@ def shell(step):
 # echo's outcome, always success, on every red run. It also made the pipefail
 # rule vacuous in the same stroke, because the decoy has no pipe to check.
 SUITE_SHELL = 'set -o pipefail\n./tests/run.sh 2>&1 | tee "$RUNNER_TEMP/suite.log"'
+
+
+def executes(step, pattern):
+    """Does this step's shell RUN something matching `pattern`, as opposed to
+    printing its name? Anchored to command position — the start of a line, after
+    whitespace and any VAR=value prefixes.
+
+    This helper exists because the distinction has now caught five checks in this
+    file out, in both directions: a comment naming tests/golden, a comment
+    explaining pipefail, a printf of `UPDATE_GOLDEN=1 ...` as the instruction a
+    reviewer follows, and a printf naming tests/run.sh while explaining why the
+    log stops where it does. shell() already drops comments; this drops prose.
+    Every claim in this file about what a step DOES goes through here."""
+    return re.search(rf"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\S*{pattern}",
+                     shell(step), re.M) is not None
 
 
 def suite_step():
@@ -288,8 +304,7 @@ def check_nothing_upstream_of_the_gate_runs_the_tests():
     Moving a test run up there rebuilds the deadlock outside the tail entirely."""
     upstream = STEPS()[:STEPS().index(gate_step())]
     for st in upstream:
-        body = shell(st) + " " + str(st.get("uses", ""))
-        assert "tests/" not in body, (
+        assert not executes(st, r"tests/") and "tests/" not in str(st.get("uses", "")), (
             f"step {label(st)!r} runs something under tests/ before the gate that "
             f"decides whether there is anything to propose. A failure there skips "
             f"the gate itself, so `changed` is never set and nothing is delivered "
@@ -337,10 +352,10 @@ def check_the_suite_step_is_the_step_that_runs_the_suite():
         f"Change it deliberately here if the change is deliberate — everything "
         f"else about the suite is asserted through this one binding.")
     others = [f"{j}:{label(st)}" for j, st in all_steps()
-              if st is not s and "tests/run.sh" in shell(st)]
+              if st is not s and executes(st, r"tests/run\.sh")]
     assert not others, (
-        f"another step names tests/run.sh: {others}. Only one step may, or "
-        f"identifying the suite by what it runs stops being possible.")
+        f"another step runs the suite: {others}. Only the step above may, or the "
+        f"shell pinned here stops being the thing that decides what red means.")
 
 
 test("the step carrying id: suite is the one that runs the suite",
@@ -445,6 +460,42 @@ test("no with: block hides a path behind an expression",
      check_no_with_block_hides_a_path_behind_an_expression)
 
 
+def check_add_paths_carries_everything_the_job_regenerates():
+    """A price move rewrites index.html, so the job regenerates the published
+    images — and tools/make_assets.py writes THREE files into assets/, the third
+    being manifest.json, which records the hash of the index.html they were built
+    from. add-paths said `assets/*.png`, so the bot regenerated the manifest
+    correctly and then left it behind, and every price PR failed the asset gate
+    against a hash from before the prices moved.
+
+    Derived from the tool, not from a list written here: whatever make_assets
+    writes under assets/ must be matched by some pathspec the PR carries, so a
+    fourth output is covered the day it is added."""
+    if not any("tools/make_assets.py" in shell(st) for _, st in all_steps()):
+        return                          # the job no longer regenerates images
+    src = open(os.path.join(ROOT, "tools", "make_assets.py"), encoding="utf-8").read()
+    written = set(re.findall(r"os\.path\.join\(ASSETS,\s*'([^']+)'\)", src))
+    for var in re.findall(r"os\.path\.join\(ASSETS,\s*([A-Z_]+)\)", src):
+        m = re.search(rf"^{var}\s*=\s*'([^']+)'", src, re.M)
+        assert m, f"tools/make_assets.py writes assets/{{{var}}} and this rule cannot resolve it"
+        written.add(m.group(1))
+    assert written, "cannot tell what tools/make_assets.py writes — has it been restructured?"
+
+    pr = uses_in(JOB(), PR_ACTION)
+    specs = [p.strip() for p in str((pr.get("with") or {}).get("add-paths", "")).split("\n") if p.strip()]
+    for name in sorted(written):
+        target = f"assets/{name}"
+        covered = any(fnmatch.fnmatch(target, sp) or target.startswith(sp.rstrip("/") + "/")
+                      or sp.rstrip("/") == "assets" for sp in specs)
+        assert covered, (
+            f"tools/make_assets.py writes {target}, and add-paths ({specs}) does not "
+            f"carry it. The job regenerates it and the PR leaves it behind, which is "
+            f"how every price PR came to fail the asset gate on a stale hash.")
+
+test("add-paths carries every file the job regenerates",
+     check_add_paths_carries_everything_the_job_regenerates)
+
+
 print("\nThe job proposes; a person decides")
 
 
@@ -465,8 +516,11 @@ def check_the_bot_never_commits_the_golden():
     # rule is the same each time: shell() drops comments, and a claim about what
     # the shell DOES must be anchored to where a command can actually start.
     for st in STEPS():
+        # Not executes(): UPDATE_GOLDEN=1 is the env prefix, not the command, so
+        # the anchor is the assignment itself. Same principle, different shape —
+        # the printf that carries this line to the reviewer starts with `printf`.
         assert not re.search(r"^\s*UPDATE_GOLDEN=", shell(st), re.M), (
-            f"step {label(st)!r} regenerates the golden inside the job")
+            f"step {label(st)!r} regenerates a golden inside the job")
 
 test("the price PR never carries a regenerated golden", check_the_bot_never_commits_the_golden)
 
