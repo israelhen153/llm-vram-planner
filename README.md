@@ -105,7 +105,7 @@ Download `index.html`. Open in any browser. Done.
 
 ### Generate a PDF report
 ```bash
-pip install reportlab
+pip install reportlab pyyaml
 python generate_report.py --preset gemma4-26b --gpu a100-40 --prec awq --fp8-kv
 ```
 
@@ -179,7 +179,7 @@ docs/MODEL.md           Every formula, constant and limitation, explained
 docs/research/          Working notes behind catalog entries
 docs/skills/            Project knowledge Claude Code loads; run docs/skills/link.sh once
 setup.sh                Fork setup — repoints analytics at your account, or strips it
-tests/run.sh            Full suite — node, python3 and reportlab
+tests/run.sh            Full suite — node, python3, reportlab and pyyaml
 tests/model.test.js     VRAM, throughput and TTFT math
 tests/parity.test.py    Checks index.html and generate_report.py agree
 tests/report.test.py    The PDF generator and the text it emits

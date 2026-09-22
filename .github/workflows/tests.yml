@@ -42,9 +42,9 @@ jobs:
         with:
           node-version: "lts/*"
 
-      - name: Install reportlab
-        run: pip install reportlab
-        # The only third-party package the suite needs. tests/report.test.py
+      - name: Install what the suite needs
+        run: pip install reportlab pyyaml
+        # The two third-party packages the suite needs. tests/report.test.py
         # imports generate_report.py as a real module and that module imports
         # reportlab at the top, so the suite exits before its first assertion
         # without it. Everything else the tests touch is the standard library:

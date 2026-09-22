@@ -90,11 +90,11 @@ jobs:
 
       - name: Install what the image step and the test suite need
         if: steps.diff.outputs.changed == 'true'
-        run: pip install pillow websockets reportlab
+        run: pip install pillow websockets reportlab pyyaml
         # google-chrome-stable ships on the ubuntu-latest image already.
         # pillow and websockets are tools/make_assets.py's own dependencies
         # (see its docstring); the planner and the suite need neither.
-        # reportlab is the one package the suite itself needs:
+        # reportlab and pyyaml are the packages the suite itself needs:
         # tests/report.test.py imports generate_report.py as a real module,
         # and that exits without it. The first manual run of this job
         # installed only the first two and failed at the suite step.
