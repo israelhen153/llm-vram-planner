@@ -199,23 +199,88 @@ test("a red suite does not abort the job before it reports anything",
      check_a_red_suite_does_not_abort_the_job)
 
 
-def check_the_pr_is_not_gated_on_the_suite():
-    sid = suite_step()["id"]
-    pr = find(price_steps, uses=lambda v: v.startswith("peter-evans/create-pull-request"))
-    assert f"steps.{sid}" not in pr.get("if", ""), (
-        f"the pull-request step is conditioned on the suite again ({pr.get('if')}) — "
-        f"a price move always reddens the golden, so this means it can never open one")
+def delivery_steps():
+    """Every step from the suite onwards except the suite itself. Derived from
+    position, not named: once the suite has run, everything left exists to carry
+    the result out, and a list written by hand would miss the step someone adds
+    next. The PR step and the upload step are checked by identity below as well,
+    so this cannot go vacuous by the steps being renamed."""
+    idx = price_steps.index(suite_step())
+    return price_steps[idx + 1:]
 
-test("the pull request is not conditioned on the suite passing",
-     check_the_pr_is_not_gated_on_the_suite)
+
+# A status check function suppresses the implicit success(); these are the two
+# that still run after something above has failed. cancelled() and failure() do
+# not qualify — they would make delivery conditional on the wrong thing.
+SURVIVES_FAILURE = re.compile(r"always\(\)|!\s*cancelled\(\)")
+
+
+def check_delivery_cannot_be_skipped_by_an_earlier_failure():
+    """The one that matters, and the one the original bug came in through.
+
+    GitHub applies "a default status check of `success()` ... unless you include
+    one of these functions", so `if: steps.diff.outputs.changed == 'true'` really
+    means `success() && steps.diff.outputs.changed == 'true'`. Any step that fails
+    anywhere above therefore skips it. Gating the suite was only the *first* way to
+    build that deadlock; a later step doing `exit 1` over anything at all rebuilds
+    it without touching the PR step's own condition, which is what a check that
+    reads only that condition cannot see.
+
+    So the rule is positional and applies to the whole tail: nothing after the
+    suite may be skippable by a failure before it."""
+    tail = delivery_steps()
+    assert tail, "no steps follow the suite — nothing reports its result"
+    for st in tail:
+        cond = st.get("if", "")
+        assert SURVIVES_FAILURE.search(cond), (
+            f"step {label(st)!r} runs only on success() (if: {cond or '<none>'}). "
+            f"A failure anywhere above it — including one added later, guarding "
+            f"something unrelated — will silently skip it, which is the deadlock "
+            f"this job was rebuilt to escape. Use `!cancelled() && ...`.")
+
+test("nothing after the suite can be skipped by a failure before it",
+     check_delivery_cannot_be_skipped_by_an_earlier_failure)
+
+
+def check_nothing_downstream_conditions_on_the_suite_result():
+    """Reporting the result is not the same as obeying it. A step that *reads*
+    steps.suite.outcome to choose its wording is the point; one that reads it in
+    its `if:` is a gate wearing a different hat — and gating only the step that
+    explains the red suite is the quietest version, because the PR still opens
+    and simply arrives with no explanation of why it is red."""
+    sid = suite_step()["id"]
+    for st in delivery_steps():
+        assert f"steps.{sid}." not in st.get("if", ""), (
+            f"step {label(st)!r} is conditioned on the suite ({st['if']}). A price "
+            f"move always reddens the golden, so this step would never run on the "
+            f"runs this job exists for.")
+
+test("no step downstream of the suite is conditioned on the suite's result",
+     check_nothing_downstream_conditions_on_the_suite_result)
+
+
+def check_the_pr_step_and_the_upload_step_are_in_that_tail():
+    """Keeps the positional rule above honest: if either moved before the suite,
+    every assertion about the tail would still pass and mean nothing."""
+    tail = delivery_steps()
+    for what in ("peter-evans/create-pull-request", "actions/upload-artifact"):
+        assert any(st.get("uses", "").startswith(what) for st in tail), (
+            f"{what} no longer runs after the suite, so the tail rule no longer covers it")
+
+test("the pull request and the upload are both in that tail",
+     check_the_pr_step_and_the_upload_step_are_in_that_tail)
 
 
 def check_the_report_uploads_whatever_happened():
+    """Narrower than the tail rule above and kept beside it on purpose: this one
+    names the incident. `always()` rather than `!cancelled()` here because a
+    report from a cancelled run is still worth keeping."""
     up = find(price_steps, uses=lambda v: v.startswith("actions/upload-artifact"))
     assert up.get("if") == "always()", (
         f"the report upload is conditional ({up.get('if')!r}). It was once "
         f"`changed == 'false'`, which kept the report only on the runs that had "
-        f"nothing to say and lost it on both runs that did")
+        f"nothing to say and lost it on both runs that did — 2026-09-17's survives "
+        f"only in closed PR #12's body, and 2026-09-21's not at all")
 
 test("the report is uploaded on every run, not only the quiet ones",
      check_the_report_uploads_whatever_happened)

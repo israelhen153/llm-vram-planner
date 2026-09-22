@@ -102,6 +102,17 @@ jobs:
       - name: Regenerate published images (index.html changed)
         if: steps.diff.outputs.changed == 'true'
         run: python3 tools/make_assets.py
+      # The two delivery steps below carry `!cancelled()` rather than a bare
+      # condition, and that is load-bearing rather than decorative. GitHub applies
+      # "a default status check of `success()` ... unless you include one of these
+      # functions", so a plain `if:` silently means `success() && ...` — and any
+      # step that fails anywhere above would skip them. That is how the original
+      # deadlock worked, and a later `exit 1` guarding something unrelated would
+      # rebuild it without touching either step. `!cancelled()` makes the delivery
+      # path immune to what happens before it instead of auditing what sits there.
+      # The real gate is still `changed == 'true'`: if price_check.py fails, the
+      # step that sets it never runs and the PR is not opened.
+
       - name: Run the full suite — recorded, not obeyed
         id: suite
         if: steps.diff.outputs.changed == 'true'
@@ -128,7 +139,7 @@ jobs:
         # the golden on this branch is how it is recorded — see CONTRIBUTING.md.
 
       - name: Tell the PR body what the suite did
-        if: steps.diff.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
         env:
           SUITE: ${{ steps.suite.outcome }}
         run: |
@@ -156,7 +167,7 @@ jobs:
           } >> "$REPORT"
 
       - name: Open a pull request (never pushes to master)
-        if: steps.diff.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: "price-refresh: update catalog prices and provenance"
