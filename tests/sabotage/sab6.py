@@ -38,7 +38,7 @@ S = {
     "A4 pipefail dropped, so tee supplies the suite step's exit code":
         [(WF, "          set -o pipefail\n", "", 1)],
     "A5 the bot regenerates and commits the golden it is measured against":
-        [(WF, "            assets/*.png", "            assets/*.png\n            tests/golden/page.json", 1)],
+        [(WF, "            assets/\n", "            assets/\n            tests/golden/page.json\n", 1)],
 
     # --- ways the guard could be satisfied while meaning nothing ------------
     "B6 the suite step stops running the suite":

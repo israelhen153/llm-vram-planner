@@ -58,6 +58,7 @@ def load(path):
     return doc
 
 
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 PRICE_PATH = os.path.join(WORKFLOWS, "price-refresh.yml")
 PR_ACTION = "peter-evans/create-pull-request"
 _cache = {}
@@ -131,8 +132,14 @@ SUITE_SHELL = 'set -o pipefail\n./tests/run.sh 2>&1 | tee "$RUNNER_TEMP/suite.lo
 
 def executes(step, pattern):
     """Does this step's shell RUN something matching `pattern`, as opposed to
-    printing its name? Anchored to command position — the start of a line, after
-    whitespace and any VAR=value prefixes.
+    printing its name? Quoted spans are removed first, because that is what
+    separates a command from a message about one: `node tests/model.test.js` runs
+    it, `printf \'... tests/run.sh is set -e ...\'` does not.
+
+    An earlier version anchored to the start of a line instead, and was wrong in
+    the other direction: it missed `node tests/model.test.js`, because the path is
+    the argument and not the command. A sabotage that had been caught for two
+    rounds went green.
 
     This helper exists because the distinction has now caught five checks in this
     file out, in both directions: a comment naming tests/golden, a comment
@@ -140,8 +147,7 @@ def executes(step, pattern):
     reviewer follows, and a printf naming tests/run.sh while explaining why the
     log stops where it does. shell() already drops comments; this drops prose.
     Every claim in this file about what a step DOES goes through here."""
-    return re.search(rf"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*\S*{pattern}",
-                     shell(step), re.M) is not None
+    return re.search(pattern, QUOTED.sub(" ", shell(step))) is not None
 
 
 def suite_step():
@@ -360,6 +366,44 @@ def check_the_suite_step_is_the_step_that_runs_the_suite():
 
 test("the step carrying id: suite is the one that runs the suite",
      check_the_suite_step_is_the_step_that_runs_the_suite)
+
+
+def check_the_pr_body_names_every_golden_a_reviewer_must_regenerate():
+    """tests/run.sh is `set -e`, so the log the body quotes stops at the FIRST
+    red suite and never mentions the others. Today that hid the report golden —
+    27 of the 59 strings that moved — behind the model golden, and the body named
+    only the one command the log happened to show.
+
+    Derived from the tree: every test that can rewrite a file under tests/golden/
+    must be named in the body. A third golden added later forces the body to
+    mention it, rather than being discovered by whoever is regenerating at the
+    time."""
+    tests_dir = os.path.join(ROOT, "tests")
+    # A test that WRITES a golden, not one that says the word. This file mentions
+    # both "UPDATE_GOLDEN" and "golden" in the rule you are reading and regenerates
+    # nothing — the sixth time a check here has had to be told the difference
+    # between naming a thing and doing it.
+    WRITES = re.compile(r"writeFileSync\(\s*GOLDEN|json\.dump\w*\(.*GOLDEN|GOLDEN\w*\.write")
+    regen = []
+    for f in sorted(os.listdir(tests_dir)):
+        if ".test." not in f:
+            continue
+        src = open(os.path.join(tests_dir, f), encoding="utf-8", errors="replace").read()
+        if "UPDATE_GOLDEN" in src and WRITES.search(src):
+            regen.append(f)
+    assert regen, "no test writes a golden — has tests/golden/ moved?"
+    body = only(lambda s: "$RUNNER_TEMP" in shell(s) and "printf" in shell(s),
+                "that writes the PR body")
+    text = shell(body)
+    missing = [f for f in regen if f not in text]
+    assert not missing, (
+        f"the PR body does not tell a reviewer how to regenerate {missing}. "
+        f"The suite is set -e, so the log it quotes stops at the first red one "
+        f"and the rest are invisible — naming {sorted(regen)} is the only way "
+        f"a reviewer learns there is more than one.")
+
+test("the PR body names every golden a reviewer has to regenerate",
+     check_the_pr_body_names_every_golden_a_reviewer_must_regenerate)
 
 
 print("\nThe delivery steps have what they need to deliver")

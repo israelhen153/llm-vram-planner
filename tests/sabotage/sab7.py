@@ -85,7 +85,7 @@ S = {
 
     # --- the bot approving its own change -----------------------------------
     "S12 the golden reached add-paths through a wildcard, with a step to regenerate it":
-        [(WF, "            assets/*.png", "            assets/*.png\n            tests/*/page.json", 1),
+        [(WF, "            assets/\n", "            assets/\n            tests/*/page.json\n", 1),
          (WF, "          ./tests/run.sh 2>&1", "          UPDATE_GOLDEN=1 node tests/model.test.js\n          ./tests/run.sh 2>&1", 1)],
     "S13 the golden committed by hand before the PR action runs":
         [(WF, "      - name: Open a pull request (never pushes to master)",
