@@ -184,6 +184,17 @@ suite against the combination, which is the only run that can see the collision.
 The practical cost: when master moves, merge it into your branch and let CI run again before
 merging. That is the friction doing its job.
 
+**Open it as a draft if a review is still in flight.** A green suite does not mean a change is
+finished — this project reviews substantial changes with an independent checker that tries to
+reintroduce the bug rather than read the diff, and those findings arrive well after CI does.
+Two pull requests were merged here on 2026-09-20 while their checks were still running; the
+fixes were pushed to branches whose pull requests had closed minutes earlier, and the weaker
+version reached master. Nothing broke, and only an audit noticed.
+
+A draft cannot be merged. That is the point, and it costs one click: open as a draft, let the
+check finish, land what it finds, then mark it ready. Whoever merges should not have to know
+a review is in flight.
+
 ## Other contributions
 
 - **Bug reports**: [open an issue](https://github.com/israelhen153/llm-vram-planner/issues) with steps to reproduce
