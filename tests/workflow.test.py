@@ -58,9 +58,47 @@ def load(path):
 
 
 PRICE_PATH = os.path.join(WORKFLOWS, "price-refresh.yml")
-price = load(PRICE_PATH)
-JOB = price["jobs"]["price-check"]
-STEPS = JOB["steps"]
+PR_ACTION = "peter-evans/create-pull-request"
+_cache = {}
+
+
+def price():
+    """Loaded on demand, never at import. Renaming the job used to raise KeyError
+    at module level, outside any test() — a crash rather than a named failure,
+    which is how a suite stops reporting what it found."""
+    if "doc" not in _cache:
+        _cache["doc"] = load(PRICE_PATH)
+    return _cache["doc"]
+
+
+def JOBS():
+    return price()["jobs"]
+
+
+def JOB():
+    """The job that opens the pull request, found by what it DOES. Binding to the
+    literal key `price-check` meant a second job in the same file — same triggers,
+    "jobs ... run in parallel by default" — could carry the original bug verbatim
+    with every rule below passing, because none of them ever looked at it."""
+    hits = [(n, j) for n, j in JOBS().items()
+            if any(str(s.get("uses", "")).startswith(PR_ACTION) for s in j.get("steps") or [])]
+    assert len(hits) == 1, (
+        f"expected exactly one job to open a pull request, found {[n for n, _ in hits]}. "
+        f"Every rule in this file binds to that job; a second one is unguarded, and "
+        f"two of them would race on the same branch.")
+    return hits[0][1]
+
+
+def STEPS():
+    return JOB()["steps"]
+
+
+def all_steps():
+    """Every step of every job in this workflow. The rules that must hold
+    workflow-wide — nothing else runs the suite, nothing pushes — use this."""
+    for name, j in JOBS().items():
+        for s in j.get("steps") or []:
+            yield name, s
 
 
 def label(step):
@@ -70,7 +108,7 @@ def label(step):
 def only(pred, what):
     """Exactly one. Never zero, never two — both mean the file moved under a
     test that would otherwise still pass."""
-    hits = [s for s in STEPS if pred(s)]
+    hits = [s for s in STEPS() if pred(s)]
     assert len(hits) == 1, f"expected exactly 1 step {what}, found {len(hits)}"
     return hits[0]
 
@@ -82,12 +120,26 @@ def shell(step):
     return "\n".join(l for l in src.split("\n") if not l.strip().startswith("#"))
 
 
+# A contract, so it is a literal. Matching "a step whose shell mentions
+# tests/run.sh" let an `echo "the suite lives at tests/run.sh"` carry `id: suite`
+# while the real step invoked "${RUNNER}.sh" — the PR body then reported the
+# echo's outcome, always success, on every red run. It also made the pipefail
+# rule vacuous in the same stroke, because the decoy has no pipe to check.
+SUITE_SHELL = 'set -o pipefail\n./tests/run.sh 2>&1 | tee "$RUNNER_TEMP/suite.log"'
+
+
 def suite_step():
-    return only(lambda s: "tests/run.sh" in shell(s), "running tests/run.sh")
+    return only(lambda s: s.get("id") == "suite", "with id: suite")
 
 
 def gate_step():
     return only(lambda s: s.get("id") == "diff", "with id: diff (the real gate)")
+
+
+def uses_in(job, action):
+    hits = [s for s in job["steps"] if str(s.get("uses", "")).startswith(action)]
+    assert len(hits) == 1, f"expected exactly 1 step using {action}, found {len(hits)}"
+    return hits[0]
 
 
 def uses_step(action):
@@ -97,7 +149,7 @@ def uses_step(action):
 def delivery_steps():
     """Everything after the suite. Derived from position: once the suite has run,
     all that is left is carrying the result out."""
-    return STEPS[STEPS.index(suite_step()) + 1:]
+    return STEPS()[STEPS().index(suite_step()) + 1:]
 
 
 print("\nThe workflow reader understands the files it judges")
@@ -115,6 +167,43 @@ def check_every_workflow_parses():
 
 test(f"every workflow parses and every step is named ({len(present)} files)",
      check_every_workflow_parses)
+
+
+print("\nThe rules bind to the job that actually does the work")
+
+
+def check_exactly_one_job_opens_a_pull_request():
+    """JOB() asserts this, but as a named test rather than a side effect: it is
+    the binding every other rule in this file depends on. A second job appended
+    to this file inherits the same `schedule` and `workflow_dispatch` triggers —
+    "A workflow run is made up of one or more `jobs`, which run in parallel by
+    default" — so it needs no wiring at all, and until this rule existed it was
+    entirely unguarded. It could carry the original deadlock verbatim."""
+    JOB()
+
+test("exactly one job in this workflow opens the pull request",
+     check_exactly_one_job_opens_a_pull_request)
+
+
+def check_no_job_can_be_skipped_without_anyone_noticing():
+    """A job-level `if:` that is never true makes the whole job — suite, delivery,
+    everything — stop running, and GitHub reports it as "skipped", not as a
+    failure: "You can use the `jobs.<job_id>.if` conditional to prevent a job from
+    running unless a condition is met ... Otherwise, the job will be marked as
+    skipped". Nothing alarms anyone, which is the same silence this file exists to
+    end. `strategy` is here for the same reason: a matrix that expands to nothing
+    runs nothing."""
+    for name, j in JOBS().items():
+        assert "if" not in j, (
+            f"job {name!r} carries a job-level if: {j['if']!r}. A condition that "
+            f"stops being true retires the job silently — GitHub marks it skipped, "
+            f"not failed. Gate inside the steps, where the tail rules can see it.")
+        assert "strategy" not in j, (
+            f"job {name!r} has a strategy/matrix; one that expands to no instances "
+            f"runs nothing and reports nothing")
+
+test("no job can be retired by a condition that reports as 'skipped'",
+     check_no_job_can_be_skipped_without_anyone_noticing)
 
 
 print("\nThe price job can deliver a result its own suite goes red on")
@@ -180,7 +269,7 @@ def check_nothing_upstream_of_the_gate_runs_the_tests():
     `diff` step carries no `if:`, so it is implicitly success()-gated, and
     anything that fails above it leaves `changed` unset and delivers nothing.
     Moving a test run up there rebuilds the deadlock outside the tail entirely."""
-    upstream = STEPS[:STEPS.index(gate_step())]
+    upstream = STEPS()[:STEPS().index(gate_step())]
     for st in upstream:
         body = shell(st) + " " + str(st.get("uses", ""))
         assert "tests/" not in body, (
@@ -201,46 +290,50 @@ def check_the_body_reports_the_suites_real_result():
     disturbed. The PR's own check is not a backstop: a PR opened with
     GITHUB_TOKEN starts its runs in an approval-required state, so this sentence
     is the only channel that reports without a human clicking first."""
-    sid = suite_step()["id"]
-    want = "${{ steps.%s.outcome }}" % sid
-    carriers = [st for st in STEPS if want in str(st.get("env", {}).values())
-                or want in str(st.get("env") or "")]
+    want = "${{ steps.suite.outcome }}"
+    carriers = [st for st in STEPS() if want in str(st.get("env") or "")]
     assert carriers, (
         f"no step reads {want} into its environment. Reading .conclusion instead "
-        f"would report every red suite as a pass; renaming the suite step's id "
-        f"would report an empty string as one.")
+        f"reports every red suite as a pass, and there is no backstop: a PR opened "
+        f"with GITHUB_TOKEN starts its checks in an approval-required state, so the "
+        f"PR body is the only channel that speaks without a human clicking first.")
 
 test("the PR body is fed the suite's outcome, not its conclusion",
      check_the_body_reports_the_suites_real_result)
 
 
-def check_the_piped_suite_cannot_report_a_false_pass():
-    """The default shell is `bash -e {0}` — fail-fast, but no pipefail — so a
-    pipe hands the step tee's exit code and every red suite records as a pass.
-    `shell: bash` supplies `-o pipefail` itself; otherwise the script must set it
-    before the pipe, not after, and must not discard the status with `|| true`."""
-    s = suite_step()
-    script = shell(s)
-    assert "tests/run.sh" in script, "the suite step's shell no longer runs the suite"
-    if "|" not in script:
-        return
-    if str(s.get("shell", "")).strip() == "bash":
-        return                      # `bash --noprofile --norc -eo pipefail {0}`
-    i, j = script.find("pipefail"), script.find("|")
-    assert i != -1 and i < j, (
-        "the suite's output is piped without pipefail taking effect first, so the "
-        "last command in the pipe supplies the exit code and a red suite records "
-        "as a pass")
-    assert "|| true" not in script and "|| :" not in script, (
-        "the suite's exit status is discarded")
+def check_the_suite_step_is_the_step_that_runs_the_suite():
+    """Pinned whole, because every other rule about the suite trusts this binding.
+    `id: suite` is what the PR body reads, what continue-on-error is asserted on,
+    and what the delivery tail is measured from — so a step carrying that id and
+    not running the tests turns all of them at once into statements about an echo.
 
-test("piping the suite's output cannot turn a red suite into a reported pass",
-     check_the_piped_suite_cannot_report_a_false_pass)
+    The pipefail is inside this literal rather than checked separately: the
+    default shell is `bash -e {0}`, fail-fast but no pipefail, so a pipe hands the
+    step tee's exit code and a red suite records as a pass."""
+    s = suite_step()
+    got = shell(s).strip()
+    assert got == SUITE_SHELL, (
+        f"the suite step's shell is not what this file guarantees.\n"
+        f"  expected: {SUITE_SHELL!r}\n"
+        f"  found:    {got!r}\n"
+        f"Change it deliberately here if the change is deliberate — everything "
+        f"else about the suite is asserted through this one binding.")
+    others = [f"{j}:{label(st)}" for j, st in all_steps()
+              if st is not s and "tests/run.sh" in shell(st)]
+    assert not others, (
+        f"another step names tests/run.sh: {others}. Only one step may, or "
+        f"identifying the suite by what it runs stops being possible.")
+
+
+test("the step carrying id: suite is the one that runs the suite",
+     check_the_suite_step_is_the_step_that_runs_the_suite)
 
 
 print("\nThe delivery steps have what they need to deliver")
 
 WRITE = re.compile(r"(?:>>?|\btee\b(?:\s+-\w+)*|--report-out)\s*\"?(?:\$RUNNER_TEMP|\$\{\{\s*runner\.temp\s*\}\})/([\w.\-]+)")
+EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 ANY_TEMP = re.compile(r"(?:\$RUNNER_TEMP|\$\{\{\s*runner\.temp\s*\}\})/([\w.\-]+)")
 
 
@@ -248,7 +341,7 @@ def check_the_job_can_push_a_branch_and_open_a_pr():
     """The workflow-level default is `contents: read`. Without the job-level
     block, create-pull-request has a token that can neither push the branch nor
     open the PR — and nothing about the steps looks any different."""
-    perms = JOB.get("permissions") or {}
+    perms = JOB().get("permissions") or {}
     for key in ("contents", "pull-requests"):
         assert perms.get(key) == "write", (
             f"the price-check job no longer grants {key}: write (found "
@@ -264,11 +357,11 @@ def check_every_temp_file_handed_to_an_action_is_one_the_job_writes():
     nothing and reports success, because `if-no-files-found` is `warn` — which it
     must stay, since suite.log legitimately does not exist on a quiet run."""
     written = set()
-    for st in STEPS:
+    for st in STEPS():
         written.update(WRITE.findall(shell(st)))
     assert written, "no step writes anything under RUNNER_TEMP any more"
     handed = {}
-    for st in STEPS:
+    for st in STEPS():
         if not st.get("uses"):
             continue
         for f in ANY_TEMP.findall(yaml.safe_dump(st.get("with") or {})):
@@ -309,6 +402,32 @@ test("the report the PR body is built from is also retained as an artifact",
      check_the_report_is_retained_by_an_upload_that_runs_after_the_suite)
 
 
+def check_no_with_block_hides_a_path_behind_an_expression():
+    """The RUNNER_TEMP rule reads filenames with a regex that expects
+    `runner.temp` to be followed immediately by `/name`. `${{ format('{0}/x.log',
+    runner.temp) }}` is valid, documented syntax — "Replaces values in the
+    `string` ... Variables in the `string` are specified using the `{N}` syntax"
+    — and resolves at runtime to a real path the regex never sees, so a wrong
+    filename passes unchecked and the artifact silently retains nothing under
+    `if-no-files-found: warn`.
+
+    So rather than teach the regex more syntax it can be outrun by, this rejects
+    any expression in a `with:` block that this file cannot evaluate. That is the
+    rule the round-1 reader broke by guessing instead of failing."""
+    for jobname, st in all_steps():
+        if not st.get("uses"):
+            continue
+        for e in EXPR.findall(yaml.safe_dump(st.get("with") or {})):
+            assert e.strip() == "runner.temp", (
+                f"{label(st)!r} passes an expression this file cannot evaluate: "
+                f"${{{{{e}}}}}. Only a bare `runner.temp` is permitted in a with: "
+                f"block, because the path rules read these values literally — "
+                f"anything else can name a file nothing writes and pass.")
+
+test("no with: block hides a path behind an expression",
+     check_no_with_block_hides_a_path_behind_an_expression)
+
+
 print("\nThe job proposes; a person decides")
 
 
@@ -328,7 +447,7 @@ def check_the_bot_never_commits_the_golden():
     # step comment naming tests/golden and the one explaining pipefail — so the
     # rule is the same each time: shell() drops comments, and a claim about what
     # the shell DOES must be anchored to where a command can actually start.
-    for st in STEPS:
+    for st in STEPS():
         assert not re.search(r"^\s*UPDATE_GOLDEN=", shell(st), re.M), (
             f"step {label(st)!r} regenerates the golden inside the job")
 
@@ -339,12 +458,13 @@ def check_it_still_never_pushes_or_commits_by_hand():
     pr = uses_step("peter-evans/create-pull-request")
     branch = (pr.get("with") or {}).get("branch")
     assert branch and branch not in ("master", "main"), f"the price job targets {branch!r}"
-    for st in STEPS:
+    for jobname, st in all_steps():
         body = shell(st)
-        assert not re.search(r"\bgit\s+push\b", body), f"a step pushes directly: {label(st)}"
+        assert not re.search(r"\bgit\s+push\b", body), (
+            f"a step pushes directly: {jobname}:{label(st)}")
         assert not re.search(r"\bgit\s+commit\b", body), (
-            f"a step commits by hand: {label(st)} — the PR action is what commits, "
-            f"and it is what add-paths constrains")
+            f"a step commits by hand: {jobname}:{label(st)} — the PR action is what "
+            f"commits, and it is what add-paths constrains")
 
 test("the price job still opens a pull request rather than pushing",
      check_it_still_never_pushes_or_commits_by_hand)
