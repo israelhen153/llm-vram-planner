@@ -750,6 +750,24 @@ def _cross_check_disagreement(reading, secondary_readings):
             "whatever _classify() made of the primary against the catalog")
 
 
+# What this floor governs, and what it deliberately does not. Owner decision,
+# 2026-09-22: it decides whether the tool may APPLY a new value on its own. It
+# does not decide whether an already-attributed price is shown as sourced.
+#
+# Three tiers sit past it today — h100-80/hyper (Azure $12.29 against AWS
+# $6.88), h100-80/spec (Lambda $3.99 against CoreWeave $6.16) and b200-192/spec
+# (Lambda $6.69 against CoreWeave $8.60) — and all three keep their provenance.
+# The disagreement is not a parsing error: those providers really do charge
+# those amounts, and naming the provider is exactly what makes each price true.
+# "The hyperscaler price for an H100" is not a quantity that exists, which is
+# why the cost surfaces name a source at all.
+#
+# Stripping their provenance to satisfy this floor would leave the price on
+# screen with nothing saying where it came from — the unattributed number this
+# whole commit exists to remove. So the spread is reported to a person, above,
+# and the label stays.
+
+
 def run(gpus_data, source_map, shared, only=None, slugs=None):
     outcomes = []
     for slug, row in gpus_data.items():
