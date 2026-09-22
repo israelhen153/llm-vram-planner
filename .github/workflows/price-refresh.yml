@@ -147,6 +147,7 @@ jobs:
         # regenerating the golden on this branch is how it is recorded.
 
       - name: Tell the PR body what the suite did
+        id: body
         if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
         env:
           SUITE: ${{ steps.suite.outcome }}
@@ -168,9 +169,15 @@ jobs:
               printf '```\n'
               tail -n 25 "$RUNNER_TEMP/suite.log" 2>/dev/null || printf '(no suite log)\n'
               printf '```\n\n'
-              printf 'If the moves are right: `UPDATE_GOLDEN=1 node tests/model.test.js` on this\n'
-              printf 'branch, commit the diff, and read it — the diff is the review. Moves over\n'
-              printf '40%% are flagged by the tool and left unapplied; they are a separate job.\n'
+              printf 'If the moves are right, there are TWO goldens to regenerate on this\n'
+              printf 'branch — tests/run.sh is `set -e`, so the log above stops at the first\n'
+              printf 'and names only one:\n\n'
+              printf '```\n'
+              printf 'UPDATE_GOLDEN=1 node tests/model.test.js      # what the cards display\n'
+              printf 'UPDATE_GOLDEN=1 python3 tests/report.test.py  # what the PDF says\n'
+              printf '```\n\n'
+              printf 'Commit both and read the diff — the diff is the review. Moves over 40%%\n'
+              printf 'are flagged by the tool and left unapplied; they are a separate job.\n'
             fi
           } >> "$REPORT"
 
@@ -191,10 +198,17 @@ jobs:
             data/gpus.json
             index.html
             generate_report.py
-            assets/*.png
-          # tests/golden/page.json is deliberately absent from that list. The bot
-          # proposes prices; a person decides the display strings moved for the
-          # right reason and regenerates the golden themselves.
+            assets/
+          # `assets/` rather than `assets/*.png`: tools/make_assets.py writes
+          # THREE files there, and the third is manifest.json, which records the
+          # hash of the index.html the images were built from. The glob carried
+          # the two images and dropped the manifest, so every price PR failed the
+          # asset gate against a hash from before the prices moved — the bot had
+          # regenerated it correctly and then left it behind.
+          #
+          # tests/golden/ is deliberately absent. The bot proposes prices; a
+          # person decides the display strings moved for the right reason and
+          # regenerates the goldens themselves.
 
       - name: Upload the report, whatever happened
         if: always()

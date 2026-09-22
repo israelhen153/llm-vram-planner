@@ -29,7 +29,7 @@ import sab
 WF = ".github/workflows/price-refresh.yml"
 PR_IF = "        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}\n        uses: peter-evans/create-pull-request@v6"
 UP_IF = "        if: always()\n        uses: actions/upload-artifact@v4"
-BODY = "      - name: Tell the PR body what the suite did\n        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}"
+BODY = "      - name: Tell the PR body what the suite did\n        id: body\n        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}"
 
 S = {
     # --- the reader read the file differently from YAML ---------------------
@@ -85,7 +85,7 @@ S = {
 
     # --- the bot approving its own change -----------------------------------
     "S12 the golden reached add-paths through a wildcard, with a step to regenerate it":
-        [(WF, "            assets/*.png", "            assets/*.png\n            tests/*/page.json", 1),
+        [(WF, "            assets/\n", "            assets/\n            tests/*/page.json\n", 1),
          (WF, "          ./tests/run.sh 2>&1", "          UPDATE_GOLDEN=1 node tests/model.test.js\n          ./tests/run.sh 2>&1", 1)],
     "S13 the golden committed by hand before the PR action runs":
         [(WF, "      - name: Open a pull request (never pushes to master)",
