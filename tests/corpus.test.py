@@ -43,9 +43,13 @@ def test(name, fn):
         fail_ct += 1
 
 
-# The prefix says which file an excerpt was taken from.
-PREFIX_FILE = {"JS_": "index.html", "PY_": "generate_report.py", "SYNC_": "tools/sync_data.py"}
-PATHS = {"INDEX_HTML", "REPORT_PY", "SYNC_PY"}
+# The prefix says which file an excerpt was taken from. PRICE_/GPUS_ added by
+# fix/cost-provenance's engine_r4_cost_provenance.py, which anchors sabotages
+# on tools/price_check.py (the writer) and data/gpus.json (the catalog) as
+# well as the three engine files above.
+PREFIX_FILE = {"JS_": "index.html", "PY_": "generate_report.py", "SYNC_": "tools/sync_data.py",
+               "PRICE_": "tools/price_check.py", "GPUS_": "data/gpus.json"}
+PATHS = {"INDEX_HTML", "REPORT_PY", "SYNC_PY", "PRICE_PY", "GPUS_JSON"}
 ENGINE = {f: open(os.path.join(ROOT, f), encoding="utf-8").read() for f in PREFIX_FILE.values()}
 NAMES = sorted(n for n in vars(anchors) if n.isupper() and n != "PAYLOAD_PARTS")
 PARTS = set(anchors.PAYLOAD_PARTS)
