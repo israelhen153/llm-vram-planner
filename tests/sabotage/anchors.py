@@ -13,7 +13,16 @@ JS_FIELDS and PY_FIELDS list the throughput fields a sabotage is generated for,
 JS_PERF and PY_PERF map constant names onto their PERF keys, and JS_UNSUPPRESS
 and PY_UNSUPPRESS are payload templates — a block that re-derives throughput
 from NVIDIA's constants, with FIELD replaced per sabotage before it is inserted.
+
+tests/corpus.test.py holds this file to that description, in the suite: every
+excerpt must still occur in the file its prefix names, and every payload part
+must occur in none — one found in the engine would mean the engine already
+contains the defect its sabotage inserts.
 """
+
+# The six constants above that are not excerpts. Declared rather than inferred,
+# so tests/corpus.test.py can check the declaration in both directions.
+PAYLOAD_PARTS = ("JS_FIELDS", "JS_PERF", "JS_UNSUPPRESS", "PY_FIELDS", "PY_PERF", "PY_UNSUPPRESS")
 # index.html anchors
 JS_LOOKUP = ("  const P = typeof state.perfKey === 'string' && Object.hasOwn(PERF, state.perfKey)\n"
              "    ? PERF[state.perfKey] : null;\n")

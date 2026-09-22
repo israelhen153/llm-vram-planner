@@ -25,6 +25,9 @@ ROOT = subprocess.check_output(
     cwd=os.path.dirname(os.path.abspath(__file__)), text=True).strip()
 os.chdir(ROOT)
 
+# Not every suite: tests/assets.test.py hashes index.html and tests/corpus.test.py
+# checks the anchors below still match it, so both go red under ANY engine edit
+# and would report every sabotage as caught whatever the real suites said.
 JUDGING_SUITES = [("model", ["node", "tests/model.test.js"]),
           ("parity", ["python3", "tests/parity.test.py"]),
           ("report", ["python3", "tests/report.test.py"]),

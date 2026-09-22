@@ -79,6 +79,9 @@ compared as resolved values before and after, and every one was identical.
 The suites that judge a sabotage are listed once, in `harness.py`'s `JUDGING_SUITES`, and
 `suites.sh` runs the same set for the one bash driver, printing one line each. `assets.test.py` is deliberately excluded — it hashes `index.html` and goes red on
 any edit, so it would report every sabotage as caught regardless of what the sabotage did.
+`tests/corpus.test.py` is excluded for the same reason — it checks the anchors still match the
+engine, which every sabotage breaks. It runs in the ordinary suite instead, so a pull request
+that moves anchored engine text goes red in its own CI rather than at the next corpus run.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
 because none of the other five opens `.github/`.
 
