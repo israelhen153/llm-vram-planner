@@ -1667,6 +1667,12 @@ test("price_source_label formats provider, SKU, region and date — a fixed expe
      check_price_source_label_format_is_a_fixed_expectation)
 
 
+NOTES_PRICE_SENTENCE = (
+    "GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
+    "specialized, spot/marketplace — see each tier's own source above, or "
+    '"not recorded" where it has no confirmed source.')
+
+
 def check_pdf_cost_section_names_a_source_or_says_not_recorded():
     """Mirrors tests/model.test.js's discovery sweep for the same requirement,
     on the engine that has no DOM to discover renderers from: report_strings()
@@ -1714,6 +1720,19 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
                 f"PDF, even outside the cost table")
         m = MULTI_PROVIDER.search(whole_blob)
         assert not m, f"{label}: two or more providers named together ({m.group(0)!r}) somewhere in the PDF"
+        # The notes carry no cost figure, so cost_strings never sees them, and a
+        # sentence there is as much a claim about where a price came from as a
+        # cost row is. Round 2 added "Spot prices are from Vast.ai." to the
+        # notes of every card, including one with nothing recorded, and brought
+        # the composite back inside that sentence in shapes the composite
+        # regexes do not match (" and " joined, lowercase). One sentence in the
+        # notes mentions price and what it may say is a contract, so it is a
+        # literal.
+        for sentence in re.split(r"(?<=\.)\s+", whole_blob):
+            if re.search(r"\bprices?\b", sentence, re.I) and "$" not in sentence:
+                assert sentence.strip().lstrip("\u2022 ").startswith(NOTES_PRICE_SENTENCE), (
+                    f"{label}: the PDF says something about price outside the cost table that is "
+                    f"not the one sentence it may say — {sentence.strip()[:200]!r}")
         assert "per-board/hr estimates" not in whole_blob, (
             f"{label}: still calls GPU prices \"estimates\" — some tiers are sourced, dated, "
             f"attributed figures, not guesses")
@@ -1735,11 +1754,21 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         # sabotage that stripped only hyper's date left spec's label intact,
         # the pooled count still went positive, and this test stayed green.
         # Every tier's own expected value must appear, individually.
+        # Round-2 cold check: `expected in blob` is membership, so swapping
+        # hyper's and spec's labels between tiers left both present and this
+        # passed — Lambda's SKU printed under the Azure price. Each tier's
+        # label must sit after that tier's OWN name, so the text is cut at the
+        # next tier name and the label looked for only in its own segment.
+        TIER_NAME = {"hyper": "Hyperscaler:", "spec": "Specialized:", "spot": "Spot:"}
+        marks = sorted((blob.index(n), t, len(n)) for t, n in TIER_NAME.items() if n in blob)
+        segments = {t: blob[at + ln:(marks[i + 1][0] if i + 1 < len(marks) else len(blob))]
+                    for i, (at, t, ln) in enumerate(marks)}
         for tier in ("hyper", "spec", "spot"):
             expected = gr.price_source_label(card, tier)
-            assert expected in blob, (
-                f"{label}/{tier}: expected {expected!r} not found in the cost-bearing text: "
-                f"{blob[:500]}")
+            where = segments.get(tier, blob)
+            assert expected in where, (
+                f"{label}/{tier}: expected {expected!r} not found after this tier's own name: "
+                f"{where[:300]!r}")
             if expected == "not recorded":
                 mixed_not_recorded_hit += 1
             else:

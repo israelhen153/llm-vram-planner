@@ -2205,6 +2205,9 @@ test('every cost surface names a source or says "not recorded", discovered not e
                           // not a bare comma or slash), so this cannot true-positive on a
                           // correct render, only on a reintroduced list.
                           /\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,\/]\s*(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}/];
+  const NOTES_PRICE_SENTENCES = [
+    'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for ' +
+    "each tier's source, or \"not recorded\" where it has no confirmed source."];
   const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
   // Cold-check finding: renderExecutiveSummary's "Monthly cost range" rounds
   // to whole dollars ("$657", never "$657.00"), so a cents-only pattern
@@ -2341,6 +2344,23 @@ test('every cost surface names a source or says "not recorded", discovered not e
       }
     }
     assert.ok(sawCostSurface, `${label}: no surface printed a cost figure at all — the sweep found nothing`);
+
+    /* The notes carry no cost figure, so the per-surface loop above never sees
+       them — and a sentence there is as much a claim about where a price came
+       from as a sub-label is. Round 2 added `notes += 'Spot prices are from
+       Vast.ai. '` to every card, including one with nothing recorded, and only
+       the golden noticed.
+
+       One sentence in the notes mentions price, and what it may say is a
+       contract, so it is a literal. Anything else naming a source belongs in
+       the cost table, beside the price it describes. */
+    const notesText = (texts['notes-output'] || '').replace(/<[^>]*>/g, ' ');
+    const priceSentences = notesText.split(/(?<=\.)\s+/)
+      .map(x => x.trim()).filter(x => /\bprices?\b/i.test(x));
+    for (const sentence of priceSentences)
+      assert.ok(NOTES_PRICE_SENTENCES.some(ok => sentence.startsWith(ok)),
+        `${label}: the notes say something about price that is not the one sentence they may ` +
+        `say — ${JSON.stringify(sentence.slice(0, 200))}`);
     // Cold-check finding: renderNotes()'s general disclaimer line ("GPU
     // prices are mid-2026 per-board/hr estimates...") named providers and
     // called every price an estimate, but the text has no dollar figure in
