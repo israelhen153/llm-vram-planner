@@ -2,11 +2,10 @@
 """Leaks conditioned on state axes the no-constants probes never vary, and a
 figure in a reportlab attribute the story spy never harvests."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_BADGE, PY_EXPLAIN, PY_NOTMOD_ROW
+from anchors import INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_BADGE, PY_EXPLAIN, PY_NOTMOD_ROW
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"
 FP8KV_BADGE = "  if (state.kvBytesPerValue < 2) html += '<span class=\"badge\" style=\"background:var(--success-bg);color:var(--success-text)\">FP8 KV cache</span>';\n"

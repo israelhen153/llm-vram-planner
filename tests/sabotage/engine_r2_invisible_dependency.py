@@ -4,11 +4,10 @@ figures are moved. Give the max-batch card an invisible dependency on one
 (a trailing space keyed on computeBound), then withhold the card for the
 unknown card."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import INDEX_HTML, REPORT_PY, JS_TP_RETURN
+from anchors import INDEX_HTML, REPORT_PY, JS_TP_RETURN
 
 MAXBATCH = "  const maxBatchCard = `<div class=\"reverse-card\"><p class=\"label\">Max batch at this context</p><p class=\"value\">${computed.maxBatchByKV} seq</p><p class=\"sub\">${computed.batchLimitedByKV ? `KV cache caps you below ${state.concurrency} requested` : 'KV cache has room for your concurrency'}</p></div>`;\n"
 

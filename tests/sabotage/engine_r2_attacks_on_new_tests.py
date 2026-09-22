@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Attacks on the new tests at 416a42e. Same machinery as sab.py."""
+"""Attacks on the new tests at 416a42e. Same machinery as harness.py."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import (INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, JS_NOTES_UNKNOWN,
+from anchors import (INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, JS_NOTES_UNKNOWN,
                  JS_BADGE, JS_TP_RETURN, JS_UNMODELLED_NOTE, PY_EXPLAIN, PY_NOTMOD_ROW)
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"  # borrowed 0.7 MBU, no PERF read

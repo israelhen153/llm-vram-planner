@@ -2,11 +2,10 @@
 """Loose ends: an attribute figure on an element the CARD split does not expose,
 and a no-number speed claim inside the PDF explanation paragraph."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import INDEX_HTML, REPORT_PY, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN
+from anchors import INDEX_HTML, REPORT_PY, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"
 

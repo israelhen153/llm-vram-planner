@@ -17,9 +17,8 @@ name anything. They are the reason the guard is positional and derived rather th
 a list of fields, and they are what the NEXT round should try to get past.
 """
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
 
 WF = ".github/workflows/price-refresh.yml"

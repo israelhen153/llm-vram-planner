@@ -3628,12 +3628,19 @@ test('every card still displays exactly what the golden records', () => {
 test('the sabotage README names every driver, and no driver it does not have', () => {
   const dir = path.join(ROOT, 'tests', 'sabotage');
   const doc = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
-  const onDisk = fs.readdirSync(dir)
-    .filter(f => /^sab.*\.(py|sh)$/.test(f))
-    .sort();
+  /* A driver is named for what it attacks — engine_* or workflow_* — and every other
+     script here must be a named support file. Without the second half, a driver
+     misnamed out of the pattern would drop out of every check below in silence,
+     which is the failure this whole corpus exists to catch in other code. */
+  const SUPPORT = ['harness.py', 'anchors.py', 'chain.sh', 'suites.sh'];
+  const scripts = fs.readdirSync(dir).filter(f => /\.(py|sh)$/.test(f));
+  const onDisk = scripts.filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f)).sort();
+  const stray = scripts.filter(f => !onDisk.includes(f) && !SUPPORT.includes(f));
+  assert.deepStrictEqual(stray, [],
+    `tests/sabotage holds scripts that are neither drivers nor support files: ${stray.join(', ')}`);
   assert.ok(onDisk.length > 0, 'no sabotage drivers found — has the directory moved?');
 
-  const named = new Set((doc.match(/`sab[0-9a-z]*\.(?:py|sh)`/g) || [])
+  const named = new Set((doc.match(/`(?:engine|workflow)_[0-9a-z_]+\.(?:py|sh)`/g) || [])
     .map(s => s.replace(/`/g, '')));
 
   const missing = onDisk.filter(f => !named.has(f));

@@ -2,16 +2,25 @@
 """Round 1, and the bulk of the corpus: throughput figures leaking into each of
 the four JS surfaces and the PDF when a card has no measured constants.
 
-Usage: python3 tests/sabotage/sab.py [name-substring ...]   (no args = all)
+Usage: python3 tests/sabotage/engine_r1_throughput_leaks.py [name-substring ...]
+       python3 tests/sabotage/engine_r1_throughput_leaks.py --from <name-prefix>
 """
 import os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Transitional. Every other driver still does `import sab` and reaches the
-# harness and the anchors through it, so they are re-exported here until the
-# drivers import those directly. Removed in the commit that renames the files.
-from harness import *   # noqa: F401,F403
-from anchors import *   # noqa: F401,F403
+from harness import run_driver
+from anchors import (INDEX_HTML, JS_BADGE, JS_CAP_MAXCTX, JS_CMP_GATE, JS_CMP_UNKNOWN,
+                     JS_COST, JS_DECL, JS_EXEC_DP, JS_EXEC_GATE, JS_EXEC_UNKNOWN, JS_FIELDS,
+                     JS_GETSPEC, JS_LOOKUP, JS_MD_COST, JS_MD_GATE, JS_MD_PERDEV,
+                     JS_MD_UNKNOWN, JS_METRICS_W, JS_NOTES_GATE, JS_NOTES_PCIE,
+                     JS_NOTES_UNKNOWN, JS_PERF, JS_QUEUE, JS_RET_BATCH, JS_RET_COST,
+                     JS_RET_FITS, JS_RET_TP, JS_RET_VRAM, JS_STATE_PK, JS_TP_GATE,
+                     JS_TP_RETURN, JS_TP_TILE, JS_UNMODELLED_NOTE, JS_UNSUPPRESS, PY_B_CLI,
+                     PY_B_INTERACTIVE, PY_B_JSON, PY_B_RAW, PY_COST, PY_COST_HEAD, PY_DECL,
+                     PY_DP_NOTE, PY_EXPLAIN, PY_FIELDS, PY_FP8_NOTE, PY_MAXCTX_ROW,
+                     PY_NOTES_PCIE, PY_NOTMOD_ROW, PY_PERF, PY_RET_BATCH, PY_RET_FITS,
+                     PY_RET_TP, PY_RET_W, PY_TP_GATE, PY_UNSUPPRESS, REPORT_PY, SYNC_FIELDS,
+                     SYNC_PY)
 
 S = {}  # name -> edits
 

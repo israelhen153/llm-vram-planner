@@ -3,11 +3,10 @@
 from a DOM node the JS harness stubs to empty), a leak gated on a selected
 preset (probes never select one), and stdout from generate()."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import INDEX_HTML, REPORT_PY, JS_EXEC_UNKNOWN, PY_EXPLAIN
+from anchors import INDEX_HTML, REPORT_PY, JS_EXEC_UNKNOWN, PY_EXPLAIN
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"
 MD_CMD = "  report += `\\n## vLLM command\\n\\`\\`\\`\\n${emitted ? emitted.textContent : ''}\\n\\`\\`\\`\\n`;\n"

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Second batch: leaks the suites' regexes may not see, and the benchmark panel
-drawn for a card without constants. Same machinery as sab.py."""
+drawn for a card without constants. Same machinery as harness.py."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import INDEX_HTML, REPORT_PY, JS_EXEC_UNKNOWN, JS_TP_TILE, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, PY_NOTMOD_ROW, PY_EXPLAIN
+from engine_r1_throughput_leaks import S as THROUGHPUT_LEAKS
+from anchors import INDEX_HTML, REPORT_PY, JS_EXEC_UNKNOWN, JS_TP_TILE, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, PY_NOTMOD_ROW, PY_EXPLAIN
 
 S = {}
 # A zero with a unit the FIGURE/BAD regexes do not know, beside the reason.
@@ -40,7 +40,7 @@ S["M1 js: benchmark panel still drawn for the unknown card"] = [
     (INDEX_HTML, "      html += `<p style=\"font-size:11px;color:var(--text-muted);margin:4px 0 0\">Measured ${benchmark.requestedParams}B numbers on this card would replace this — see <a href=\"https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md\" target=\"_blank\" style=\"color:var(--accent-text)\">CONTRIBUTING.md</a>.</p>`;\n    }\n",
      "      html += `<p style=\"font-size:11px;color:var(--text-muted);margin:4px 0 0\">Measured ${benchmark.requestedParams}B numbers on this card would replace this — see <a href=\"https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md\" target=\"_blank\" style=\"color:var(--accent-text)\">CONTRIBUTING.md</a>.</p>`;\n    } else {\n      html += `<p style=\"font-size:12px;font-weight:500;margin:0 0 4px\">Published benchmark on this card: ${provenance}</p>`;\n    }\n", 1)]
 # Reason present but the queue warning still points at figures, only for the batch-limited card
-S["M2 js: queue warning keeps its 'aggregate throughput above' clause"] = sab.S["H8 js: queue warning always points at 'aggregate throughput above'"]
+S["M2 js: queue warning keeps its 'aggregate throughput above' clause"] = THROUGHPUT_LEAKS["H8 js: queue warning always points at 'aggregate throughput above'"]
 
 if __name__ == "__main__":
     run_driver(S)

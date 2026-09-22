@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Round 3: attacks on the assumptions behind the 5f8e581 rules."""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import (INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_TP_RETURN, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_NOTES_UNKNOWN,
+from anchors import (INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_TP_RETURN, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_NOTES_UNKNOWN,
                  JS_BADGE, JS_NOTES_PCIE, JS_EXEC_DP, JS_QUEUE, PY_EXPLAIN, PY_NOTES_PCIE, PY_DP_NOTE)
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"

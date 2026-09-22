@@ -2,11 +2,10 @@
 """W11 again with the link on a word the reason-piece filter does not match on:
 was the href read, or did the <a> merely split 'do not transfer' in the raw markup?"""
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
-from sab import INDEX_HTML, REPORT_PY, JS_UNMODELLED_NOTE
+from anchors import INDEX_HTML, REPORT_PY, JS_UNMODELLED_NOTE
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"
 S = {"W11b js: the figure rides in an href on 'memory-bandwidth' inside the reason": [

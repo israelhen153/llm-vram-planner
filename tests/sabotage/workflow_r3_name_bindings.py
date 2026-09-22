@@ -17,9 +17,8 @@ because an echo has no pipe. Two prior rounds' findings reinstated by
 misdirecting identity rather than by touching either rule.
 """
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
 
 WF = ".github/workflows/price-refresh.yml"

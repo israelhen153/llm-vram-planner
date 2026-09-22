@@ -15,9 +15,8 @@ what review can see. The real run is a different oracle, and it found in forty
 seconds what three rounds had missed.
 """
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
 
 WF = ".github/workflows/price-refresh.yml"

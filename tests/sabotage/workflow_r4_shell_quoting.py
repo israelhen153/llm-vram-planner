@@ -31,9 +31,8 @@ whole where behaviour matters, and for the PR body, running the script and
 reading what it wrote.
 """
 import os, sys
-sys.dont_write_bytecode = True   # see the note in sab.py
+sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import sab
 from harness import run_driver
 
 WF = ".github/workflows/price-refresh.yml"
