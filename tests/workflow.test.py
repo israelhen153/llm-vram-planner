@@ -98,6 +98,28 @@ def read_steps(path):
     return steps
 
 
+def job_keys(path, job):
+    """The job's own keys — `permissions:` and friends — which the steps reader
+    above never sees. A cold check removed the whole block and every assertion
+    in this file still passed, because all of them were about steps."""
+    text = open(path, encoding="utf-8").read()
+    m = re.search(rf"^  {re.escape(job)}:$", text, re.M)
+    assert m, f"{os.path.basename(path)}: no job named {job}"
+    body, out, key = text[m.end():], {}, None
+    for line in body.split("\n"):
+        if line.strip() and not line.startswith("    "):
+            break                       # dedented out of this job
+        k = re.match(r"^    (\S[^:]*):(.*)$", line)
+        if k:
+            key = k.group(1).strip()
+            out[key] = k.group(2).strip()
+            continue
+        sub = re.match(r"^      (\S[^:]*):\s*([^#]*)", line)
+        if sub and key:
+            out[f"{key}.{sub.group(1).strip()}"] = sub.group(2).strip()
+    return out
+
+
 def label(step):
     return step.get("name") or step.get("uses")
 
@@ -333,6 +355,57 @@ def check_it_still_never_pushes_to_master():
 
 test("the price job still opens a pull request rather than pushing",
      check_it_still_never_pushes_to_master)
+
+
+print("\nThe delivery steps have what they need to deliver")
+
+TEMP_REF = re.compile(r"(?:\$RUNNER_TEMP|\$\{\{\s*runner\.temp\s*\}\})/([\w.\-]+)")
+
+
+def check_the_job_can_push_a_branch_and_open_a_pr():
+    """The workflow-level default is `contents: read`. Without the job-level
+    block, create-pull-request has a token that cannot push the branch or open
+    the PR — and nothing about the steps looks any different."""
+    keys = job_keys(PRICE, "price-check")
+    for need, why in (("permissions.contents", "write"),
+                      ("permissions.pull-requests", "write")):
+        assert keys.get(need) == why, (
+            f"the price-check job no longer grants {need}: {why!r} (found "
+            f"{keys.get(need)!r}). The workflow-level default is contents: read, "
+            f"so the PR step would fail on its token, not on its inputs.")
+
+test("the job still grants itself the permissions the PR step needs",
+     check_the_job_can_push_a_branch_and_open_a_pr)
+
+
+def check_every_temp_file_handed_to_an_action_is_one_the_job_writes():
+    """body-path and the artifact's path: are filenames, and nothing validates a
+    filename. A typo in body-path fails create-pull-request outright on every
+    run with something to propose; a typo in the artifact path uploads an empty
+    artifact and reports success, because if-no-files-found is `warn` — which it
+    must stay, since suite.log legitimately does not exist on a quiet run.
+
+    Derived both ways rather than pinned: the shell's filenames are whatever the
+    scripts name, and the actions' filenames must be drawn from that set."""
+    in_shell, handed_over = set(), {}
+    for st in price_steps:
+        for f in TEMP_REF.findall(run_script(st)):
+            in_shell.add(f)
+    assert in_shell, "no step writes anything under RUNNER_TEMP any more"
+    for st in price_steps:
+        if not st.get("uses"):
+            continue
+        for f in TEMP_REF.findall(st["_block"]):
+            handed_over.setdefault(f, label(st))
+    assert handed_over, "no action is handed a RUNNER_TEMP path — is the report still carried?"
+    for f, who in sorted(handed_over.items()):
+        assert f in in_shell, (
+            f"{who!r} is handed {f!r}, which no step in this job ever writes. "
+            f"Nothing validates these filenames: the PR step throws on a missing "
+            f"body-path, and the upload step reports success with an empty artifact.")
+
+test("every RUNNER_TEMP path handed to an action is one the job's own shell writes",
+     check_every_temp_file_handed_to_an_action_is_one_the_job_writes)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
