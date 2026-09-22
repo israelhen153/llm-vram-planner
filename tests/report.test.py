@@ -1780,6 +1780,51 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         f"the sweep did not exercise both states across every case: "
         f"sourced={mixed_sourced_hit} not-recorded={mixed_not_recorded_hit}")
 
+# One clock per case, scrubbed by shape; two bare dates per case, scrubbed by
+# value. Both counts are a contract — see the test below for what a change in
+# either one means.
+CLOCKS_PER_CASE = 1
+BARE_DATES_PER_CASE = 2
+
+
+def check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks():
+    """Round-2 cold check: two ways to plant a suite that goes red tomorrow
+    with no code change, both invisible on the day they land.
+
+    `golden_clocks()` replaces the footer's generated-at line by its shape, and
+    any string that is EXACTLY today's date by value. Raise the second count —
+    render a priceSource read date as its own paragraph and it becomes
+    "[today]" too — and the golden records a placeholder where a fixed content
+    date belongs; tomorrow that string is a date again and the golden no longer
+    matches. Lower the first — draw the footer as "Date: " + today and the
+    shape scrub never fires — and the golden records a literal date that stops
+    being today at midnight.
+
+    Round 1 was the same failure in its first shape, and it reached master's
+    CI. Neither version shows up on the day it is written, so counting is the
+    only thing that catches them while someone is still looking."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "report.json")
+    with open(path) as f:
+        golden = json.load(f)
+    assert golden, "the report golden is empty"
+    bad = []
+    for case, recorded in golden.items():
+        blob = json.dumps(recorded)
+        clocks = blob.count("Generated [date] at [time]")
+        bare = blob.count("[today]")
+        if clocks != CLOCKS_PER_CASE or bare != BARE_DATES_PER_CASE:
+            bad.append(f"{case}: {clocks} clock placeholder(s) (want {CLOCKS_PER_CASE}), "
+                       f"{bare} bare-date placeholder(s) (want {BARE_DATES_PER_CASE})")
+    assert not bad, (
+        "the clock scrubs no longer fire once per clock:\n       " + "\n       ".join(bad)
+        + "\n       More bare dates means a content date is being scrubbed as if it were a "
+          "clock, and the golden will stop matching tomorrow. Fewer means a clock is being "
+          "recorded literally, and the golden will stop matching tomorrow.")
+
+test("the clock scrubs fire exactly as often as the report has clocks",
+     check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks)
+
+
 test("the PDF cost section names a source or says \"not recorded\", for every shape",
      check_pdf_cost_section_names_a_source_or_says_not_recorded)
 
