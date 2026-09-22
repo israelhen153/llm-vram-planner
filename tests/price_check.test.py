@@ -1058,6 +1058,110 @@ test("every real priceSource is on a tier SOURCE_MAP actually marks automatable"
      check_every_real_price_source_is_backed_by_an_automated_source)
 
 
+# Which key in a SOURCE_MAP primary spec identifies the thing that was priced.
+# A contract, so it is literal — and a kind missing from it fails below rather
+# than being skipped, so a new provider cannot slip in unchecked.
+SPEC_IDENTIFIER = {"azure": "sku", "aws": "instanceType", "lambda": "plan",
+                   "coreweave": "name", "vast": "gpuName"}
+PRICE_SOURCE_FIELDS = {"provider", "sku", "region", "date", "price"}
+
+
+def check_every_real_price_source_agrees_with_the_source_it_names():
+    """Round-2 cold check: the fields were required to be non-empty, and
+    nothing compared them to the source they claim to come from. So
+    h100-80/hyper could say provider "aws" while carrying Azure's SKU, or say
+    region "westus2" when SOURCE_MAP reads eastus, or say "gcp" and render a
+    raw id no fetch could produce — each of them a provenance line that names
+    a source which did not supply the number, which is the whole defect this
+    branch exists to remove, reintroduced inside the label meant to fix it.
+
+    Checked against price_check.py's own SOURCE_MAP, which is what a real
+    fetch would have used."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            spec = (pc.SOURCE_MAP.get(slug, {}).get(tier) or {}).get("primary")
+            if not spec:
+                continue                      # the check above already owns this
+            checked += 1
+            kind = spec["kind"]
+            if kind not in SPEC_IDENTIFIER:
+                bad.append(f"{slug}/{tier}: SOURCE_MAP kind {kind!r} is not in SPEC_IDENTIFIER, "
+                           f"so nothing here can check what it recorded")
+                continue
+            if src.get("provider") != kind:
+                bad.append(f"{slug}/{tier}: provenance says provider {src.get('provider')!r}, "
+                           f"but the only source that could have supplied it is {kind!r}")
+            ident = spec.get(SPEC_IDENTIFIER[kind])
+            if ident and ident not in str(src.get("sku", "")):
+                bad.append(f"{slug}/{tier}: recorded sku {src.get('sku')!r} does not name "
+                           f"{ident!r}, which is what {kind} was asked for")
+            if "region" in spec and src.get("region") != spec["region"]:
+                bad.append(f"{slug}/{tier}: recorded region {src.get('region')!r} is not the "
+                           f"region read, {spec['region']!r}")
+    assert checked > 0, "no row was checked against SOURCE_MAP — the loop matched nothing"
+    assert not bad, ("provenance disagrees with the source it names:\n       "
+                     + "\n       ".join(bad))
+
+test("every real priceSource names the source SOURCE_MAP says supplied it",
+     check_every_real_price_source_agrees_with_the_source_it_names)
+
+
+def check_every_real_price_source_date_is_a_date_already_past():
+    """Round-2 cold check: "the date it was read" was only required to be a
+    non-blank string, so 2026-09-32, a 2031 date and "22 Sep 2026" all passed
+    and all rendered. A date that is not a date, or has not happened, cannot
+    be when something was read."""
+    import datetime
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    today = datetime.date.today()
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            raw = src.get("date")
+            try:
+                when = datetime.datetime.strptime(str(raw), "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                bad.append(f"{slug}/{tier}: date {raw!r} is not YYYY-MM-DD")
+                continue
+            if when > today:
+                bad.append(f"{slug}/{tier}: date {raw} has not happened yet")
+    assert checked > 0, "no priceSource date was checked"
+    assert not bad, "priceSource carries a date that is not one:\n       " + "\n       ".join(bad)
+
+test("every real priceSource date is a real date that has already happened",
+     check_every_real_price_source_date_is_a_date_already_past)
+
+
+def check_a_price_source_carries_these_fields_and_no_others():
+    """Round-2 cold check: an extra key was accepted everywhere. `"estimated":
+    true` round-tripped through sync, parity and both renderers, and the tier
+    still displayed as a confirmed reading — a claim about the price that
+    nothing renders, nothing validates and nothing can act on. The set is
+    closed so a field has to be added deliberately, here, with whatever
+    renders it."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            extra = set(src) - PRICE_SOURCE_FIELDS
+            missing = PRICE_SOURCE_FIELDS - set(src)
+            if extra or missing:
+                bad.append(f"{slug}/{tier}: unexpected {sorted(extra)}, missing {sorted(missing)}")
+    assert checked > 0, "no priceSource entry was checked"
+    assert not bad, ("a priceSource entry is not exactly "
+                     f"{sorted(PRICE_SOURCE_FIELDS)}:\n       " + "\n       ".join(bad))
+
+test("a priceSource carries exactly provider, sku, region, date and price",
+     check_a_price_source_carries_these_fields_and_no_others)
+
+
 def check_every_real_price_source_field_is_non_empty():
     """Cold-check finding: a sourced tier with an empty date rendered as
     "... · read " on the page and crashed the PDF generator with a
