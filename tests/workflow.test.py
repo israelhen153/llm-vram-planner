@@ -379,19 +379,29 @@ def check_the_pr_body_names_every_golden_a_reviewer_must_regenerate():
     mention it, rather than being discovered by whoever is regenerating at the
     time."""
     tests_dir = os.path.join(ROOT, "tests")
-    # A test that WRITES a golden, not one that says the word. This file mentions
-    # both "UPDATE_GOLDEN" and "golden" in the rule you are reading and regenerates
-    # nothing — the sixth time a check here has had to be told the difference
-    # between naming a thing and doing it.
-    WRITES = re.compile(r"writeFileSync\(\s*GOLDEN|json\.dump\w*\(.*GOLDEN|GOLDEN\w*\.write")
+    # Which tests regenerate a golden, derived — and then CHECKED FOR
+    # COMPLETENESS, which is the part that matters. The first version matched a
+    # write expression and silently resolved to one file instead of two, so the
+    # rule asked for less than it meant and a sabotage that removed the second
+    # command passed it. A derivation that can come back short is a rule that can
+    # pass vacuously, so it is measured against the directory it describes.
+    golden_dir = os.path.join(tests_dir, "golden")
+    goldens = [f for f in os.listdir(golden_dir) if not f.startswith(".")]
     regen = []
+    me = os.path.basename(__file__)
     for f in sorted(os.listdir(tests_dir)):
-        if ".test." not in f:
+        # This file names both terms because it counts the goldens; it regenerates
+        # none. A rule cannot be its own subject.
+        if ".test." not in f or f == me:
             continue
         src = open(os.path.join(tests_dir, f), encoding="utf-8", errors="replace").read()
-        if "UPDATE_GOLDEN" in src and WRITES.search(src):
+        if "UPDATE_GOLDEN" in src and re.search(r"""["']golden["']""", src):
             regen.append(f)
-    assert regen, "no test writes a golden — has tests/golden/ moved?"
+    assert len(regen) == len(goldens), (
+        f"{len(goldens)} files in tests/golden/ ({sorted(goldens)}) but {len(regen)} "
+        f"test(s) appear to regenerate one ({regen}). This rule cannot ask for what "
+        f"it cannot count, so it fails rather than asking for less.")
+
     body = only(lambda s: "$RUNNER_TEMP" in shell(s) and "printf" in shell(s),
                 "that writes the PR body")
     text = shell(body)
