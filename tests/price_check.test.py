@@ -583,6 +583,33 @@ def check_apply_moved_rewrites_price_and_source():
 test("MOVED rewrites both the price and priceSource", check_apply_moved_rewrites_price_and_source)
 
 
+def check_apply_writes_the_reading_not_the_proposed_value_as_price():
+    """priceSource[tier].price has to be the figure the run actually read and
+    compared, not oc.proposed: _classify() sets proposed=current for
+    CONFIRMED, so a naive `"price": oc.proposed` would make a CONFIRMED row's
+    provenance simply echo the catalog value back — recording nothing new and
+    defeating the point of a later test asserting the two agree."""
+    gpus = {"x": {"hyper": 5.0}}
+    # CONFIRMED: reading (5.03) differs slightly from current/proposed (5.0),
+    # inside the 1% floor. price must be the reading, not the echoed current.
+    oc = pc.Outcome("x", "hyper", "CONFIRMED", current=5.0, proposed=5.0, reading=_reading(price=5.03))
+    pc.apply_outcomes(gpus, [oc])
+    assert gpus["x"]["priceSource"]["hyper"]["price"] == 5.03, gpus["x"]["priceSource"]["hyper"]
+
+test("CONFIRMED records the reading it compared, not an echo of the untouched catalog value",
+     check_apply_writes_the_reading_not_the_proposed_value_as_price)
+
+
+def check_apply_rounds_price_like_every_other_catalog_figure():
+    gpus = {"x": {"hyper": 5.0}}
+    oc = pc.Outcome("x", "hyper", "MOVED", current=5.0, proposed=4.2, reading=_reading(price=4.19951))
+    pc.apply_outcomes(gpus, [oc])
+    assert gpus["x"]["priceSource"]["hyper"]["price"] == 4.2, gpus["x"]["priceSource"]["hyper"]["price"]
+
+test("priceSource.price is rounded to 2 decimals, matching the catalog's own style",
+     check_apply_rounds_price_like_every_other_catalog_figure)
+
+
 def check_apply_flagged_aborted_manual_never_touch_row():
     gpus = {"x": {"hyper": 5.0}}
     original = copy.deepcopy(gpus)
@@ -600,6 +627,12 @@ test("FLAGGED, ABORTED and MANUAL outcomes never mutate the row",
 
 
 def check_apply_to_text_only_changes_named_rows():
+    """"Only changes" is about VALUES, not bytes: apply_to_text() now rewrites
+    every row's line (see the next test), but a row already in the canonical
+    compact style renders byte-identical, so its line does not move in a real
+    diff even though the function touched it. gpus here happens to describe
+    a100-80 in exactly that style already, which is what this test checks —
+    the drift-normalizing case (a row NOT already compact) is the next one."""
     raw = (
         '{\n'
         '  "_meta": {\n    "last_updated": "2026-08-24"\n  },\n'
@@ -613,13 +646,46 @@ def check_apply_to_text_only_changes_named_rows():
     new_text = pc.apply_to_text(raw, gpus, ["h100-80"], "2026-09-16")
     parsed = json.loads(new_text)
     assert parsed["data"]["h100-80"]["hyper"] == 12.29
-    assert parsed["data"]["a100-80"] == {"gb": 80, "hyper": 4.5}, "untouched row must not move"
+    assert parsed["data"]["a100-80"] == {"gb": 80, "hyper": 4.5}, "untouched row's value must not move"
     assert parsed["_meta"]["last_updated"] == "2026-09-16"
     # The untouched row's exact original line must still be present, byte for byte.
     assert '"a100-80": { "gb": 80, "hyper": 4.5 },' in new_text
 
-test("apply_to_text rewrites only the named row's line and _meta.last_updated",
+test("apply_to_text leaves an already-canonical row's value and bytes alone",
      check_apply_to_text_only_changes_named_rows)
+
+
+def check_apply_to_text_normalizes_a_stale_formatted_row_too():
+    """The bug PR #24 shipped: a row nobody's run has ever touched (no
+    automatable source, so it never appears in changed_slugs) keeps its old
+    hand-padded formatting forever, while every row a run does touch loses
+    its padding the first time and never gets it back — the file ends up
+    part one style, part the other, and it gets worse every run. The fix is
+    that whenever ANYTHING changes, every row in gpus_data is rewritten
+    compact — including a100-80 here, which is untouched by VALUE (not in
+    changed_slugs, and its dict is identical to what's on disk) but is
+    reformatted anyway because h100-80 changed elsewhere in the same file."""
+    raw = (
+        '{\n'
+        '  "_meta": {\n    "last_updated": "2026-08-24"\n  },\n'
+        '  "data": {\n'
+        '    "a100-80":    { "gb": 80,    "hyper": 4.5 },\n'
+        '    "h100-80": { "gb": 80, "hyper": 12.3 }\n'
+        '  }\n'
+        '}\n'
+    )
+    gpus = {"a100-80": {"gb": 80, "hyper": 4.5}, "h100-80": {"gb": 80, "hyper": 12.29}}
+    new_text = pc.apply_to_text(raw, gpus, ["h100-80"], "2026-09-16")
+    parsed = json.loads(new_text)
+    # The value is untouched either way — this is a formatting check, not a value one.
+    assert parsed["data"]["a100-80"] == {"gb": 80, "hyper": 4.5}
+    # But the padded line is gone, replaced by the same compact style every
+    # other row uses — the whole point of the fix.
+    assert '"a100-80":    {' not in new_text, "a100-80 kept its stale hand-padding"
+    assert '"a100-80": { "gb": 80, "hyper": 4.5 },' in new_text, "a100-80 was not normalized to compact"
+
+test("apply_to_text normalizes a row's stale formatting even when only a different row's value changed",
+     check_apply_to_text_normalizes_a_stale_formatted_row_too)
 
 
 def check_apply_to_text_no_changes_leaves_last_updated_alone():
@@ -728,6 +794,148 @@ test("--only excluding a tier's configured kind reports it as manual for this ru
 
 
 # ===========================================================================
+# Cross-check disagreement: two live sources for one run, not catalog-vs-live
+# ===========================================================================
+print("\n_cross_check_disagreement / run(): a disagreeing secondary withholds the value")
+
+def check_cross_check_agreement_is_silent():
+    r = _reading(provider="lambda", sku="P", price=6.69)
+    s = _reading(provider="coreweave", sku="Q", price=6.69 * 1.10)  # 10%, under the floor
+    assert pc._cross_check_disagreement(r, [s]) is None
+
+test("a secondary within the cross-check floor produces no note",
+     check_cross_check_agreement_is_silent)
+
+
+def check_cross_check_disagreement_is_named():
+    # The live case this was built for: Lambda $6.69 vs CoreWeave $8.60, 28% apart.
+    r = _reading(provider="lambda", sku="NVIDIA B200 SXM6", price=6.69)
+    s = _reading(provider="coreweave", sku="NVIDIA HGX B200", price=8.60)
+    note = pc._cross_check_disagreement(r, [s])
+    assert note is not None
+    assert "lambda" in note and "coreweave" in note
+    assert "28" in note  # the delta itself, not just that one exists
+
+test("a secondary past the cross-check floor is named, with both sources and the delta",
+     check_cross_check_disagreement_is_named)
+
+
+def check_cross_check_ignores_an_aborted_secondary():
+    r = _reading(price=6.69)
+    assert pc._cross_check_disagreement(r, [pc.SourceError("boom")]) is None
+
+test("an aborted secondary (a SourceError) is not disagreement — it already failed on its own",
+     check_cross_check_ignores_an_aborted_secondary)
+
+
+def check_cross_check_takes_the_worst_of_several():
+    r = _reading(price=10.0)
+    close = _reading(provider="a", sku="close", price=10.5)     # 5%, agrees
+    far = _reading(provider="b", sku="far", price=15.0)          # 50%, disagrees
+    note = pc._cross_check_disagreement(r, [close, far])
+    assert "far" in note and "close" not in note
+
+test("with several secondaries, only the worst disagreement is named",
+     check_cross_check_takes_the_worst_of_several)
+
+
+def check_run_downgrades_a_disagreeing_confirm_to_flagged():
+    """The exact live shape found 2026-09-22: the primary alone would CONFIRM
+    (it agrees with the stale catalog value), but a cross-check disagrees hard
+    — and CONFIRMED would otherwise refresh provenance for a number a second
+    live source is actively contradicting."""
+    # tier is "hyper", the first tier run() iterates, so outcomes[0] below is
+    # unambiguously this tier's outcome and not an unconfigured tier's MANUAL.
+    gpus = {"x": {"hyper": 6.69}}
+
+    def fake_fetch(spec, shared):
+        return {"primary-kind": _reading(provider="lambda", sku="P", price=6.69),
+                "secondary-kind": _reading(provider="coreweave", sku="Q", price=8.60)}[spec["kind"]]
+
+    original = pc._fetch_one
+    pc._fetch_one = fake_fetch
+    try:
+        source_map = {"x": {"hyper": {"primary": {"kind": "primary-kind"},
+                                        "secondary": [{"kind": "secondary-kind"}]}}}
+        outcomes = pc.run(gpus, source_map, shared={})
+    finally:
+        pc._fetch_one = original
+    oc = outcomes[0]
+    assert oc.tier == "hyper"
+    assert oc.status == "FLAGGED", f"expected FLAGGED, got {oc.status}"
+    assert oc.proposed is None
+    assert "disagree" in oc.note
+
+test("a cross-check disagreement downgrades what would otherwise CONFIRM to FLAGGED",
+     check_run_downgrades_a_disagreeing_confirm_to_flagged)
+
+
+def check_run_downgrades_a_disagreeing_move_to_flagged():
+    gpus = {"x": {"hyper": 5.0}}
+
+    def fake_fetch(spec, shared):
+        return {"primary-kind": _reading(provider="lambda", sku="P", price=5.3),
+                "secondary-kind": _reading(provider="coreweave", sku="Q", price=8.0)}[spec["kind"]]
+
+    original = pc._fetch_one
+    pc._fetch_one = fake_fetch
+    try:
+        source_map = {"x": {"hyper": {"primary": {"kind": "primary-kind"},
+                                        "secondary": [{"kind": "secondary-kind"}]}}}
+        outcomes = pc.run(gpus, source_map, shared={})
+    finally:
+        pc._fetch_one = original
+    oc = outcomes[0]
+    assert oc.tier == "hyper"
+    assert oc.status == "FLAGGED", f"expected FLAGGED, got {oc.status}"
+    assert oc.proposed is None
+
+test("a cross-check disagreement downgrades what would otherwise MOVE to FLAGGED",
+     check_run_downgrades_a_disagreeing_move_to_flagged)
+
+
+def check_run_agreeing_secondary_never_touches_status():
+    gpus = {"x": {"hyper": 5.0}}
+
+    def fake_fetch(spec, shared):
+        return {"primary-kind": _reading(price=5.3),
+                "secondary-kind": _reading(price=5.35)}[spec["kind"]]
+
+    original = pc._fetch_one
+    pc._fetch_one = fake_fetch
+    try:
+        source_map = {"x": {"hyper": {"primary": {"kind": "primary-kind"},
+                                        "secondary": [{"kind": "secondary-kind"}]}}}
+        outcomes = pc.run(gpus, source_map, shared={})
+    finally:
+        pc._fetch_one = original
+    oc = outcomes[0]
+    assert oc.tier == "hyper"
+    assert oc.status == "MOVED" and oc.proposed == 5.3 and oc.note == ""
+
+test("an agreeing secondary leaves MOVED/CONFIRMED and their note untouched",
+     check_run_agreeing_secondary_never_touches_status)
+
+
+def check_apply_never_touches_a_row_flagged_for_disagreement():
+    """FLAGGED already means "never touch the row" (see
+    check_apply_flagged_aborted_manual_never_touch_row above) — this pins
+    that the disagreement path produces a real FLAGGED outcome, not a
+    look-alike status apply_outcomes doesn't recognise."""
+    gpus = {"x": {"spec": 6.69}}
+    oc = pc.Outcome("x", "spec", "FLAGGED", current=6.69, proposed=None,
+                     reading=_reading(provider="lambda", price=6.69),
+                     secondary=[_reading(provider="coreweave", price=8.60)],
+                     note="primary and cross-check disagree")
+    changed = pc.apply_outcomes(gpus, [oc])
+    assert changed is False
+    assert gpus == {"x": {"spec": 6.69}}
+
+test("a row FLAGGED for cross-check disagreement is never written by apply_outcomes",
+     check_apply_never_touches_a_row_flagged_for_disagreement)
+
+
+# ===========================================================================
 # SOURCE_MAP integrity — the config itself, checked the way main() checks it
 # ===========================================================================
 print("\nSOURCE_MAP: every slug matches the real catalog, every entry is well-formed")
@@ -767,6 +975,216 @@ def check_needed_kinds_reflects_the_map():
     assert kinds == {"azure", "aws", "lambda", "coreweave", "vast"}, kinds
 
 test("_needed_kinds sees every source kind actually used in SOURCE_MAP", check_needed_kinds_reflects_the_map)
+
+
+# ===========================================================================
+# The real catalog: every priceSource.price matches its own row's price
+# ===========================================================================
+# fix/cost-provenance's test 5: a later hand-edit to a price without updating
+# its provenance must fail. Checked against the committed file, not a fixture,
+# because that is the one place a stale price-vs-provenance pair would
+# actually ship. Not exact equality: CONFIRMED refreshes provenance without
+# rewriting a price that moved less than CONFIRM_THRESHOLD
+# (check_apply_writes_the_reading_not_the_proposed_value_as_price above pins
+# that priceSource.price is the reading, not an echo of the catalog value),
+# so a legitimately-confirmed row can drift from its recorded reading by a
+# little and still be exactly what it claims to be.
+#
+# Cold-check finding: using CONFIRM_THRESHOLD (1%) itself as this test's own
+# floor left a gap a hand-edit can hide in. h100-80/hyper -- the one real row
+# with any drift at all -- sits at 0.081% (12.30 vs. the recorded 12.29); the
+# cold check's sabotage moved it to 12.40 and 12.41, 0.895% and 0.976%, both
+# comfortably under a 1% floor and both a hand-edit with no fetch behind it
+# at all. A relative floor tied to CONFIRM_THRESHOLD cannot both admit
+# whatever a legitimate CONFIRMED run might someday produce (which the
+# tool's own design allows up to 1%) and reject an adversarial edit that
+# stays just under that same number -- the two are the same shape of gap by
+# construction. This halves the tolerance instead of matching it exactly:
+# still >6x the one real drift on record, so it does not fail real data, and
+# comfortably below both of the cold check's edits, which is what actually
+# matters here. It does not close the gap in principle -- a sufficiently
+# careful edit stays under any fixed relative floor -- but it closes the
+# specific one this run demonstrated, without fabricating precision this
+# file does not have about what a future legitimate CONFIRMED drift could
+# look like.
+PRICE_DRIFT_TOLERANCE = pc.CONFIRM_THRESHOLD / 2
+print("\nThe real catalog: every priceSource.price still agrees with its own row's price")
+
+def check_every_real_price_source_matches_its_own_price():
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            assert "price" in src, f"{slug}/{tier}: priceSource has no 'price' field"
+            price = src["price"]
+            catalog = row[tier]
+            delta = abs(catalog - price) / price if price else float("inf")
+            if delta > PRICE_DRIFT_TOLERANCE + 1e-9:
+                bad.append(f"{slug}/{tier}: catalog={catalog} priceSource.price={price} "
+                           f"({delta:+.2%}, past the {PRICE_DRIFT_TOLERANCE:.1%} drift floor this "
+                           f"test holds real rows to)")
+    assert checked > 0, "no row in data/gpus.json carries a priceSource — nothing was actually checked"
+    assert not bad, "price moved without its provenance being refreshed:\n       " + "\n       ".join(bad)
+
+test("every sourced tier's catalog price is within the drift floor of its recorded priceSource.price",
+     check_every_real_price_source_matches_its_own_price)
+
+
+def check_every_real_price_source_is_backed_by_an_automated_source():
+    """Cold-check finding: nothing tied priceSource's presence to SOURCE_MAP.
+    An invented priceSource on rtx6000ada-48/spot (a tier SOURCE_MAP marks
+    "manual": no automatable source exists) round-tripped as if a real fetch
+    confirmed it, and the price-drift check above passed too, since a
+    number invented to equal the catalog value trivially agrees with itself.
+    A tier with a priceSource must be one price_check.py's own SOURCE_MAP
+    says it can actually fetch — the only way it could have gotten one."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier in row.get("priceSource", {}):
+            checked += 1
+            cfg = pc.SOURCE_MAP.get(slug, {}).get(tier)
+            if not cfg or "primary" not in cfg:
+                bad.append(f"{slug}/{tier}: carries a priceSource, but SOURCE_MAP has no "
+                           f"automated source for it (manual reason: "
+                           f"{(cfg or {}).get('manual', '<no SOURCE_MAP entry at all>')!r})")
+    assert checked > 0, "no row in data/gpus.json carries a priceSource — nothing was actually checked"
+    assert not bad, "priceSource recorded for a tier with no automated source:\n       " + "\n       ".join(bad)
+
+test("every real priceSource is on a tier SOURCE_MAP actually marks automatable",
+     check_every_real_price_source_is_backed_by_an_automated_source)
+
+
+# Which key in a SOURCE_MAP primary spec identifies the thing that was priced.
+# A contract, so it is literal — and a kind missing from it fails below rather
+# than being skipped, so a new provider cannot slip in unchecked.
+SPEC_IDENTIFIER = {"azure": "sku", "aws": "instanceType", "lambda": "plan",
+                   "coreweave": "name", "vast": "gpuName"}
+PRICE_SOURCE_FIELDS = {"provider", "sku", "region", "date", "price"}
+
+
+def check_every_real_price_source_agrees_with_the_source_it_names():
+    """Round-2 cold check: the fields were required to be non-empty, and
+    nothing compared them to the source they claim to come from. So
+    h100-80/hyper could say provider "aws" while carrying Azure's SKU, or say
+    region "westus2" when SOURCE_MAP reads eastus, or say "gcp" and render a
+    raw id no fetch could produce — each of them a provenance line that names
+    a source which did not supply the number, which is the whole defect this
+    branch exists to remove, reintroduced inside the label meant to fix it.
+
+    Checked against price_check.py's own SOURCE_MAP, which is what a real
+    fetch would have used."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            spec = (pc.SOURCE_MAP.get(slug, {}).get(tier) or {}).get("primary")
+            if not spec:
+                continue                      # the check above already owns this
+            checked += 1
+            kind = spec["kind"]
+            if kind not in SPEC_IDENTIFIER:
+                bad.append(f"{slug}/{tier}: SOURCE_MAP kind {kind!r} is not in SPEC_IDENTIFIER, "
+                           f"so nothing here can check what it recorded")
+                continue
+            if src.get("provider") != kind:
+                bad.append(f"{slug}/{tier}: provenance says provider {src.get('provider')!r}, "
+                           f"but the only source that could have supplied it is {kind!r}")
+            ident = spec.get(SPEC_IDENTIFIER[kind])
+            if ident and ident not in str(src.get("sku", "")):
+                bad.append(f"{slug}/{tier}: recorded sku {src.get('sku')!r} does not name "
+                           f"{ident!r}, which is what {kind} was asked for")
+            if "region" in spec and src.get("region") != spec["region"]:
+                bad.append(f"{slug}/{tier}: recorded region {src.get('region')!r} is not the "
+                           f"region read, {spec['region']!r}")
+    assert checked > 0, "no row was checked against SOURCE_MAP — the loop matched nothing"
+    assert not bad, ("provenance disagrees with the source it names:\n       "
+                     + "\n       ".join(bad))
+
+test("every real priceSource names the source SOURCE_MAP says supplied it",
+     check_every_real_price_source_agrees_with_the_source_it_names)
+
+
+def check_every_real_price_source_date_is_a_date_already_past():
+    """Round-2 cold check: "the date it was read" was only required to be a
+    non-blank string, so 2026-09-32, a 2031 date and "22 Sep 2026" all passed
+    and all rendered. A date that is not a date, or has not happened, cannot
+    be when something was read."""
+    import datetime
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    today = datetime.date.today()
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            raw = src.get("date")
+            try:
+                when = datetime.datetime.strptime(str(raw), "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                bad.append(f"{slug}/{tier}: date {raw!r} is not YYYY-MM-DD")
+                continue
+            if when > today:
+                bad.append(f"{slug}/{tier}: date {raw} has not happened yet")
+    assert checked > 0, "no priceSource date was checked"
+    assert not bad, "priceSource carries a date that is not one:\n       " + "\n       ".join(bad)
+
+test("every real priceSource date is a real date that has already happened",
+     check_every_real_price_source_date_is_a_date_already_past)
+
+
+def check_a_price_source_carries_these_fields_and_no_others():
+    """Round-2 cold check: an extra key was accepted everywhere. `"estimated":
+    true` round-tripped through sync, parity and both renderers, and the tier
+    still displayed as a confirmed reading — a claim about the price that
+    nothing renders, nothing validates and nothing can act on. The set is
+    closed so a field has to be added deliberately, here, with whatever
+    renders it."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            extra = set(src) - PRICE_SOURCE_FIELDS
+            missing = PRICE_SOURCE_FIELDS - set(src)
+            if extra or missing:
+                bad.append(f"{slug}/{tier}: unexpected {sorted(extra)}, missing {sorted(missing)}")
+    assert checked > 0, "no priceSource entry was checked"
+    assert not bad, ("a priceSource entry is not exactly "
+                     f"{sorted(PRICE_SOURCE_FIELDS)}:\n       " + "\n       ".join(bad))
+
+test("a priceSource carries exactly provider, sku, region, date and price",
+     check_a_price_source_carries_these_fields_and_no_others)
+
+
+def check_every_real_price_source_field_is_non_empty():
+    """Cold-check finding: a sourced tier with an empty date rendered as
+    "... · read " on the page and crashed the PDF generator with a
+    KeyError — neither engine's crash (or silent blank) is a real check,
+    and a missing key (vs. an empty string) hits a different code path in
+    each. Every field is required and required to be a genuinely non-blank
+    string, checked directly against the data rather than however each
+    renderer happens to fail when it is not."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad, checked = [], 0
+    for slug, row in rows.items():
+        for tier, src in row.get("priceSource", {}).items():
+            checked += 1
+            for field in ("provider", "sku", "region", "date"):
+                value = src.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    bad.append(f"{slug}/{tier}.{field}: {value!r} — must be a non-empty string")
+    assert checked > 0, "no row in data/gpus.json carries a priceSource — nothing was actually checked"
+    assert not bad, "priceSource field missing or blank:\n       " + "\n       ".join(bad)
+
+test("every real priceSource's provider/sku/region/date is a non-empty string",
+     check_every_real_price_source_field_is_non_empty)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

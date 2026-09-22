@@ -40,7 +40,9 @@ fails loudly rather than silently testing nothing.
 ### How the files are named
 
 A driver's name says what it attacks and which review round produced it:
-`engine_*` drivers attack the model in `index.html` and `generate_report.py`, `workflow_*` drivers
+`engine_*` drivers attack the model in `index.html` and `generate_report.py` — and, from round 4,
+the data and writer that feed it (`data/gpus.json`, `tools/sync_data.py`, `tools/price_check.py`),
+since `engine_r4_cost_provenance.py` covers a feature that spans both — `workflow_*` drivers
 attack `.github/workflows/price-refresh.yml` and the guard in `tests/workflow.test.py`, and `rN` is
 the round. `ls` therefore lists each family in the order its rounds escalated. `workflow_live_*`
 came from a real run rather than a review.
@@ -70,6 +72,9 @@ compared as resolved values before and after, and every one was identical.
 | `engine_r3_fixed_assumptions.py` | 3 | Attacks on the assumptions behind round 2's rules — fixed vendor, fixed key, fixed device count |
 | `engine_r3_identical_estimate_and_href.py` | 3 | A borrowed-constant estimate shown identically for both cards, and a figure carried only in an `href` |
 | `engine_r3_href_on_unmatched_word.py` | 3 | The same `href` attack on a word the reason-piece filter does not match — was the href read, or did the `<a>` merely split the raw markup? |
+| `engine_r5_provenance_fields.py` | 2 | What a recorded provenance may say: a provider that did not supply the number, a region it was not read in, a date that is not a date or has not happened, and an extra key nothing renders — all of which rendered, and none of which the round-1 field checks noticed |
+| `engine_r5_provenance_rules.py` | 2 | Round 2 against those tests: fourteen shapes that passed them once the goldens were regenerated — a label deleted so its tier was skipped, two tiers' labels swapped, and composites joined by ` and `, `&`, a newline and the label's own separator, lowercase, and by providers no list contains |
+| `engine_r4_cost_provenance.py` | 4 | `fix/cost-provenance`: a composite provider list restored or appended anywhere near a price, `priceSource` dropped from the generated blocks, an invented source for a tier `SOURCE_MAP` marks manual, a blank date, a label that names the provider but drops the date or region, a price moved with its provenance left untouched, a cost range no longer bounded by the tier that is actually cheapest or priciest, the pre-fix catalog writer that lost a row's formatting the moment a different row changed, and a cross-check floor widened past the disagreement it exists to catch |
 | `workflow_r1_gate.py` | 1 | The gate that left the price job able to succeed only by finding nothing, and the seven ways a cold check rebuilt it afterwards without touching a guarded field |
 | `workflow_r2_yaml_reader.py` | 2 | The round-1 guard's own reader and rules: a delivery condition gated on the suite in a FOLDED second line, a step respelled until the reader and its own count check both dropped it, an object filter that gates delivery while naming no step, a test run moved upstream of the gate, and `.conclusion` for `.outcome` |
 | `workflow_r3_name_bindings.py` | 3 | The round-2 guard's bindings: a second job in the same file carrying the original bug where every rule read one literal job key, a job-level `if:` that retires the job as "skipped", a decoy `echo` that takes `id: suite` so the PR body reports its outcome forever, and `format()` hiding a filename from the path regex |

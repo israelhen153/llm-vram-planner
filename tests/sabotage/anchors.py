@@ -62,7 +62,7 @@ JS_EXEC_UNKNOWN = "    html += `<div class=\"exec-row\"><span class=\"exec-label
 JS_MD_UNKNOWN = "    : `- Throughput and TTFT: not modelled. No measured utilisation is published for ${state.gpuName}, and estimating either would mean borrowing another architecture's constants, which do not transfer.\\n`;\n"
 JS_NOTES_UNKNOWN = "    : 'Throughput is not modelled for this hardware: no measured utilisation is published for it. ';\n"
 JS_BADGE = "${computed.throughputModelled ? 'PCIe — 45-60% perf loss, worse with more devices' : 'PCIe — no NVLink; the speed cost is not modelled for this hardware'}"
-JS_GETSPEC = "           vendor: g.vendor, perfKey: g.perfKey, devices: g.devices, form: g.form, caps: g.caps };\n"
+JS_GETSPEC = "           vendor: g.vendor, perfKey: g.perfKey, devices: g.devices, form: g.form, caps: g.caps,\n"
 JS_STATE_PK = "    perfKey: gpu.perfKey,\n"
 JS_TP_GATE = "  if (!computed.throughputModelled) {\n    /* And no benchmark panel."
 JS_TP_TILE = "<p class=\"label\">Throughput and TTFT</p><p class=\"value\">Not modelled</p><p class=\"sub\">${unmodelledNote}</p>"
@@ -139,7 +139,44 @@ PY_RET_FITS = "        \"fits\": fits, \"comfortable\": comfortable,\n"
 PY_COST_HEAD = "        story.append(Paragraph(\"Cost estimate\", self.styles[\"SectionHead\"]))\n"
 SYNC_FIELDS = "              \"vendor\", \"perfKey\", \"devices\", \"form\", \"caps\")\n"
 
-# The three engine files a sabotage edits.
+# fix/cost-provenance: priceSourceLabel()/price_source_label() and every
+# surface that calls them — see engine_r4_cost_provenance.py.
+JS_PROVIDER_NAMES = ("const PROVIDER_NAMES = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda', "
+                     "coreweave: 'CoreWeave', vast: 'Vast.ai' };\n")
+JS_PRICE_LABEL_RET = "  return `${provider} · ${src.sku} · ${src.region} · read ${src.date}`;\n"
+JS_COST_HYPER_SUBLABEL = ("<span style=\"font-size:11px;color:var(--text-muted)\">"
+                          "${priceSourceLabel(state, 'hyper')}</span>")
+JS_CMP_COST_SOURCE = ("    html += `<div class=\"row\"><span class=\"label\">Cost source</span>"
+                      "<span class=\"val\" style=\"font-size:10px;line-height:1.5;text-align:right\">"
+                      "Hyper: ${priceSourceLabel(s, 'hyper')}<br>Spec: ${priceSourceLabel(s, 'spec')}"
+                      "<br>Spot: ${priceSourceLabel(s, 'spot')}</span></div></div>`;\n")
+JS_EXEC_COST_SOURCE = ("Cost source</span><span class=\"exec-value\" style=\"font-size:11px;"
+                       "font-weight:400;color:var(--text-muted)\">Hyper: "
+                       "${priceSourceLabel(state, 'hyper')} · Spec: ${priceSourceLabel(state, 'spec')} "
+                       "· Spot: ${priceSourceLabel(state, 'spot')}</span>")
+JS_CMP_RANGE = ("<span class=\"val\">$${Math.min(...cmpCosts).toFixed(2)}"
+                "–$${Math.max(...cmpCosts).toFixed(2)}</span>")
+JS_EXEC_RANGE = "const monthlyCheapest = Math.round(Math.min(...execCosts) * 730);\n"
+PY_PRICE_LABEL_RET = "    return f\"{provider} · {src['sku']} · {src['region']} · read {src['date']}\"\n"
+PY_TIER_HYPERSCALER = "            [\"Hyperscaler\",\n"
+PY_SOURCE_HYPER_LINE = "            f\"Source — Hyperscaler: {price_source_label(gpu, 'hyper')}. \"\n"
+PY_NOTES_COMPOSITE_OPEN = ("        notes.append(\"GPU prices are mid-2026 per-board/hr figures "
+                           "across 3 tiers: hyperscaler, \"\n")
+SYNC_OPTIONAL = "GPU_OPTIONAL = (\"default\", \"priceSource\")\n"
+PRICE_CROSS_CHECK_THRESHOLD = "CROSS_CHECK_FLAG_THRESHOLD = 0.20\n"
+PRICE_APPLY_LOOP = "    new_text = raw_text\n    for slug, row in gpus_data.items():\n"
+PRICE_FIELD_LINE = "            \"price\": round(oc.reading.price_per_gpu, 2),\n"
+GPUS_ADA_ROW = ("\"rtx6000ada-48\": { \"gb\": 48, \"bw\": 960, \"hyper\": 1.5, \"spec\": 0.9, \"spot\": 0.6, "
+               "\"tflops\": 364, \"name\": \"RTX 6000 Ada 48 GB\", \"vendor\": \"nvidia\", "
+               "\"perfKey\": \"nvidia\", \"devices\": 1, \"form\": \"pcie\", \"caps\": { \"fp8\": true } }")
+GPUS_H100_HYPER_PREFIX = "\"h100-80\": { \"gb\": 80, \"bw\": 3352, \"hyper\": 12.3,"
+GPUS_H100_SRC_BLOCK = ("\"priceSource\": { \"hyper\": { \"provider\": \"azure\", "
+                      "\"sku\": \"Standard_ND96isr_H100_v5\", \"region\": \"eastus\", "
+                      "\"date\": \"2026-09-22\", \"price\": 12.29 }")
+
+# The engine files a sabotage edits.
 INDEX_HTML = "index.html"
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
+PRICE_PY = "tools/price_check.py"
+GPUS_JSON = "data/gpus.json"

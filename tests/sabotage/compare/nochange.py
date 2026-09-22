@@ -196,3 +196,10 @@ print(f"PDF bytes (pinned clock, invariant mode): {pdf_n} configurations, {pdf_d
 print(f"from_json / interactive_mode: {jn} checks, {jd} differing")
 for s in samples:
     print("  " + s)
+
+# A comparison that compared nothing is not a pass. Its JS twin printed
+# "0 configurations, 0 differing surfaces" for a whole run and had no exit code
+# at all, so nothing could tell that apart from a clean result.
+if 0 in (n, pdf_n, jn):
+    sys.exit(f"compared nothing (states {n}, pdfs {pdf_n}, json/interactive {jn}) "
+             f"— this proves nothing")

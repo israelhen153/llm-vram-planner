@@ -6,7 +6,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Throughput and TTFT: not modelled. No measured utilisation is published for H100 80 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Throughput and TTFT: not modelled. No measured utilisation is published for H100 80 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -31,10 +31,11 @@
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
      "style=color:var(--warning-text);font-size:10px;font-weight:500",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $2.25–$12.30"
+    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -64,7 +65,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -78,10 +79,12 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
      "style=color:var(--warning-text);font-weight:500",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $1,643 – $8,979/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -121,7 +124,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -207,7 +210,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 8× H100 80 GB (PCIe) - Total VRAM: 640 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 14.7 GiB - Per-device: 23.2 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 172 - Throughput and TTFT: not modelled. No measured utilisation is published for H100 80 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (8× H100 80 GB) - Hyperscaler: $98.40/hr · $71,832/mo - Specialized: $31.92/hr · $23,302/mo - Spot: $18.00/hr · $13,140/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 8× H100 80 GB (PCIe) - Total VRAM: 640 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 14.7 GiB - Per-device: 23.2 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 172 - Throughput and TTFT: not modelled. No measured utilisation is published for H100 80 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (8× H100 80 GB) - Hyperscaler: $98.40/hr · $71,832/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $31.92/hr · $23,302/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $18.00/hr · $13,140/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -232,10 +235,11 @@
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
      "style=color:var(--warning-text);font-size:10px;font-weight:500",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "70B model GPU 8× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 23.2 GiB / 80 Max ctx (1u) 1024K Max users @8K 172 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $18.00–$98.40"
+    "text": "70B model GPU 8× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 23.2 GiB / 80 Max ctx (1u) 1024K Max users @8K 172 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $18.00–$98.40 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -265,7 +269,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (8×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $98.40 $71,832 Specialized Lambda, CoreWeave, RunPod $3.99 $31.92 $23,302 Spot / marketplace Vast.ai, spot instances $2.25 $18.00 $13,140 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (8×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $98.40 $71,832 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $31.92 $23,302 Spot / marketplace not recorded $2.25 $18.00 $13,140 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -279,10 +283,12 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
      "style=color:var(--warning-text);font-weight:500",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $13,140 – $71,832/mo Precision BF16 (full precision)"
+    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $13,140 – $71,832/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -338,7 +344,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. PCIe 64-128 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. PCIe 64-128 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -429,7 +435,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Throughput and TTFT: not modelled. No measured utilisation is published for T4 16 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Throughput and TTFT: not modelled. No measured utilisation is published for T4 16 GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo (source: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $0.35/hr · $255/mo (source: not recorded) - Spot: $0.15/hr · $110/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -454,10 +460,11 @@
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
      "style=color:var(--warning-text);font-size:10px;font-weight:500",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $0.15–$0.53"
+    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $0.15–$0.53 Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -487,7 +494,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.53 $0.53 $387 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 $0.53 $0.53 $387 Specialized not recorded $0.35 $0.35 $255 Spot / marketplace not recorded $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -505,11 +512,13 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
      "style=color:var(--warning-text);font-weight:500",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $110 – $387/mo Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $110 – $387/mo Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -548,7 +557,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -637,7 +646,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 40 GB - Total VRAM: 40 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 40 GiB (FITS) ## Capacity - Max context (1 user): 156K - Max concurrent @ 8K: 19 - Single-stream decode: ~64 tok/s - Aggregate @ 16 concurrent: ~525 tok/s - TTFT: ~934 ms ## Cost (1× A100 40 GB) - Hyperscaler: $3.40/hr · $2,482/mo - Specialized: $1.29/hr · $942/mo - Spot: $0.63/hr · $460/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 40 GB - Total VRAM: 40 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 40 GiB (FITS) ## Capacity - Max context (1 user): 156K - Max concurrent @ 8K: 19 - Single-stream decode: ~64 tok/s - Aggregate @ 16 concurrent: ~525 tok/s - TTFT: ~934 ms ## Cost (1× A100 40 GB) - Hyperscaler: $3.40/hr · $2,482/mo (source: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-22) - Specialized: $1.99/hr · $1,453/mo (source: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-22) - Spot: $0.63/hr · $460/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -661,10 +670,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× A100 40 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 40 Max ctx (1u) 156K Max users @8K 19 Per-user / aggregate ~64 / 525 tok/s Cost/hr $0.63–$3.40"
+    "text": "8B model GPU 1× A100 40 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 40 Max ctx (1u) 156K Max users @8K 19 Per-user / aggregate ~64 / 525 tok/s Cost/hr $0.63–$3.40 Cost source Hyper: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -694,7 +704,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $3.40 $3.40 $2,482 Specialized Lambda, CoreWeave, RunPod $1.29 $1.29 $942 Spot / marketplace Vast.ai, spot instances $0.63 $0.63 $460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-22 $3.40 $3.40 $2,482 Specialized Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-22 $1.99 $1.99 $1,453 Spot / marketplace not recorded $0.63 $0.63 $460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -708,9 +718,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× A100 40 GB VRAM used 32.6 GiB / 40 GiB per device (81%) Max concurrent users (8K context) 19 Speed per user ~64 tokens/sec Total server throughput ~525 tokens/sec Monthly cost range $460 – $2,482/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× A100 40 GB VRAM used 32.6 GiB / 40 GiB per device (81%) Max concurrent users (8K context) 19 Speed per user ~64 tokens/sec Total server throughput ~525 tokens/sec Monthly cost range $460 – $2,482/mo Cost source Hyper: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -750,7 +762,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -840,7 +852,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~84 tok/s - Aggregate @ 16 concurrent: ~688 tok/s - TTFT: ~934 ms ## Cost (1× A100 80 GB) - Hyperscaler: $4.10/hr · $2,993/mo - Specialized: $1.79/hr · $1,307/mo - Spot: $0.99/hr · $723/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× A100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~84 tok/s - Aggregate @ 16 concurrent: ~688 tok/s - TTFT: ~934 ms ## Cost (1× A100 80 GB) - Hyperscaler: $4.10/hr · $2,993/mo (source: Azure · Standard_ND96amsr_A100_v4 · eastus · read 2026-09-22) - Specialized: $2.79/hr · $2,037/mo (source: Lambda · NVIDIA A100 SXM (80 GB, 240 vCPU tier) · global · read 2026-09-22) - Spot: $0.99/hr · $723/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -864,10 +876,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× A100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~84 / 688 tok/s Cost/hr $0.99–$4.10"
+    "text": "8B model GPU 1× A100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~84 / 688 tok/s Cost/hr $0.99–$4.10 Cost source Hyper: Azure · Standard_ND96amsr_A100_v4 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA A100 SXM (80 GB, 240 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -897,7 +910,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $4.10 $4.10 $2,993 Specialized Lambda, CoreWeave, RunPod $1.79 $1.79 $1,307 Spot / marketplace Vast.ai, spot instances $0.99 $0.99 $723 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96amsr_A100_v4 · eastus · read 2026-09-22 $4.10 $4.10 $2,993 Specialized Lambda · NVIDIA A100 SXM (80 GB, 240 vCPU tier) · global · read 2026-09-22 $2.79 $2.79 $2,037 Spot / marketplace not recorded $0.99 $0.99 $723 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -911,9 +924,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× A100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~84 tokens/sec Total server throughput ~688 tokens/sec Monthly cost range $723 – $2,993/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× A100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~84 tokens/sec Total server throughput ~688 tokens/sec Monthly cost range $723 – $2,993/mo Cost source Hyper: Azure · Standard_ND96amsr_A100_v4 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA A100 SXM (80 GB, 240 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -953,7 +968,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -1043,7 +1058,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× B200 192 GB - Total VRAM: 192 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 192 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 156 - Single-stream decode: ~328 tok/s - Aggregate @ 16 concurrent: ~2.7K tok/s - TTFT: ~129 ms ## Cost (1× B200 192 GB) - Hyperscaler: $14.24/hr · $10,395/mo - Specialized: $6.69/hr · $4,884/mo - Spot: $2.12/hr · $1,548/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× B200 192 GB - Total VRAM: 192 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 192 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 156 - Single-stream decode: ~328 tok/s - Aggregate @ 16 concurrent: ~2.7K tok/s - TTFT: ~129 ms ## Cost (1× B200 192 GB) - Hyperscaler: $14.24/hr · $10,395/mo (source: AWS · p6-b200.48xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $6.69/hr · $4,884/mo (source: Lambda · NVIDIA B200 SXM6 (180 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.12/hr · $1,548/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -1067,10 +1082,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× B200 192 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 192 Max ctx (1u) 1024K Max users @8K 156 Per-user / aggregate ~328 / 2.7K tok/s Cost/hr $2.12–$14.24"
+    "text": "8B model GPU 1× B200 192 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 192 Max ctx (1u) 1024K Max users @8K 156 Per-user / aggregate ~328 / 2.7K tok/s Cost/hr $2.12–$14.24 Cost source Hyper: AWS · p6-b200.48xlarge · US East (N. Virginia) · read 2026-09-22 Spec: Lambda · NVIDIA B200 SXM6 (180 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -1100,7 +1116,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $14.24 $14.24 $10,395 Specialized Lambda, CoreWeave, RunPod $6.69 $6.69 $4,884 Spot / marketplace Vast.ai, spot instances $2.12 $2.12 $1,548 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · p6-b200.48xlarge · US East (N. Virginia) · read 2026-09-22 $14.24 $14.24 $10,395 Specialized Lambda · NVIDIA B200 SXM6 (180 GB, 208 vCPU tier) · global · read 2026-09-22 $6.69 $6.69 $4,884 Spot / marketplace not recorded $2.12 $2.12 $1,548 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -1114,9 +1130,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× B200 192 GB VRAM used 32.6 GiB / 192 GiB per device (17%) Max concurrent users (8K context) 156 Speed per user ~328 tokens/sec Total server throughput ~2.7K tokens/sec Monthly cost range $1,548 – $10,395/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× B200 192 GB VRAM used 32.6 GiB / 192 GiB per device (17%) Max concurrent users (8K context) 156 Speed per user ~328 tokens/sec Total server throughput ~2.7K tokens/sec Monthly cost range $1,548 – $10,395/mo Cost source Hyper: AWS · p6-b200.48xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: Lambda · NVIDIA B200 SXM6 (180 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1156,7 +1174,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -1246,7 +1264,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 32.0 GiB - Act + overhead: 1.65 GiB - Per-device: 48.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~145 tok/s - Aggregate @ 256 concurrent: ~11.9K tok/s - TTFT: ~37 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 1024 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 32.0 GiB - Act + overhead: 1.65 GiB - Per-device: 48.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~145 tok/s - Aggregate @ 256 concurrent: ~11.9K tok/s - TTFT: ~37 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 1024 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -1270,10 +1288,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 48.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~145 / 11.9K tok/s Cost/hr $2.25–$12.30"
+    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 48.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~145 / 11.9K tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -1303,7 +1322,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -1317,9 +1336,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 48.6 GiB / 80 GiB per device (61%) Max concurrent users (8K context) 55 Speed per user ~145 tokens/sec Total server throughput ~11.9K tokens/sec Monthly cost range $1,643 – $8,979/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 48.6 GiB / 80 GiB per device (61%) Max concurrent users (8K context) 55 Speed per user ~145 tokens/sec Total server throughput ~11.9K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1359,7 +1380,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -1449,7 +1470,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 2.80 GiB - Per-device: 173 GiB / 80 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~16 tok/s - Aggregate @ 1 concurrent: ~16 tok/s - TTFT: ~2574 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 2.80 GiB - Per-device: 173 GiB / 80 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~16 tok/s - Aggregate @ 1 concurrent: ~16 tok/s - TTFT: ~2574 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -1473,10 +1494,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "70B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 173 GiB / 80 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~16 / 16 tok/s Cost/hr $2.25–$12.30"
+    "text": "70B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 173 GiB / 80 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~16 / 16 tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -1506,7 +1528,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -1524,10 +1546,12 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "70B model DOES NOT FIT Hardware 1× H100 80 GB VRAM used 173 GiB / 80 GiB per device (216%) Max concurrent users (8K context) 0 Speed per user ~16 tokens/sec Total server throughput ~16 tokens/sec Monthly cost range $1,643 – $8,979/mo Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "70B model DOES NOT FIT Hardware 1× H100 80 GB VRAM used 173 GiB / 80 GiB per device (216%) Max concurrent users (8K context) 0 Speed per user ~16 tokens/sec Total server throughput ~16 tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -1566,7 +1590,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -1659,7 +1683,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 0.63 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 4.69 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 22.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 525K - Max concurrent @ 8K: 65 - Single-stream decode: ~384 tok/s - Aggregate @ 16 concurrent: ~1.7K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 0.63 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 4.69 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 22.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 525K - Max concurrent @ 8K: 65 - Single-stream decode: ~384 tok/s - Aggregate @ 16 concurrent: ~1.7K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -1687,10 +1711,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H100 80 GB Precision 0.63 B/param KV dtype BF16 Weights 4.69 GiB Per-device 22.3 GiB / 80 Max ctx (1u) 525K Max users @8K 65 Per-user / aggregate ~384 / 1.7K tok/s Cost/hr $2.25–$12.30"
+    "text": "8B model GPU 1× H100 80 GB Precision 0.63 B/param KV dtype BF16 Weights 4.69 GiB Per-device 22.3 GiB / 80 Max ctx (1u) 525K Max users @8K 65 Per-user / aggregate ~384 / 1.7K tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -1720,7 +1745,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -1734,9 +1759,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 22.3 GiB / 80 GiB per device (28%) Max concurrent users (8K context) 65 Speed per user ~384 tokens/sec Total server throughput ~1.7K tokens/sec Monthly cost range $1,643 – $8,979/mo Precision FP8"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 22.3 GiB / 80 GiB per device (28%) Max concurrent users (8K context) 65 Speed per user ~384 tokens/sec Total server throughput ~1.7K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision FP8"
    },
    "gpu-cards": {
     "attrs": [
@@ -1776,7 +1803,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -1866,7 +1893,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 13.0 GiB - Act + overhead: 1.65 GiB - Per-device: 29.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~116 tok/s - Aggregate @ 4 concurrent: ~283 tok/s - TTFT: ~883 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --gpu-memory-utilization 0.90 \\ --max-model-len 32768 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 13.0 GiB - Act + overhead: 1.65 GiB - Per-device: 29.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~116 tok/s - Aggregate @ 4 concurrent: ~283 tok/s - TTFT: ~883 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --gpu-memory-utilization 0.90 \\ --max-model-len 32768 ```",
    "capacity-output": {
     "attrs": [
      "style=color:var(--success-text);font-size:11px;margin:4px 0;padding:4px 10px",
@@ -1891,10 +1918,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 29.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~116 / 283 tok/s Cost/hr $2.25–$12.30"
+    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 29.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~116 / 283 tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -1924,7 +1952,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -1938,9 +1966,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 29.6 GiB / 80 GiB per device (37%) Max concurrent users (8K context) 55 Speed per user ~116 tokens/sec Total server throughput ~283 tokens/sec Monthly cost range $1,643 – $8,979/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 29.6 GiB / 80 GiB per device (37%) Max concurrent users (8K context) 55 Speed per user ~116 tokens/sec Total server throughput ~283 tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1980,7 +2010,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -2070,7 +2100,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — org/imported-8b ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~137 tok/s - Aggregate @ 16 concurrent: ~1.1K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve org/imported-8b \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — org/imported-8b ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~137 tok/s - Aggregate @ 16 concurrent: ~1.1K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve org/imported-8b \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -2094,10 +2124,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "org/imported-8b GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~137 / 1.1K tok/s Cost/hr $2.25–$12.30"
+    "text": "org/imported-8b GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~137 / 1.1K tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -2127,7 +2158,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -2141,9 +2172,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "org/imported-8b READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Precision BF16 (full precision)"
+    "text": "org/imported-8b READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -2183,7 +2216,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -2273,7 +2306,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 503K - Max concurrent @ 8K: 62 - Single-stream decode: ~259 tok/s - Aggregate @ 16 concurrent: ~1.5K tok/s - TTFT: ~147 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization fp8 \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 503K - Max concurrent @ 8K: 62 - Single-stream decode: ~259 tok/s - Aggregate @ 16 concurrent: ~1.5K tok/s - TTFT: ~147 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization fp8 \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -2297,10 +2330,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H100 80 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 80 Max ctx (1u) 503K Max users @8K 62 Per-user / aggregate ~259 / 1.5K tok/s Cost/hr $2.25–$12.30"
+    "text": "8B model GPU 1× H100 80 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 80 Max ctx (1u) 503K Max users @8K 62 Per-user / aggregate ~259 / 1.5K tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -2330,7 +2364,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -2344,9 +2378,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 25.1 GiB / 80 GiB per device (31%) Max concurrent users (8K context) 62 Speed per user ~259 tokens/sec Total server throughput ~1.5K tokens/sec Monthly cost range $1,643 – $8,979/mo Precision FP8"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 25.1 GiB / 80 GiB per device (31%) Max concurrent users (8K context) 62 Speed per user ~259 tokens/sec Total server throughput ~1.5K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision FP8"
    },
    "gpu-cards": {
     "attrs": [
@@ -2386,7 +2422,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -2476,7 +2512,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 16× H100 80 GB (PCIe) - Total VRAM: 1280 GiB ## VRAM breakdown - Weights (2 copies): 261 GiB - KV cache: 40.0 GiB - Act + overhead: 29.6 GiB - Total (cluster): 330 GiB - Per-device: 20.7 GiB / 80 GiB (FITS) - Sharding: weights and activations divided by 8, the sharding the command performs, with a full copy in each of the 2 data-parallel groups. KV cache divided by all 16 devices — DP partitions the request stream, not the cache. - Above 8 devices the TP x DP split and the interconnect factor priced against it are heuristics; nothing here is measured above 2 devices. ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 344 - Single-stream decode: ~105 tok/s - Aggregate @ 16 concurrent: ~1.3K tok/s - TTFT: ~402 ms ## Cost (16× H100 80 GB) - Hyperscaler: $196.80/hr · $143,664/mo - Specialized: $63.84/hr · $46,603/mo - Spot: $36.00/hr · $26,280/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --data-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 16× H100 80 GB (PCIe) - Total VRAM: 1280 GiB ## VRAM breakdown - Weights (2 copies): 261 GiB - KV cache: 40.0 GiB - Act + overhead: 29.6 GiB - Total (cluster): 330 GiB - Per-device: 20.7 GiB / 80 GiB (FITS) - Sharding: weights and activations divided by 8, the sharding the command performs, with a full copy in each of the 2 data-parallel groups. KV cache divided by all 16 devices — DP partitions the request stream, not the cache. - Above 8 devices the TP x DP split and the interconnect factor priced against it are heuristics; nothing here is measured above 2 devices. ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 344 - Single-stream decode: ~105 tok/s - Aggregate @ 16 concurrent: ~1.3K tok/s - TTFT: ~402 ms ## Cost (16× H100 80 GB) - Hyperscaler: $196.80/hr · $143,664/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $63.84/hr · $46,603/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $36.00/hr · $26,280/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --data-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -2505,10 +2541,11 @@
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
      "style=color:var(--warning-text);font-size:10px;font-weight:500",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "70B model GPU 16× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 20.7 GiB / 80 Max ctx (1u) 1024K Max users @8K 344 Per-user / aggregate ~105 / 1.3K tok/s unmeasured above 2 devices Cost/hr $36.00–$196.80"
+    "text": "70B model GPU 16× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 20.7 GiB / 80 Max ctx (1u) 1024K Max users @8K 344 Per-user / aggregate ~105 / 1.3K tok/s unmeasured above 2 devices Cost/hr $36.00–$196.80 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -2538,7 +2575,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (16×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $196.80 $143,664 Specialized Lambda, CoreWeave, RunPod $3.99 $63.84 $46,603 Spot / marketplace Vast.ai, spot instances $2.25 $36.00 $26,280 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (16×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $196.80 $143,664 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $63.84 $46,603 Spot / marketplace not recorded $2.25 $36.00 $26,280 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -2555,13 +2592,15 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
      "style=color:var(--warning-text);font-size:12px;margin-top:10px",
      "style=color:var(--warning-text);font-weight:500",
      "style=color:var(--warning-text);font-weight:500",
+     "style=font-size:11px",
      "style=font-size:13px;margin-right:4px;vertical-align:-2px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 16× H100 80 GB VRAM used 20.7 GiB / 80 GiB per device (26%) Max concurrent users (8K context) 344 Speed per user ~105 tokens/sec · unmeasured above 2 devices Total server throughput ~1.3K tokens/sec · unmeasured above 2 devices Monthly cost range $26,280 – $143,664/mo Precision BF16 (full precision) Across 16 devices the tool picks TP=8 × DP=2 by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured, so treat the throughput figures as a ceiling to test, not a quote."
+    "text": "70B model READY TO DEPLOY Hardware 16× H100 80 GB VRAM used 20.7 GiB / 80 GiB per device (26%) Max concurrent users (8K context) 344 Speed per user ~105 tokens/sec · unmeasured above 2 devices Total server throughput ~1.3K tokens/sec · unmeasured above 2 devices Monthly cost range $26,280 – $143,664/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision) Across 16 devices the tool picks TP=8 × DP=2 by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured, so treat the throughput figures as a ceiling to test, not a quote."
    },
    "gpu-cards": {
     "attrs": [
@@ -2627,7 +2666,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -2728,7 +2767,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 26B model ## Model - Parameters: 26B (MoE, 15% active) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 30, KV heads: 8, head dim: 256 ## GPU - 2× H100 80 GB (NVLink) - Total VRAM: 160 GiB ## VRAM breakdown - Weights: 48.4 GiB - KV cache: 8.13 GiB - Act + overhead: 3.40 GiB - Per-device: 30.1 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 180 - Single-stream decode: ~478 tok/s - Aggregate @ 16 concurrent: ~3.9K tok/s - TTFT: ~84 ms ## Cost (2× H100 80 GB) - Hyperscaler: $24.60/hr · $17,958/mo - Specialized: $7.98/hr · $5,825/mo - Spot: $4.50/hr · $3,285/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --enable-expert-parallel \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 26B model ## Model - Parameters: 26B (MoE, 15% active) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 30, KV heads: 8, head dim: 256 ## GPU - 2× H100 80 GB (NVLink) - Total VRAM: 160 GiB ## VRAM breakdown - Weights: 48.4 GiB - KV cache: 8.13 GiB - Act + overhead: 3.40 GiB - Per-device: 30.1 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 180 - Single-stream decode: ~478 tok/s - Aggregate @ 16 concurrent: ~3.9K tok/s - TTFT: ~84 ms ## Cost (2× H100 80 GB) - Hyperscaler: $24.60/hr · $17,958/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $7.98/hr · $5,825/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $4.50/hr · $3,285/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --enable-expert-parallel \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -2752,10 +2791,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "26B model GPU 2× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 48.4 GiB Per-device 30.1 GiB / 80 Max ctx (1u) 1024K Max users @8K 180 Per-user / aggregate ~478 / 3.9K tok/s Cost/hr $4.50–$24.60"
+    "text": "26B model GPU 2× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 48.4 GiB Per-device 30.1 GiB / 80 Max ctx (1u) 1024K Max users @8K 180 Per-user / aggregate ~478 / 3.9K tok/s Cost/hr $4.50–$24.60 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -2785,7 +2825,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (2×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $24.60 $17,958 Specialized Lambda, CoreWeave, RunPod $3.99 $7.98 $5,825 Spot / marketplace Vast.ai, spot instances $2.25 $4.50 $3,285 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (2×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $24.60 $17,958 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $7.98 $5,825 Spot / marketplace not recorded $2.25 $4.50 $3,285 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -2799,9 +2839,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "26B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 30.1 GiB / 80 GiB per device (38%) Max concurrent users (8K context) 180 Speed per user ~478 tokens/sec Total server throughput ~3.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Precision BF16 (full precision)"
+    "text": "26B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 30.1 GiB / 80 GiB per device (38%) Max concurrent users (8K context) 180 Speed per user ~478 tokens/sec Total server throughput ~3.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -2862,7 +2904,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -2953,7 +2995,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 30B model ## Model - Parameters: 30B (MoE, 10% active) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 48, KV heads: 8, head dim: 128 - Shared experts: 1 ## GPU - 2× H100 80 GB (NVLink) - Total VRAM: 160 GiB ## VRAM breakdown - Weights: 55.9 GiB - KV cache: 24.0 GiB - Act + overhead: 3.40 GiB - Per-device: 41.8 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 450K - Max concurrent @ 8K: 56 - Single-stream decode: ~453 tok/s - Aggregate @ 16 concurrent: ~1.9K tok/s - TTFT: ~78 ms ## Cost (2× H100 80 GB) - Hyperscaler: $24.60/hr · $17,958/mo - Specialized: $7.98/hr · $5,825/mo - Spot: $4.50/hr · $3,285/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --enable-expert-parallel \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 30B model ## Model - Parameters: 30B (MoE, 10% active) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 48, KV heads: 8, head dim: 128 - Shared experts: 1 ## GPU - 2× H100 80 GB (NVLink) - Total VRAM: 160 GiB ## VRAM breakdown - Weights: 55.9 GiB - KV cache: 24.0 GiB - Act + overhead: 3.40 GiB - Per-device: 41.8 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 450K - Max concurrent @ 8K: 56 - Single-stream decode: ~453 tok/s - Aggregate @ 16 concurrent: ~1.9K tok/s - TTFT: ~78 ms ## Cost (2× H100 80 GB) - Hyperscaler: $24.60/hr · $17,958/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $7.98/hr · $5,825/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $4.50/hr · $3,285/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --enable-expert-parallel \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -2977,10 +3019,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "30B model GPU 2× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 55.9 GiB Per-device 41.8 GiB / 80 Max ctx (1u) 450K Max users @8K 56 Per-user / aggregate ~453 / 1.9K tok/s Cost/hr $4.50–$24.60"
+    "text": "30B model GPU 2× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 55.9 GiB Per-device 41.8 GiB / 80 Max ctx (1u) 450K Max users @8K 56 Per-user / aggregate ~453 / 1.9K tok/s Cost/hr $4.50–$24.60 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -3010,7 +3053,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (2×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $24.60 $17,958 Specialized Lambda, CoreWeave, RunPod $3.99 $7.98 $5,825 Spot / marketplace Vast.ai, spot instances $2.25 $4.50 $3,285 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (2×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $24.60 $17,958 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $7.98 $5,825 Spot / marketplace not recorded $2.25 $4.50 $3,285 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -3024,9 +3067,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "30B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 41.8 GiB / 80 GiB per device (52%) Max concurrent users (8K context) 56 Speed per user ~453 tokens/sec Total server throughput ~1.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Precision BF16 (full precision)"
+    "text": "30B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 41.8 GiB / 80 GiB per device (52%) Max concurrent users (8K context) 56 Speed per user ~453 tokens/sec Total server throughput ~1.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3087,7 +3132,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Shared experts (1) always active, included in activation memory. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Shared experts (1) always active, included in activation memory. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -3178,7 +3223,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 671B model ## Model - Parameters: 671B (MoE, 5% active) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 61, KV heads: 128, head dim: 56 - Shared experts: 1 ## GPU - 2× H100 80 GB (NVLink) - Total VRAM: 160 GiB ## VRAM breakdown - Weights: 1250 GiB - KV cache: 8.58 GiB - Act + overhead: 4.17 GiB - Per-device: 631 GiB / 80 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~42 tok/s - Aggregate @ 1 concurrent: ~42 tok/s - TTFT: ~1016 ms ## Cost (2× H100 80 GB) - Hyperscaler: $24.60/hr · $17,958/mo - Specialized: $7.98/hr · $5,825/mo - Spot: $4.50/hr · $3,285/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 671B model ## Model - Parameters: 671B (MoE, 5% active) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 61, KV heads: 128, head dim: 56 - Shared experts: 1 ## GPU - 2× H100 80 GB (NVLink) - Total VRAM: 160 GiB ## VRAM breakdown - Weights: 1250 GiB - KV cache: 8.58 GiB - Act + overhead: 4.17 GiB - Per-device: 631 GiB / 80 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~42 tok/s - Aggregate @ 1 concurrent: ~42 tok/s - TTFT: ~1016 ms ## Cost (2× H100 80 GB) - Hyperscaler: $24.60/hr · $17,958/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $7.98/hr · $5,825/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $4.50/hr · $3,285/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -3202,10 +3247,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "671B model GPU 2× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 1250 GiB Per-device 631 GiB / 80 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~42 / 42 tok/s Cost/hr $4.50–$24.60"
+    "text": "671B model GPU 2× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 1250 GiB Per-device 631 GiB / 80 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~42 / 42 tok/s Cost/hr $4.50–$24.60 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -3235,7 +3281,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (2×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $24.60 $17,958 Specialized Lambda, CoreWeave, RunPod $3.99 $7.98 $5,825 Spot / marketplace Vast.ai, spot instances $2.25 $4.50 $3,285 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (2×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $24.60 $17,958 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $7.98 $5,825 Spot / marketplace not recorded $2.25 $4.50 $3,285 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -3253,10 +3299,12 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "671B model DOES NOT FIT Hardware 2× H100 80 GB VRAM used 631 GiB / 80 GiB per device (789%) Max concurrent users (8K context) 0 Speed per user ~42 tokens/sec Total server throughput ~42 tokens/sec Monthly cost range $3,285 – $17,958/mo Precision BF16 (full precision) Action needed: Smallest fit: 17 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "671B model DOES NOT FIT Hardware 2× H100 80 GB VRAM used 631 GiB / 80 GiB per device (789%) Max concurrent users (8K context) 0 Speed per user ~42 tokens/sec Total server throughput ~42 tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 17 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -3315,7 +3363,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Shared experts (1) always active, included in activation memory. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Shared experts (1) always active, included in activation memory. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -3409,7 +3457,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 8× H100 80 GB (NVLink) - Total VRAM: 640 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 15.4 GiB - Per-device: 23.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 171 - Single-stream decode: ~112 tok/s - Aggregate @ 16 concurrent: ~1.4K tok/s - TTFT: ~379 ms ## Cost (8× H100 80 GB) - Hyperscaler: $98.40/hr · $71,832/mo - Specialized: $31.92/hr · $23,302/mo - Spot: $18.00/hr · $13,140/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 8× H100 80 GB (NVLink) - Total VRAM: 640 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 15.4 GiB - Per-device: 23.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 171 - Single-stream decode: ~112 tok/s - Aggregate @ 16 concurrent: ~1.4K tok/s - TTFT: ~379 ms ## Cost (8× H100 80 GB) - Hyperscaler: $98.40/hr · $71,832/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $31.92/hr · $23,302/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $18.00/hr · $13,140/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -3433,10 +3481,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "70B model GPU 8× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 23.3 GiB / 80 Max ctx (1u) 1024K Max users @8K 171 Per-user / aggregate ~112 / 1.4K tok/s Cost/hr $18.00–$98.40"
+    "text": "70B model GPU 8× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 23.3 GiB / 80 Max ctx (1u) 1024K Max users @8K 171 Per-user / aggregate ~112 / 1.4K tok/s Cost/hr $18.00–$98.40 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -3466,7 +3515,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (8×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $98.40 $71,832 Specialized Lambda, CoreWeave, RunPod $3.99 $31.92 $23,302 Spot / marketplace Vast.ai, spot instances $2.25 $18.00 $13,140 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (8×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $98.40 $71,832 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $31.92 $23,302 Spot / marketplace not recorded $2.25 $18.00 $13,140 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -3480,9 +3529,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.3 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 171 Speed per user ~112 tokens/sec Total server throughput ~1.4K tokens/sec Monthly cost range $13,140 – $71,832/mo Precision BF16 (full precision)"
+    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.3 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 171 Speed per user ~112 tokens/sec Total server throughput ~1.4K tokens/sec Monthly cost range $13,140 – $71,832/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3542,7 +3593,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. NVLink 600-900 GB/s. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -3632,7 +3683,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 8× H100 80 GB (PCIe) - Total VRAM: 640 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 14.7 GiB - Per-device: 23.2 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 172 - Single-stream decode: ~59 tok/s - Aggregate @ 16 concurrent: ~739 tok/s - TTFT: ~715 ms ## Cost (8× H100 80 GB) - Hyperscaler: $98.40/hr · $71,832/mo - Specialized: $31.92/hr · $23,302/mo - Spot: $18.00/hr · $13,140/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 70B model ## Model - Parameters: 70B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 80, KV heads: 8, head dim: 128 ## GPU - 8× H100 80 GB (PCIe) - Total VRAM: 640 GiB ## VRAM breakdown - Weights: 130 GiB - KV cache: 40.0 GiB - Act + overhead: 14.7 GiB - Per-device: 23.2 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 172 - Single-stream decode: ~59 tok/s - Aggregate @ 16 concurrent: ~739 tok/s - TTFT: ~715 ms ## Cost (8× H100 80 GB) - Hyperscaler: $98.40/hr · $71,832/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $31.92/hr · $23,302/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $18.00/hr · $13,140/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 8 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -3656,10 +3707,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "70B model GPU 8× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 23.2 GiB / 80 Max ctx (1u) 1024K Max users @8K 172 Per-user / aggregate ~59 / 739 tok/s Cost/hr $18.00–$98.40"
+    "text": "70B model GPU 8× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 130 GiB Per-device 23.2 GiB / 80 Max ctx (1u) 1024K Max users @8K 172 Per-user / aggregate ~59 / 739 tok/s Cost/hr $18.00–$98.40 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -3689,7 +3741,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (8×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $98.40 $71,832 Specialized Lambda, CoreWeave, RunPod $3.99 $31.92 $23,302 Spot / marketplace Vast.ai, spot instances $2.25 $18.00 $13,140 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (8×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $98.40 $71,832 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $31.92 $23,302 Spot / marketplace not recorded $2.25 $18.00 $13,140 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -3703,9 +3755,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed per user ~59 tokens/sec Total server throughput ~739 tokens/sec Monthly cost range $13,140 – $71,832/mo Precision BF16 (full precision)"
+    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed per user ~59 tokens/sec Total server throughput ~739 tokens/sec Monthly cost range $13,140 – $71,832/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3761,7 +3815,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -3856,7 +3910,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~137 tok/s - Aggregate @ 16 concurrent: ~1.1K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.25/hr · $1,643/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 444K - Max concurrent @ 8K: 55 - Single-stream decode: ~137 tok/s - Aggregate @ 16 concurrent: ~1.1K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -3880,10 +3934,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~137 / 1.1K tok/s Cost/hr $2.25–$12.30"
+    "text": "8B model GPU 1× H100 80 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 80 Max ctx (1u) 444K Max users @8K 55 Per-user / aggregate ~137 / 1.1K tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -3913,7 +3968,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $12.30 $12.30 $8,979 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -3927,9 +3982,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3969,7 +4026,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -4059,7 +4116,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H200 141 GB - Total VRAM: 141 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 141 GiB (FITS) ## Capacity - Max context (1 user): 883K - Max concurrent @ 8K: 110 - Single-stream decode: ~197 tok/s - Aggregate @ 16 concurrent: ~1.6K tok/s - TTFT: ~294 ms ## Cost (1× H200 141 GB) - Hyperscaler: $7.91/hr · $5,774/mo - Specialized: $3.99/hr · $2,913/mo - Spot: $2.50/hr · $1,825/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H200 141 GB - Total VRAM: 141 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 141 GiB (FITS) ## Capacity - Max context (1 user): 883K - Max concurrent @ 8K: 110 - Single-stream decode: ~197 tok/s - Aggregate @ 16 concurrent: ~1.6K tok/s - TTFT: ~294 ms ## Cost (1× H200 141 GB) - Hyperscaler: $7.91/hr · $5,774/mo (source: AWS · p5en.48xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $6.31/hr · $4,606/mo (source: CoreWeave · NVIDIA HGX H200 · global · read 2026-09-22) - Spot: $2.50/hr · $1,825/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4083,10 +4140,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× H200 141 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 141 Max ctx (1u) 883K Max users @8K 110 Per-user / aggregate ~197 / 1.6K tok/s Cost/hr $2.50–$7.91"
+    "text": "8B model GPU 1× H200 141 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 141 Max ctx (1u) 883K Max users @8K 110 Per-user / aggregate ~197 / 1.6K tok/s Cost/hr $2.50–$7.91 Cost source Hyper: AWS · p5en.48xlarge · US East (N. Virginia) · read 2026-09-22 Spec: CoreWeave · NVIDIA HGX H200 · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -4116,7 +4174,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $7.91 $7.91 $5,774 Specialized Lambda, CoreWeave, RunPod $3.99 $3.99 $2,913 Spot / marketplace Vast.ai, spot instances $2.50 $2.50 $1,825 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · p5en.48xlarge · US East (N. Virginia) · read 2026-09-22 $7.91 $7.91 $5,774 Specialized CoreWeave · NVIDIA HGX H200 · global · read 2026-09-22 $6.31 $6.31 $4,606 Spot / marketplace not recorded $2.50 $2.50 $1,825 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4130,9 +4188,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H200 141 GB VRAM used 32.6 GiB / 141 GiB per device (23%) Max concurrent users (8K context) 110 Speed per user ~197 tokens/sec Total server throughput ~1.6K tokens/sec Monthly cost range $1,825 – $5,774/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H200 141 GB VRAM used 32.6 GiB / 141 GiB per device (23%) Max concurrent users (8K context) 110 Speed per user ~197 tokens/sec Total server throughput ~1.6K tokens/sec Monthly cost range $1,825 – $5,774/mo Cost source Hyper: AWS · p5en.48xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: CoreWeave · NVIDIA HGX H200 · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -4172,7 +4232,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -4262,7 +4322,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× L4 24 GB - Total VRAM: 24 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 24 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 40K - Max concurrent @ 8K: 5 - Single-stream decode: ~12 tok/s - Aggregate @ 5 concurrent: ~49 tok/s - TTFT: ~2407 ms ## Cost (1× L4 24 GB) - Hyperscaler: $0.80/hr · $584/mo - Specialized: $0.43/hr · $314/mo - Spot: $0.22/hr · $161/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× L4 24 GB - Total VRAM: 24 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 24 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 40K - Max concurrent @ 8K: 5 - Single-stream decode: ~12 tok/s - Aggregate @ 5 concurrent: ~49 tok/s - TTFT: ~2407 ms ## Cost (1× L4 24 GB) - Hyperscaler: $0.80/hr · $584/mo (source: AWS · g6.xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $0.43/hr · $314/mo (source: not recorded) - Spot: $0.22/hr · $161/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4286,10 +4346,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× L4 24 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~12 / 49 tok/s Cost/hr $0.22–$0.80"
+    "text": "8B model GPU 1× L4 24 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~12 / 49 tok/s Cost/hr $0.22–$0.80 Cost source Hyper: AWS · g6.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -4319,7 +4380,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.80 $0.80 $584 Specialized Lambda, CoreWeave, RunPod $0.43 $0.43 $314 Spot / marketplace Vast.ai, spot instances $0.22 $0.22 $161 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · g6.xlarge · US East (N. Virginia) · read 2026-09-22 $0.80 $0.80 $584 Specialized not recorded $0.43 $0.43 $314 Spot / marketplace not recorded $0.22 $0.22 $161 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4337,10 +4398,12 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× L4 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~12 tokens/sec Total server throughput ~49 tokens/sec Monthly cost range $161 – $584/mo Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× L4 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~12 tokens/sec Total server throughput ~49 tokens/sec Monthly cost range $161 – $584/mo Cost source Hyper: AWS · g6.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -4379,7 +4442,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -4473,7 +4536,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× L40S 48 GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~35 tok/s - Aggregate @ 16 concurrent: ~292 tok/s - TTFT: ~805 ms ## Cost (1× L40S 48 GB) - Hyperscaler: $1.86/hr · $1,358/mo - Specialized: $1.30/hr · $949/mo - Spot: $0.90/hr · $657/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× L40S 48 GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~35 tok/s - Aggregate @ 16 concurrent: ~292 tok/s - TTFT: ~805 ms ## Cost (1× L40S 48 GB) - Hyperscaler: $1.86/hr · $1,358/mo (source: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $2.25/hr · $1,643/mo (source: CoreWeave · NVIDIA L40S · global · read 2026-09-22) - Spot: $0.90/hr · $657/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4497,10 +4560,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× L40S 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~35 / 292 tok/s Cost/hr $0.90–$1.86"
+    "text": "8B model GPU 1× L40S 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~35 / 292 tok/s Cost/hr $0.90–$2.25 Cost source Hyper: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: CoreWeave · NVIDIA L40S · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -4530,7 +4594,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $1.86 $1.86 $1,358 Specialized Lambda, CoreWeave, RunPod $1.30 $1.30 $949 Spot / marketplace Vast.ai, spot instances $0.90 $0.90 $657 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 $1.86 $1.86 $1,358 Specialized CoreWeave · NVIDIA L40S · global · read 2026-09-22 $2.25 $2.25 $1,643 Spot / marketplace not recorded $0.90 $0.90 $657 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4544,9 +4608,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× L40S 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~35 tokens/sec Total server throughput ~292 tokens/sec Monthly cost range $657 – $1,358/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× L40S 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~35 tokens/sec Total server throughput ~292 tokens/sec Monthly cost range $657 – $1,643/mo Cost source Hyper: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: CoreWeave · NVIDIA L40S · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -4586,7 +4652,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -4676,7 +4742,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 4090 24 GB - Total VRAM: 24 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 24 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 40K - Max concurrent @ 8K: 5 - Single-stream decode: ~41 tok/s - Aggregate @ 5 concurrent: ~165 tok/s - TTFT: ~1765 ms ## Cost (1× RTX 4090 24 GB) - Hyperscaler: $0.75/hr · $548/mo - Specialized: $0.45/hr · $329/mo - Spot: $0.29/hr · $212/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 4090 24 GB - Total VRAM: 24 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 24 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 40K - Max concurrent @ 8K: 5 - Single-stream decode: ~41 tok/s - Aggregate @ 5 concurrent: ~165 tok/s - TTFT: ~1765 ms ## Cost (1× RTX 4090 24 GB) - Hyperscaler: $0.75/hr · $548/mo (source: not recorded) - Specialized: $0.45/hr · $329/mo (source: not recorded) - Spot: $0.54/hr · $394/mo (source: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4700,10 +4766,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 4090 24 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~41 / 165 tok/s Cost/hr $0.29–$0.75"
+    "text": "8B model GPU 1× RTX 4090 24 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~41 / 165 tok/s Cost/hr $0.45–$0.75 Cost source Hyper: not recorded Spec: not recorded Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22"
    },
    "cost-output": {
     "attrs": [
@@ -4733,7 +4800,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.75 $0.75 $548 Specialized Lambda, CoreWeave, RunPod $0.45 $0.45 $329 Spot / marketplace Vast.ai, spot instances $0.29 $0.29 $212 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded $0.75 $0.75 $548 Specialized not recorded $0.45 $0.45 $329 Spot / marketplace Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 $0.54 $0.54 $394 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4751,10 +4818,12 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× RTX 4090 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~41 tokens/sec Total server throughput ~165 tokens/sec Monthly cost range $212 – $548/mo Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× RTX 4090 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~41 tokens/sec Total server throughput ~165 tokens/sec Monthly cost range $329 – $548/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -4793,7 +4862,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -4887,7 +4956,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 5090 32 GB - Total VRAM: 32 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 32 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 98K - Max concurrent @ 8K: 12 - Single-stream decode: ~73 tok/s - Aggregate @ 12 concurrent: ~521 tok/s - TTFT: ~695 ms ## Cost (1× RTX 5090 32 GB) - Hyperscaler: $0.89/hr · $650/mo - Specialized: $0.65/hr · $475/mo - Spot: $0.45/hr · $329/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 5090 32 GB - Total VRAM: 32 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 32 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 98K - Max concurrent @ 8K: 12 - Single-stream decode: ~73 tok/s - Aggregate @ 12 concurrent: ~521 tok/s - TTFT: ~695 ms ## Cost (1× RTX 5090 32 GB) - Hyperscaler: $0.89/hr · $650/mo (source: not recorded) - Specialized: $0.65/hr · $475/mo (source: not recorded) - Spot: $0.45/hr · $329/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4911,10 +4980,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 5090 32 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 32 Max ctx (1u) 98K Max users @8K 12 Per-user / aggregate ~73 / 521 tok/s Cost/hr $0.45–$0.89"
+    "text": "8B model GPU 1× RTX 5090 32 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 32 Max ctx (1u) 98K Max users @8K 12 Per-user / aggregate ~73 / 521 tok/s Cost/hr $0.45–$0.89 Cost source Hyper: not recorded Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -4944,7 +5014,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.89 $0.89 $650 Specialized Lambda, CoreWeave, RunPod $0.65 $0.65 $475 Spot / marketplace Vast.ai, spot instances $0.45 $0.45 $329 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded $0.89 $0.89 $650 Specialized not recorded $0.65 $0.65 $475 Spot / marketplace not recorded $0.45 $0.45 $329 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -4962,10 +5032,12 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× RTX 5090 32 GB VRAM used 32.6 GiB / 32 GiB per device (102%) Max concurrent users (8K context) 12 Speed per user ~73 tokens/sec Total server throughput ~521 tokens/sec Monthly cost range $329 – $650/mo Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× RTX 5090 32 GB VRAM used 32.6 GiB / 32 GiB per device (102%) Max concurrent users (8K context) 12 Speed per user ~73 tokens/sec Total server throughput ~521 tokens/sec Monthly cost range $329 – $650/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5004,7 +5076,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5098,7 +5170,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 6000 Ada 48 GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~39 tok/s - Aggregate @ 16 concurrent: ~324 tok/s - TTFT: ~800 ms ## Cost (1× RTX 6000 Ada 48 GB) - Hyperscaler: $1.50/hr · $1,095/mo - Specialized: $0.90/hr · $657/mo - Spot: $0.60/hr · $438/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 6000 Ada 48 GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~39 tok/s - Aggregate @ 16 concurrent: ~324 tok/s - TTFT: ~800 ms ## Cost (1× RTX 6000 Ada 48 GB) - Hyperscaler: $1.50/hr · $1,095/mo (source: not recorded) - Specialized: $0.90/hr · $657/mo (source: not recorded) - Spot: $0.60/hr · $438/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5122,10 +5194,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 6000 Ada 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~39 / 324 tok/s Cost/hr $0.60–$1.50"
+    "text": "8B model GPU 1× RTX 6000 Ada 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~39 / 324 tok/s Cost/hr $0.60–$1.50 Cost source Hyper: not recorded Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -5155,7 +5228,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $1.50 $1.50 $1,095 Specialized Lambda, CoreWeave, RunPod $0.90 $0.90 $657 Spot / marketplace Vast.ai, spot instances $0.60 $0.60 $438 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded $1.50 $1.50 $1,095 Specialized not recorded $0.90 $0.90 $657 Spot / marketplace not recorded $0.60 $0.60 $438 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5169,9 +5242,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× RTX 6000 Ada 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~39 tokens/sec Total server throughput ~324 tokens/sec Monthly cost range $438 – $1,095/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× RTX 6000 Ada 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~39 tokens/sec Total server throughput ~324 tokens/sec Monthly cost range $438 – $1,095/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -5211,7 +5286,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5301,7 +5376,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX PRO 6000 96 GB - Total VRAM: 96 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 96 GiB (FITS) ## Capacity - Max context (1 user): 559K - Max concurrent @ 8K: 69 - Single-stream decode: ~73 tok/s - Aggregate @ 16 concurrent: ~605 tok/s - TTFT: ~578 ms ## Cost (1× RTX PRO 6000 96 GB) - Hyperscaler: $5.00/hr · $3,650/mo - Specialized: $2.50/hr · $1,825/mo - Spot: $2.00/hr · $1,460/mo ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX PRO 6000 96 GB - Total VRAM: 96 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 96 GiB (FITS) ## Capacity - Max context (1 user): 559K - Max concurrent @ 8K: 69 - Single-stream decode: ~73 tok/s - Aggregate @ 16 concurrent: ~605 tok/s - TTFT: ~578 ms ## Cost (1× RTX PRO 6000 96 GB) - Hyperscaler: $5.00/hr · $3,650/mo (source: not recorded) - Specialized: $2.50/hr · $1,825/mo (source: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22) - Spot: $2.00/hr · $1,460/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5325,10 +5400,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX PRO 6000 96 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 96 Max ctx (1u) 559K Max users @8K 69 Per-user / aggregate ~73 / 605 tok/s Cost/hr $2.00–$5.00"
+    "text": "8B model GPU 1× RTX PRO 6000 96 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 96 Max ctx (1u) 559K Max users @8K 69 Per-user / aggregate ~73 / 605 tok/s Cost/hr $2.00–$5.00 Cost source Hyper: not recorded Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -5358,7 +5434,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $5.00 $5.00 $3,650 Specialized Lambda, CoreWeave, RunPod $2.50 $2.50 $1,825 Spot / marketplace Vast.ai, spot instances $2.00 $2.00 $1,460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded $5.00 $5.00 $3,650 Specialized CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 $2.50 $2.50 $1,825 Spot / marketplace not recorded $2.00 $2.00 $1,460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5372,9 +5448,11 @@
      "style=border:none",
      "style=color:var(--success);margin-right:6px",
      "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× RTX PRO 6000 96 GB VRAM used 32.6 GiB / 96 GiB per device (34%) Max concurrent users (8K context) 69 Speed per user ~73 tokens/sec Total server throughput ~605 tokens/sec Monthly cost range $1,460 – $3,650/mo Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× RTX PRO 6000 96 GB VRAM used 32.6 GiB / 96 GiB per device (34%) Max concurrent users (8K context) 69 Speed per user ~73 tokens/sec Total server throughput ~605 tokens/sec Monthly cost range $1,460 – $3,650/mo Cost source Hyper: not recorded · Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -5414,7 +5492,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5504,7 +5582,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Single-stream decode: ~25 tok/s - Aggregate @ 5 concurrent: ~84 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 7.45 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 25.1 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 42K - Max concurrent @ 8K: 5 - Single-stream decode: ~25 tok/s - Aggregate @ 5 concurrent: ~84 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo (source: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $0.35/hr · $255/mo (source: not recorded) - Spot: $0.15/hr · $110/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5529,10 +5607,11 @@
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
      "style=color:var(--warning-text);font-size:10px;font-weight:500",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate ~25 / 84 tok/s no FP8 tensor cores — aggregate is the FP16 ceiling Cost/hr $0.15–$0.53"
+    "text": "8B model GPU 1× T4 16 GB Precision 1 B/param KV dtype BF16 Weights 7.45 GiB Per-device 25.1 GiB / 16 Max ctx (1u) 42K Max users @8K 5 Per-user / aggregate ~25 / 84 tok/s no FP8 tensor cores — aggregate is the FP16 ceiling Cost/hr $0.15–$0.53 Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -5562,7 +5641,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.53 $0.53 $387 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 $0.53 $0.53 $387 Specialized not recorded $0.35 $0.35 $255 Spot / marketplace not recorded $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5580,11 +5659,13 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
      "style=color:var(--warning-text);font-weight:500",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed per user ~25 tokens/sec Total server throughput ~84 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $110 – $387/mo Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed per user ~25 tokens/sec Total server throughput ~84 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $110 – $387/mo Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5623,7 +5704,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5720,7 +5801,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~13 tok/s - Aggregate @ 1 concurrent: ~13 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo - Specialized: $0.35/hr · $255/mo - Spot: $0.15/hr · $110/mo ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× T4 16 GB - Total VRAM: 16 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 16 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 0 - Max concurrent @ 8K: 0 - Single-stream decode: ~13 tok/s - Aggregate @ 1 concurrent: ~13 tok/s - TTFT: ~4481 ms ## Cost (1× T4 16 GB) - Hyperscaler: $0.53/hr · $387/mo (source: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22) - Specialized: $0.35/hr · $255/mo (source: not recorded) - Spot: $0.15/hr · $110/mo (source: not recorded) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5744,10 +5825,11 @@
      "href=#ico-x",
      "onclick=removeSnapshot(0)",
      "style=color:var(--danger-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× T4 16 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 16 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~13 / 13 tok/s Cost/hr $0.15–$0.53"
+    "text": "8B model GPU 1× T4 16 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 16 Max ctx (1u) 0 Max users @8K 0 Per-user / aggregate ~13 / 13 tok/s Cost/hr $0.15–$0.53 Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -5777,7 +5859,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS, GCP, Azure on-demand $0.53 $0.53 $387 Specialized Lambda, CoreWeave, RunPod $0.35 $0.35 $255 Spot / marketplace Vast.ai, spot instances $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 $0.53 $0.53 $387 Specialized not recorded $0.35 $0.35 $255 Spot / marketplace not recorded $0.15 $0.15 $110 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5795,10 +5877,12 @@
      "style=border:none",
      "style=color:var(--danger);margin-right:6px",
      "style=color:var(--danger-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 32.6 GiB / 16 GiB per device (203%) Max concurrent users (8K context) 0 Speed per user ~13 tokens/sec Total server throughput ~13 tokens/sec Monthly cost range $110 – $387/mo Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 32.6 GiB / 16 GiB per device (203%) Max concurrent users (8K context) 0 Speed per user ~13 tokens/sec Total server throughput ~13 tokens/sec Monthly cost range $110 – $387/mo Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5837,7 +5921,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [

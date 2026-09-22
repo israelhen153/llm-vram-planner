@@ -87,6 +87,8 @@ const stateFor = (gpu, o = {}) => ({
        would put every test on the ungated path and hide a gate that only ever
        fires on real hardware flags. */
     gpuFp8: !!(gpu.caps && gpu.caps.fp8),
+    // Cost provenance, off the row like every other GPU field above.
+    priceSource: gpu.priceSource,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1176,6 +1178,12 @@ const asState = (card, count, extra = {}) => ({
   gpuHyperCost: card.hyper, gpuSpecCost: card.spec, gpuSpotCost: card.spot,
   // Off the row, as readInputState() does — see the same line in state() above.
   gpuFp8: !!(card.caps && card.caps.fp8),
+  // Cost provenance, off the row like everything above. Left undefined for
+  // every synthetic card here (dualGCD, single, the perfKey overrides) since
+  // none of them carries one — readInputState() leaves it undefined too, off
+  // a real row with no confirmed source, and priceSourceLabel() treats that
+  // as "not recorded" rather than throwing.
+  priceSource: card.priceSource,
   gpuName: card.name, ...extra,
 });
 // The same silicon described as one dual-device board, or as two single-device
@@ -2113,6 +2121,337 @@ test('every view that prints a compute figure says when FP8 has no tensor cores'
   assert.ok(flagged >= 3 && clean > 0,
     `reached ${flagged} cards without FP8 and ${clean} labelled-clean renders — need both regimes`);
 });
+
+console.log('\nCost provenance: a named source, or "not recorded" said plainly, never a guess');
+test('priceSourceLabel formats provider, SKU, region and date — a fixed expectation, not self-referential', () => {
+  /* The sweep below (and its Python twin) computes its own "expected" string
+     by calling this same function, which proves the renderers agree with
+     priceSourceLabel() but cannot catch a bug inside priceSourceLabel()
+     itself — a version that quietly dropped the date would still match its
+     own output. This is the check that cannot pass that way: the expected
+     string is a literal, typed by hand once, not derived from the function
+     under test. */
+  const priceSourceLabelDecl = html.match(/^function priceSourceLabel\(state, tier\) \{[\s\S]*?\n\}$/m);
+  assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
+  const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
+  assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const priceSourceLabel = new Function(
+    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+
+  const state = { priceSource: { hyper: { provider: 'azure', sku: 'Standard_ND96isr_H100_v5',
+                                           region: 'eastus', date: '2026-09-16' } } };
+  assert.strictEqual(priceSourceLabel(state, 'hyper'),
+    'Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16');
+  // Every known provider id renders as a proper display name, not the raw
+  // lowercase source id price_check.py's SOURCE_MAP uses internally.
+  const providers = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda',
+                       coreweave: 'CoreWeave', vast: 'Vast.ai' };
+  for (const [id, name] of Object.entries(providers)) {
+    const st = { priceSource: { spot: { provider: id, sku: 'X', region: 'global', date: '2026-01-01' } } };
+    assert.strictEqual(priceSourceLabel(st, 'spot'), `${name} · X · global · read 2026-01-01`,
+      `provider id ${id} did not render as ${name}`);
+  }
+  // An unrecognised provider id falls back to itself rather than throwing or
+  // silently dropping the field — a real, if unlikely, SOURCE_MAP addition.
+  const unknown = { priceSource: { spec: { provider: 'newvendor', sku: 'Y', region: 'r', date: 'd' } } };
+  assert.strictEqual(priceSourceLabel(unknown, 'spec'), 'newvendor · Y · r · read d');
+  // Absent states, all rendering as exactly "not recorded" — no partial label,
+  // no undefined leaking through.
+  assert.strictEqual(priceSourceLabel({ priceSource: undefined }, 'hyper'), 'not recorded');
+  assert.strictEqual(priceSourceLabel({ priceSource: {} }, 'hyper'), 'not recorded');
+  assert.strictEqual(priceSourceLabel({ priceSource: { spec: { provider: 'x', sku: 'y', region: 'z', date: 'd' } } }, 'hyper'),
+    'not recorded', 'a sourced spec tier must not leak into a hyper lookup');
+});
+
+test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
+  /* Same discovery approach as the two sweeps above: every renderer the
+     harness exposes is invoked, and any rendered element whose text carries
+     a cost figure ($X.XX) is a "cost surface" for this test, found by what
+     it prints rather than by a list of element ids fix/cost-provenance's
+     author happened to think of. The old bug this replaces (a composite
+     "AWS, GCP, Azure on-demand" sub-label naming three providers for one
+     provider's number) lived on exactly the kind of surface an enumerated
+     list would miss on its next addition.
+
+     priceSourceLabel() is extracted from source, the same way formatGB() and
+     bandwidthLabel() are read above, so the expected string is computed by
+     the page's own code and cannot silently drift from what the renderers
+     actually call. */
+  const priceSourceLabelDecl = html.match(/^function priceSourceLabel\(state, tier\) \{[\s\S]*?\n\}$/m);
+  assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
+  const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
+  assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const priceSourceLabel = new Function(
+    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+  assert.strictEqual(priceSourceLabel({ priceSource: undefined }, 'hyper'), 'not recorded');
+
+  const params = {};
+  for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
+    params[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
+  // Renderer names are the same across every harness instance (they come from
+  // the same source slice), so one throwaway instance is enough to discover them.
+  const renderers = Object.keys(renderHarness()).filter(
+    k => /^render/.test(k) && typeof renderHarness()[k] === 'function');
+
+  const OLD_COMPOSITES = [/AWS,\s*GCP,\s*Azure on-demand/i, /Lambda,\s*CoreWeave,\s*RunPod/i,
+                          /Vast\.ai,\s*spot instances/i,
+                          // Cold-check finding 1f: appending " (AWS, GCP, Azure)" after an
+                          // otherwise-correct sourced label survived, because none of the
+                          // three exact phrases above matches a shorter list in a different
+                          // shape. General instead of exact: two or more provider-ish names
+                          // joined by a comma or slash, wherever they occur — a real sourced
+                          // label never joins two provider names this way (its own two
+                          // tiers, if both sourced, are separated by the rest of a sentence,
+                          // not a bare comma or slash), so this cannot true-positive on a
+                          // correct render, only on a reintroduced list.
+                          /\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,\/]\s*(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}/];
+  const NOTES_PRICE_SENTENCES = [
+    'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for ' +
+    "each tier's source, or \"not recorded\" where it has no confirmed source."];
+  const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
+  // Cold-check finding: renderExecutiveSummary's "Monthly cost range" rounds
+  // to whole dollars ("$657", never "$657.00"), so a cents-only pattern
+  // never discovered that surface at all — not scoped out on purpose, the
+  // sweep just never looked at it, and three cold-check sabotages that
+  // targeted only the exec summary (a composite name beside its source, a
+  // dropped region, a composite fallback) went uncaught because of it. The
+  // decimal point is now optional.
+  const COST = /\$[\d,]+(?:\.\d{2})?/;
+
+  // h100-80 carries mixed provenance today (hyper+spec sourced, spot not) —
+  // real catalog shape, not invented. rtx5090-32 has no automatable source on
+  // any tier, so every one of its tiers is "not recorded". A synthetic row
+  // with every tier sourced reaches the all-sourced case a real one does not
+  // give us yet.
+  const sourced = { provider: 'lambda', sku: 'TEST PLAN', region: 'global', date: '2026-09-22' };
+  const cases = [
+    ['mixed (real h100-80)', GPU_TABLE['h100-80'], 'mixed'],
+    ['none recorded (real rtx5090-32)', GPU_TABLE['rtx5090-32'], 'none'],
+    ['all sourced (synthetic)',
+     { ...GPU_TABLE['h100-80'], priceSource: { hyper: sourced, spec: sourced, spot: sourced } }, 'all'],
+  ];
+
+  const surfacesSeen = new Set();
+  let mixedSourcedHit = 0, mixedNotRecordedHit = 0;
+  for (const [label, card, shape] of cases) {
+    // A fresh harness per card, like the FP8 sweep above: savedSnapshots
+    // accumulates on one shared harness, which would leave an earlier card's
+    // comparison row still rendering when this reaches the next card.
+    const h = renderHarness();
+    const st = asState(card, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.pushSnapshot(st, c);
+    for (const name of renderers) {
+      const args = params[name].map(pn => (pn === 'computed' ? c : pn === 'state' ? st : undefined));
+      try { h[name](...args); } catch (e) { assert.fail(`${label}: ${name}(...) threw: ${e.message}`); }
+    }
+    const texts = { ...h.out, '(copied report)': h.exportSummary(st, c) };
+    let sawCostSurface = false;
+    for (const [id, text] of Object.entries(texts)) {
+      if (!COST.test(text)) continue;
+      sawCostSurface = true;
+      surfacesSeen.add(id);
+
+      for (const re of OLD_COMPOSITES)
+        assert.ok(!re.test(text),
+          `${label}/${id}: still names the old composite provider list (${text.match(re)}): ` +
+          text.slice(0, 300));
+      assert.ok(!/\bundefined\b|\bnull\b|\bNaN\b/.test(text),
+        `${label}/${id}: prints a raw undefined/null/NaN instead of a source or "not recorded": ` +
+        text.slice(0, 300));
+
+      if (shape === 'none') {
+        assert.ok(text.includes('not recorded'),
+          `${label}/${id}: no tier is sourced, but no "not recorded" appears: ${text.slice(0, 300)}`);
+        for (const p of PROVIDER_NAMES_LIST)
+          assert.ok(!text.includes(p),
+            `${label}/${id}: names provider "${p}" with nothing recorded to back it: ${text.slice(0, 300)}`);
+      } else if (shape === 'all') {
+        assert.ok(!text.includes('not recorded'),
+          `${label}/${id}: every tier is sourced, but "not recorded" still appears: ${text.slice(0, 300)}`);
+        assert.ok(text.includes('Lambda'),
+          `${label}/${id}: every tier is sourced (lambda), but no source name appears: ${text.slice(0, 300)}`);
+      } else {
+        // Not "if the full expected string is found, count it, otherwise say
+        // nothing" — that pattern is what let a cold-check sabotage through
+        // on the PDF side: strip just the date off comparison-output's hyper
+        // line (bypassing priceSourceLabel() itself, so the direct unit test
+        // above cannot see it either) and the loop silently skipped hyper
+        // while still counting spec/spot's correct labels elsewhere in the
+        // same string, or in a different surface entirely. `marker` is a
+        // short, reliable signal that THIS surface is attempting to show
+        // THIS tier at all — the provider name for a sourced tier, or the
+        // literal "not recorded" text otherwise. A surface that never
+        // mentions a tier (renderExecutiveSummary never shows spec) still
+        // correctly skips it; a surface that shows the marker but not the
+        // rest of the expected label now fails instead of going uncounted.
+        /* Anchored on the TIER's own name, and asserted on the segment that
+           follows it — not on the provider name, and not by membership.
+
+           Round-2 cold check took the previous shape apart fourteen ways. The
+           marker was the provider name, so a label deleted outright left no
+           marker and `continue` skipped the tier: an empty field where the
+           source must be, uncounted. And `text.includes(expected)` is true of
+           any text that merely CONTAINS the label, so hyper's and spec's
+           labels could be swapped between rows (Lambda's SKU printed under
+           Azure's price), or a composite appended after a correct label, and
+           the assertion still passed.
+
+           A tier name is present whether or not its label rendered, so the
+           skip is gone. The segment runs to the next tier's marker, so a label
+           in the wrong row lands in the wrong segment. And what is left of the
+           segment once the expected label is removed may carry prices and
+           lowercase words, but no capital letter and no letter joined to a
+           letter by a comma, slash or ampersand — which is what every invented
+           provider and every re-appended composite looks like, without this
+           test needing to know a single provider's name. */
+        const TIER_MARK = { hyper: /Hyperscaler|Hyper:/g, spec: /Specialized|Spec:/g,
+                            spot: /Spot \/ marketplace|Spot:/g };
+        /* Tags out first: these surfaces are HTML, and a style attribute is
+           not something the page says. Replaced by a space so nothing joins. */
+        const plain = text.replace(/<[^>]*>/g, ' ');
+        const bounds = [];
+        for (const [tier, re] of Object.entries(TIER_MARK))
+          for (const m of plain.matchAll(re)) bounds.push({ tier, at: m.index, end: m.index + m[0].length });
+        bounds.sort((a, b) => a.at - b.at);
+        for (let i = 0; i < bounds.length; i++) {
+          const { tier, end } = bounds[i];
+          const segment = plain.slice(end, i + 1 < bounds.length ? bounds[i + 1].at : undefined);
+          const expected = priceSourceLabel(st, tier);
+          assert.ok(segment.includes(expected),
+            `${label}/${id}/${tier}: the text after this tier's own name is not its source. ` +
+            `expected ${JSON.stringify(expected)}, segment ${JSON.stringify(segment.slice(0, 200))}`);
+          /* Only the text that sits between this tier's name and its price:
+             what precedes the label, and what follows it up to the next price
+             figure. A surface's trailing disclaimer comes after every price and
+             belongs to no tier, so bounding at the next `$` keeps it out of a
+             tier's residue without this test having to know it is there. */
+          const at = segment.indexOf(expected);
+          const before = segment.slice(0, at);
+          const after = segment.slice(at + expected.length);
+          // ...or the next element boundary, which a stripped tag leaves as a run
+          // of spaces. The exec summary puts its next row straight after the
+          // label with no price between them.
+          const residue = before + ' ' + after.split(/\s{2,}|\n|\$/)[0];
+          assert.ok(!/[A-Z]/.test(residue),
+            `${label}/${id}/${tier}: names something beside its source — ` +
+            `${JSON.stringify(residue.slice(0, 160))}`);
+          assert.ok(!/[A-Za-z]\s*[,/&]\s*[A-Za-z]/.test(residue),
+            `${label}/${id}/${tier}: a second provider is joined onto its source — ` +
+            `${JSON.stringify(residue.slice(0, 160))}`);
+          if (expected === 'not recorded') mixedNotRecordedHit++; else mixedSourcedHit++;
+        }
+      }
+    }
+    assert.ok(sawCostSurface, `${label}: no surface printed a cost figure at all — the sweep found nothing`);
+
+    /* The notes carry no cost figure, so the per-surface loop above never sees
+       them — and a sentence there is as much a claim about where a price came
+       from as a sub-label is. Round 2 added `notes += 'Spot prices are from
+       Vast.ai. '` to every card, including one with nothing recorded, and only
+       the golden noticed.
+
+       One sentence in the notes mentions price, and what it may say is a
+       contract, so it is a literal. Anything else naming a source belongs in
+       the cost table, beside the price it describes. */
+    const notesText = (texts['notes-output'] || '').replace(/<[^>]*>/g, ' ');
+    const priceSentences = notesText.split(/(?<=\.)\s+/)
+      .map(x => x.trim()).filter(x => /\bprices?\b/i.test(x));
+    for (const sentence of priceSentences)
+      assert.ok(NOTES_PRICE_SENTENCES.some(ok => sentence.startsWith(ok)),
+        `${label}: the notes say something about price that is not the one sentence they may ` +
+        `say — ${JSON.stringify(sentence.slice(0, 200))}`);
+    // Cold-check finding: renderNotes()'s general disclaimer line ("GPU
+    // prices are mid-2026 per-board/hr estimates...") named providers and
+    // called every price an estimate, but the text has no dollar figure in
+    // it (COST never matches it), so the per-surface loop above never
+    // discovered it at all — not scoped out on purpose, just never reached.
+    // This checks every renderer's output, cost figure or not, the same way
+    // the PDF-side sweep now checks its whole story rather than only the
+    // cost-bearing strings.
+    const wholePage = Object.values(texts).join('\n');
+    for (const re of OLD_COMPOSITES)
+      assert.ok(!re.test(wholePage),
+        `${label}: the composite provider list (${wholePage.match(re)}) appears somewhere on ` +
+        'the page, even outside a cost figure\'s own text');
+    assert.ok(!wholePage.includes('per-board/hr estimates'),
+      `${label}: still calls GPU prices "estimates" somewhere on the page — some tiers are ` +
+      'sourced, dated, attributed figures, not guesses');
+  }
+  assert.ok(mixedSourcedHit > 0 && mixedNotRecordedHit > 0,
+    `the mixed real row (h100-80) did not exercise both states: sourced=${mixedSourcedHit} ` +
+    `not-recorded=${mixedNotRecordedHit}`);
+  assert.ok(surfacesSeen.size >= 3,
+    `only ${surfacesSeen.size} surfaces print a cost figure at all (${[...surfacesSeen].join(', ')}) — ` +
+    'the sweep has stopped reaching them');
+});
+
+test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
+  /* Cold-check finding: renderComparisons' "Cost/hr" and renderExecutiveSummary's
+     "Monthly cost range" both hardcoded spot as the floor and hyperscaler as
+     the ceiling, which held only while every catalog price satisfied
+     spot <= specialized <= hyperscaler — no longer true for l40s-48 (specialized
+     above hyperscaler) or rtx4090-24 (spot above specialized). The golden alone
+     does not catch a wrong-but-plausible-looking range: this asserts the
+     displayed figures equal Math.min/max of the three hourly costs directly,
+     computed independently of what the renderer did, for every catalog row —
+     not just the two known-broken ones, so a card that develops the same
+     inversion later is caught the same way. Found the hard way: this specific
+     sabotage (spot-to-hyperscaler instead of true min/max) survived with the
+     golden regenerated and every other test green — the golden was the only
+     thing that had ever looked at this line. */
+  let checkedCmp = 0, checkedExec = 0, inverted = 0;
+  for (const [slug, card] of Object.entries(GPU_TABLE)) {
+    // A fresh harness per card: savedSnapshots accumulates on one shared
+    // harness (see the FP8 sweep above), which left an earlier card's
+    // comparison row still in the grid when this reached the next card's —
+    // the regex below matched the FIRST Cost/hr row in the page, not
+    // necessarily this card's.
+    const h = renderHarness();
+    const st = asState(card, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    const trueMin = Math.min(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
+    const trueMax = Math.max(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
+    if (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot))
+      inverted++;   // specialized is the true floor or ceiling, not just spot/hyper — the regime that broke
+
+    h.pushSnapshot(st, c);
+    h.renderComparisons();
+    const cmpText = h.out['comparison-output'] || '';
+    const cmpMatch = /Cost\/hr<\/span><span class="val">\$([\d.]+)–\$([\d.]+)/.exec(cmpText);
+    assert.ok(cmpMatch, `${slug}: renderComparisons printed no Cost/hr range at all`);
+    checkedCmp++;
+    assert.strictEqual(Number(cmpMatch[1]), Number(trueMin.toFixed(2)),
+      `${slug}: renderComparisons' Cost/hr floor is ${cmpMatch[1]}, expected the true cheapest ` +
+      `tier ${trueMin.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
+      `spot=${c.hourlySpot.toFixed(2)})`);
+    assert.strictEqual(Number(cmpMatch[2]), Number(trueMax.toFixed(2)),
+      `${slug}: renderComparisons' Cost/hr ceiling is ${cmpMatch[2]}, expected the true priciest ` +
+      `tier ${trueMax.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
+      `spot=${c.hourlySpot.toFixed(2)})`);
+
+    Object.keys(h.out).forEach(k => delete h.out[k]);
+    h.renderExecutiveSummary(st, c);
+    const execText = h.out['exec-summary'] || '';
+    const execMatch = /Monthly cost range<\/span><span class="exec-value">\$([\d,]+) – \$([\d,]+)\/mo/.exec(execText);
+    assert.ok(execMatch, `${slug}: renderExecutiveSummary printed no Monthly cost range at all`);
+    checkedExec++;
+    const gotCheap = Number(execMatch[1].replace(/,/g, ''));
+    const gotExpensive = Number(execMatch[2].replace(/,/g, ''));
+    assert.strictEqual(gotCheap, Math.round(trueMin * 730),
+      `${slug}: renderExecutiveSummary's monthly floor is $${gotCheap}, expected the true ` +
+      `cheapest tier's $${Math.round(trueMin * 730)}`);
+    assert.strictEqual(gotExpensive, Math.round(trueMax * 730),
+      `${slug}: renderExecutiveSummary's monthly ceiling is $${gotExpensive}, expected the true ` +
+      `priciest tier's $${Math.round(trueMax * 730)}`);
+  }
+  assert.strictEqual(checkedCmp, Object.keys(GPU_TABLE).length);
+  assert.strictEqual(checkedExec, Object.keys(GPU_TABLE).length);
+  assert.ok(inverted >= 2,
+    `only ${inverted} catalog row(s) have specialized as the true floor/ceiling instead of spot/hyper — ` +
+    'expected at least l40s-48 and rtx4090-24, so this sweep is not actually exercising the broken regime');
+});
+
 
 console.log('\nHardware with no measured constants');
 /* The ruling: a card whose perfKey has no PERF entry gets its full VRAM
@@ -3680,6 +4019,14 @@ test('the sabotage README names every driver, and no driver it does not have', (
      unlisted tests/sabotage and turns the guard above red on a branch that has
      nothing to do with this work. It cost two people a confusing red suite before
      it was fixed, so the fix is pinned rather than remembered. */
+  /* chain.sh executes a driver directly, so one committed without the executable
+     bit errors with 126 and the whole run exits non-zero — which is how
+     engine_r4_cost_provenance.py failed to run at all on the commit that added
+     it. Loud, but only twenty minutes in; this says it in a second. */
+  const notExecutable = onDisk.filter(f => !(fs.statSync(path.join(dir, f)).mode & 0o111));
+  assert.deepStrictEqual(notExecutable, [],
+    `these drivers are not executable, so chain.sh cannot run them: ${notExecutable.join(', ')}`);
+
   const importers = onDisk.filter(f => f.endsWith('.py'))
     .filter(f => /^import\s|^from\s/m.test(fs.readFileSync(path.join(dir, f), 'utf8')));
   const writesBytecode = importers.filter(f =>

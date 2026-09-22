@@ -1616,6 +1616,285 @@ test("tp and dp in a JSON config reach cfg and change nothing",
      check_tp_dp_json_keys_are_inert)
 
 
+# ---- cost provenance: a named source, or "not recorded" said plainly --------
+print("\nCost provenance: a named source, or \"not recorded\" said plainly, never a guess")
+
+OLD_COMPOSITES = ("AWS/GCP/Azure", "Lambda/CoreWeave", "Vast.ai)",
+                  "AWS, GCP, Azure on-demand", "Lambda, CoreWeave, RunPod", "Vast.ai, spot instances")
+PROVIDER_NAMES_LIST = ("Azure", "AWS", "Lambda", "CoreWeave", "Vast.ai")
+# General, not exact: two or more provider-ish names joined by a comma or
+# slash, wherever they occur — mirrors tests/model.test.js's MULTI_PROVIDER,
+# added after a cold-check sabotage appended " (AWS, GCP, Azure)" after an
+# otherwise-correct JS label and none of the three exact phrases above
+# matched a shorter list in a different shape. A real sourced label never
+# joins two provider names this way.
+MULTI_PROVIDER = re.compile(
+    r"\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,/]\s*"
+    r"(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}")
+
+
+def check_price_source_label_format_is_a_fixed_expectation():
+    """The discovery sweeps below compute their own "expected" string by
+    calling gr.price_source_label(), which proves the PDF agrees with that
+    function but cannot catch a bug inside the function itself — a version
+    that quietly dropped the date would still match its own output. This is
+    the check that cannot pass that way: every expected string is a literal,
+    typed once, independent of the function under test."""
+    gpu = {"priceSource": {"hyper": {"provider": "azure", "sku": "Standard_ND96isr_H100_v5",
+                                      "region": "eastus", "date": "2026-09-16"}}}
+    assert gr.price_source_label(gpu, "hyper") == (
+        "Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16")
+
+    for provider_id, name in (("azure", "Azure"), ("aws", "AWS"), ("lambda", "Lambda"),
+                              ("coreweave", "CoreWeave"), ("vast", "Vast.ai")):
+        g = {"priceSource": {"spot": {"provider": provider_id, "sku": "X",
+                                       "region": "global", "date": "2026-01-01"}}}
+        assert gr.price_source_label(g, "spot") == f"{name} · X · global · read 2026-01-01", (
+            f"provider id {provider_id!r} did not render as {name!r}")
+
+    # An unrecognised provider id falls back to itself instead of raising or
+    # silently dropping the field.
+    unknown = {"priceSource": {"spec": {"provider": "newvendor", "sku": "Y", "region": "r", "date": "d"}}}
+    assert gr.price_source_label(unknown, "spec") == "newvendor · Y · r · read d"
+
+    assert gr.price_source_label({}, "hyper") == "not recorded"
+    assert gr.price_source_label({"priceSource": {}}, "hyper") == "not recorded"
+    leaky = {"priceSource": {"spec": {"provider": "x", "sku": "y", "region": "z", "date": "d"}}}
+    assert gr.price_source_label(leaky, "hyper") == "not recorded", (
+        "a sourced spec tier must not leak into a hyper lookup")
+
+test("price_source_label formats provider, SKU, region and date — a fixed expectation",
+     check_price_source_label_format_is_a_fixed_expectation)
+
+
+NOTES_PRICE_SENTENCE = (
+    "GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
+    "specialized, spot/marketplace — see each tier's own source above, or "
+    '"not recorded" where it has no confirmed source.')
+
+
+def check_pdf_cost_section_names_a_source_or_says_not_recorded():
+    """Mirrors tests/model.test.js's discovery sweep for the same requirement,
+    on the engine that has no DOM to discover renderers from: report_strings()
+    already walks the whole reportlab story (every Paragraph, table cell and
+    bullet — see story_strings()'s docstring), so "every string the PDF
+    would show" is the discovery here, the same way "every element the page
+    renders" is the discovery on the JS side. price_source_label() is called
+    directly rather than re-extracted from source, since this file already
+    imports generate_report as a real module."""
+    sourced = {"provider": "lambda", "sku": "TEST PLAN", "region": "global", "date": "2026-09-22"}
+    cases = [
+        ("mixed (real h100-80)", dict(gr.GPUS["h100-80"]), "mixed"),
+        ("none recorded (real rtx5090-32)", dict(gr.GPUS["rtx5090-32"]), "none"),
+        ("all sourced (synthetic)",
+         dict(gr.GPUS["h100-80"], priceSource={"hyper": sourced, "spec": sourced, "spot": sourced}), "all"),
+    ]
+    # A dollar figure, or the dedicated provenance line: reportlab's cost
+    # table is plain strings per cell, so the tier's price ("$12.30") and its
+    # source ("Source — Hyperscaler: Azure · ... ") are necessarily two
+    # different list elements, unlike the HTML page where a source sub-label
+    # sits inside the very same cell as its price. Both shapes are content
+    # discovered from the story, not an element position picked by hand.
+    cost_line = re.compile(r"\$[\d,]+\.\d{2}|^Source —")
+    mixed_sourced_hit = mixed_not_recorded_hit = 0
+    for label, card, shape in cases:
+        cfg, strings = report_strings(card, 1, bpp=2)
+        cost_strings = [s for s in strings if cost_line.search(s)]
+        assert cost_strings, f"{label}: no cost figure printed at all — report_strings found nothing"
+
+        # Cold-check finding: generate_report.py used to carry a second
+        # composite provider list, in "Notes and assumptions" ("hyperscaler
+        # (AWS/GCP/Azure)" etc.) rather than the cost table itself — a T4
+        # PDF said "Specialized: not recorded" in the cost section and then
+        # named three specialized providers a page later. An earlier version
+        # of this test scoped its composite check to cost_strings only and
+        # excused that line as "a category description", which is wrong: the
+        # requirement is no composite provider list anywhere near a price,
+        # full stop, so this checks every string the report prints, not only
+        # the ones with a dollar figure on them. Same for calling a sourced
+        # price an "estimate" — a dated, attributed figure is not a guess.
+        whole_blob = "\n".join(strings)
+        for composite in OLD_COMPOSITES:
+            assert composite not in whole_blob, (
+                f"{label}: the composite provider list ({composite!r}) appears somewhere in the "
+                f"PDF, even outside the cost table")
+        m = MULTI_PROVIDER.search(whole_blob)
+        assert not m, f"{label}: two or more providers named together ({m.group(0)!r}) somewhere in the PDF"
+        # The notes carry no cost figure, so cost_strings never sees them, and a
+        # sentence there is as much a claim about where a price came from as a
+        # cost row is. Round 2 added "Spot prices are from Vast.ai." to the
+        # notes of every card, including one with nothing recorded, and brought
+        # the composite back inside that sentence in shapes the composite
+        # regexes do not match (" and " joined, lowercase). One sentence in the
+        # notes mentions price and what it may say is a contract, so it is a
+        # literal.
+        for sentence in re.split(r"(?<=\.)\s+", whole_blob):
+            if re.search(r"\bprices?\b", sentence, re.I) and "$" not in sentence:
+                assert sentence.strip().lstrip("\u2022 ").startswith(NOTES_PRICE_SENTENCE), (
+                    f"{label}: the PDF says something about price outside the cost table that is "
+                    f"not the one sentence it may say — {sentence.strip()[:200]!r}")
+        assert "per-board/hr estimates" not in whole_blob, (
+            f"{label}: still calls GPU prices \"estimates\" — some tiers are sourced, dated, "
+            f"attributed figures, not guesses")
+
+        for s in cost_strings:
+            for composite in OLD_COMPOSITES:
+                assert composite not in s, (
+                    f"{label}: a cost figure's own string still names the old composite "
+                    f"provider list ({composite!r}): {s!r}")
+            assert not re.search(r"\bNone\b|\bnan\b", s), (
+                f"{label}: prints a raw None/nan instead of a source or \"not recorded\": {s!r}")
+
+        blob = "\n".join(cost_strings)
+        # Checked per tier, not pooled. A pooled "did any tier's expected
+        # string show up anywhere" check is satisfied by ONE correct tier
+        # while a different tier on the same card is broken — h100-80's
+        # Source line renders all three tiers in one string ("Source —
+        # Hyperscaler: ... Specialized: ... Spot: ..."), so a cold-check
+        # sabotage that stripped only hyper's date left spec's label intact,
+        # the pooled count still went positive, and this test stayed green.
+        # Every tier's own expected value must appear, individually.
+        # Round-2 cold check: `expected in blob` is membership, so swapping
+        # hyper's and spec's labels between tiers left both present and this
+        # passed — Lambda's SKU printed under the Azure price. Each tier's
+        # label must sit after that tier's OWN name, so the text is cut at the
+        # next tier name and the label looked for only in its own segment.
+        TIER_NAME = {"hyper": "Hyperscaler:", "spec": "Specialized:", "spot": "Spot:"}
+        marks = sorted((blob.index(n), t, len(n)) for t, n in TIER_NAME.items() if n in blob)
+        segments = {t: blob[at + ln:(marks[i + 1][0] if i + 1 < len(marks) else len(blob))]
+                    for i, (at, t, ln) in enumerate(marks)}
+        for tier in ("hyper", "spec", "spot"):
+            expected = gr.price_source_label(card, tier)
+            where = segments.get(tier, blob)
+            assert expected in where, (
+                f"{label}/{tier}: expected {expected!r} not found after this tier's own name: "
+                f"{where[:300]!r}")
+            if expected == "not recorded":
+                mixed_not_recorded_hit += 1
+            else:
+                mixed_sourced_hit += 1
+        if shape == "none":
+            for p in PROVIDER_NAMES_LIST:
+                assert p not in blob, f"{label}: names provider {p!r} with nothing recorded to back it"
+    assert mixed_sourced_hit > 0 and mixed_not_recorded_hit > 0, (
+        f"the sweep did not exercise both states across every case: "
+        f"sourced={mixed_sourced_hit} not-recorded={mixed_not_recorded_hit}")
+
+# One clock per case, scrubbed by shape; two bare dates per case, scrubbed by
+# value. Both counts are a contract — see the test below for what a change in
+# either one means.
+CLOCKS_PER_CASE = 1
+BARE_DATES_PER_CASE = 2
+
+
+def check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks():
+    """Round-2 cold check: two ways to plant a suite that goes red tomorrow
+    with no code change, both invisible on the day they land.
+
+    `golden_clocks()` replaces the footer's generated-at line by its shape, and
+    any string that is EXACTLY today's date by value. Raise the second count —
+    render a priceSource read date as its own paragraph and it becomes
+    "[today]" too — and the golden records a placeholder where a fixed content
+    date belongs; tomorrow that string is a date again and the golden no longer
+    matches. Lower the first — draw the footer as "Date: " + today and the
+    shape scrub never fires — and the golden records a literal date that stops
+    being today at midnight.
+
+    Round 1 was the same failure in its first shape, and it reached master's
+    CI. Neither version shows up on the day it is written, so counting is the
+    only thing that catches them while someone is still looking."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "report.json")
+    with open(path) as f:
+        golden = json.load(f)
+    assert golden, "the report golden is empty"
+    bad = []
+    for case, recorded in golden.items():
+        blob = json.dumps(recorded)
+        clocks = blob.count("Generated [date] at [time]")
+        bare = blob.count("[today]")
+        if clocks != CLOCKS_PER_CASE or bare != BARE_DATES_PER_CASE:
+            bad.append(f"{case}: {clocks} clock placeholder(s) (want {CLOCKS_PER_CASE}), "
+                       f"{bare} bare-date placeholder(s) (want {BARE_DATES_PER_CASE})")
+    assert not bad, (
+        "the clock scrubs no longer fire once per clock:\n       " + "\n       ".join(bad)
+        + "\n       More bare dates means a content date is being scrubbed as if it were a "
+          "clock, and the golden will stop matching tomorrow. Fewer means a clock is being "
+          "recorded literally, and the golden will stop matching tomorrow.")
+
+test("the clock scrubs fire exactly as often as the report has clocks",
+     check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks)
+
+
+test("the PDF cost section names a source or says \"not recorded\", for every shape",
+     check_pdf_cost_section_names_a_source_or_says_not_recorded)
+
+
+def check_pdf_tier_names_are_bare():
+    """The old defect in its most literal form: the tier name column itself
+    used to carry the composite list — the cell's whole string used to BE
+    "Hyperscaler (AWS/GCP/Azure)". report_strings() surfaces each table cell
+    as its own list element (see story_strings()'s _cellvalues walk), so
+    membership is exact-match by construction: if the parenthetical were
+    still there, the bare name below would not be a member of strings at
+    all, it would be missing, which is what a regression here looks like."""
+    cfg, strings = report_strings(dict(gr.GPUS["h100-80"]), 1, bpp=2)
+    assert "Hyperscaler" in strings, "the PDF cost table lost its Hyperscaler tier name"
+    assert "Specialized" in strings, "the PDF cost table lost its Specialized tier name"
+    assert "Spot / marketplace" in strings, "the PDF cost table lost its Spot / marketplace tier name"
+
+test("the PDF cost table's tier names carry no provider parenthetical",
+     check_pdf_tier_names_are_bare)
+
+
+MENU_PRICE_RE = re.compile(r"\$[\d.]+(\*?)-\$[\d.]+(\*?)/hr")
+
+
+def check_interactive_gpu_menu_marks_sourced_prices():
+    """Cold-check finding (minor): the interactive CLI's GPU menu named
+    neither state, for either price shown, unlike every other surface. A
+    full "Provider · SKU · region · read date" per row does not fit a
+    numbered list of a dozen cards, so this checks the compact marker
+    instead: every GPU with a recorded spot/hyper source gets a '*' on that
+    specific price, every GPU without does not — checked separately per
+    price, and read off the real catalog rather than a hand-picked pair,
+    so an unusual future catalog (sourced spot but not hyper, say) is
+    still checked correctly instead of by a rule that happens to work for
+    today's rows alone."""
+    # interactive_mode() asks more questions than this test cares about
+    # (preset, precision, KV cache, ...); only the GPU menu it prints before
+    # the first answer is read matters here, and abandoning the script part
+    # way through raises once input() runs dry — expected, not a failure.
+    with unittest.mock.patch("builtins.input", side_effect=["1", "1"]), \
+         contextlib.redirect_stdout(io.StringIO()) as out:
+        try:
+            gr.interactive_mode()
+        except StopIteration:
+            pass
+    printed = out.getvalue()
+    menu_lines = {}
+    for line in printed.splitlines():
+        m = re.match(r"^\s*(\d+)\.\s", line)
+        if m:
+            menu_lines[m.group(1)] = line
+    checked = 0
+    for i, (k, v) in enumerate(gr.GPUS.items()):
+        line = menu_lines.get(str(i + 1))
+        assert line and k in line, f"{k}: not found on its own numbered menu line: {line!r}"
+        price_m = MENU_PRICE_RE.search(line)
+        assert price_m, f"{k}: menu line does not carry a $spot-$hyper/hr figure: {line!r}"
+        spot_starred, hyper_starred = bool(price_m.group(1)), bool(price_m.group(2))
+        ps = v.get("priceSource") or {}
+        checked += 1
+        assert spot_starred == ("spot" in ps), (
+            f"{k}: spot price starred={spot_starred}, but priceSource carries spot={('spot' in ps)}: {line!r}")
+        assert hyper_starred == ("hyper" in ps), (
+            f"{k}: hyper price starred={hyper_starred}, but priceSource carries hyper={('hyper' in ps)}: {line!r}")
+    assert checked == len(gr.GPUS), f"only checked {checked} of {len(gr.GPUS)} catalog rows"
+
+test("the interactive CLI's GPU menu marks a price with a recorded source, per price",
+     check_interactive_gpu_menu_marks_sourced_prices)
+
+
 # ---- hardware with no measured constants ------------------------------------
 # The ruling: a card whose perfKey has no PERF entry gets its full VRAM breakdown,
 # fit verdict, cost and command, and no throughput. Every figure that needs a
@@ -2168,15 +2447,32 @@ GOLDEN_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden
 # and the replacement keeps the shape, so a document that stops dating itself
 # still fails.
 #
-# The footer's is matched as today's literal date, not as any date-shaped
-# string. A recorded price carries the date it was read (fix/cost-provenance),
-# and that is content: it belongs in the golden, and a regex for \d{4}-\d{2}-\d{2}
-# would quietly blank it. Only the clock reads as today.
+# The footer's used to be matched as today's literal date value (\b<today>\b)
+# rather than by where it sits — which caught the footer, but a \b word
+# boundary is satisfied just as well by a date sitting inside a longer
+# sentence, and a recorded price carries the date it was read
+# (fix/cost-provenance) *as* a sentence: "...read 2026-09-22. Specialized...".
+# The day this ran was also the day every price on the catalog was read, so
+# every one of those embedded dates got blanked into the golden too — and
+# every day after, today's clock no longer equals that recorded date, so the
+# blanking stops firing and the golden and a fresh run permanently disagree.
+# \A...\Z instead of \b...\b: the footer's date is drawn as nothing but that
+# date (see the drawRightString call it comes from), so it is the *entire*
+# captured string, never a fragment of a longer one — the one shape a
+# recorded, sentence-embedded date can never take. That is what makes this
+# "by context", not by value: it keys on the string's shape, not on whether
+# its value happens to match today.
+#
+# Both placeholders use [brackets], not <angle brackets>: reader_view() strips
+# anything matching <[^>]*> as reportlab markup (<b>, <br/>, ...), so an
+# angle-bracket placeholder inserted *before* reader_view() runs is stripped
+# right back out — "Generated <date> at <time>" golden as "Generated  at ",
+# both clocks scrubbed to invisible rather than to a readable placeholder.
 def golden_clocks():
     today = datetime.now().strftime("%Y-%m-%d")
     return (
-        (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated <date> at <time>"),
-        (re.compile(r"\b" + re.escape(today) + r"\b"), "<today>"),
+        (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated [date] at [time]"),
+        (re.compile(r"\A" + re.escape(today) + r"\Z"), "[today]"),
     )
 
 

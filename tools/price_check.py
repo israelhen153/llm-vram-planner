@@ -63,6 +63,22 @@ ABS_MIN, ABS_MAX = 0.05, 100.0
 CONFIRM_THRESHOLD = 0.01
 FLAG_THRESHOLD = 0.40
 
+# A secondary/cross-check reading is fetched from a different vendor than the
+# primary and never drives a proposed value on its own — see SOURCE_MAP's
+# docstring: two vendors legitimately charge different amounts for
+# comparable-but-not-identical hardware, so a strict floor here would flag
+# routine vendor variation. But primary and secondary are read in the same
+# run, the same hour, for the same board: unlike a hand-set catalog value
+# against a fresh fetch, there is no "the market moved since we looked"
+# excuse for the two to disagree by a lot. Found live 2026-09-22:
+# b200-192/spec applied Lambda's $6.69 while CoreWeave, fetched the same run,
+# read $8.60 for what both call an 8x HGX B200 node — 28% apart — and the
+# run applied the lower number without saying so anywhere. Set below
+# FLAG_THRESHOLD on purpose: two live reads disagreeing by half of what it
+# takes to flag a stale-catalog-vs-live move is more suspicious, not less,
+# because staleness cannot explain it.
+CROSS_CHECK_FLAG_THRESHOLD = 0.20
+
 
 class SourceError(Exception):
     """A source failed validation. Caught per (slug, tier); never crashes the run."""
@@ -711,6 +727,47 @@ def _classify(current, fetched):
     return "MOVED", round(fetched, 2)
 
 
+def _cross_check_disagreement(reading, secondary_readings):
+    """None if every secondary reading that actually resolved agrees with the
+    primary within CROSS_CHECK_FLAG_THRESHOLD; otherwise a human-readable note
+    naming the worst offender. A SourceError secondary (an aborted cross-check,
+    e.g. a 'Contact sales' row or a page shape change) is not disagreement —
+    it already failed on its own terms and is reported separately as an
+    aborted secondary, not folded into this."""
+    worst = None
+    for s in secondary_readings:
+        if isinstance(s, SourceError):
+            continue
+        delta = abs(s.price_per_gpu - reading.price_per_gpu) / reading.price_per_gpu
+        if delta > CROSS_CHECK_FLAG_THRESHOLD and (worst is None or delta > worst[0]):
+            worst = (delta, s)
+    if worst is None:
+        return None
+    delta, s = worst
+    return (f"primary {reading.provider}:{reading.sku} (${reading.price_per_gpu:.4f}/GPU/hr) and "
+            f"cross-check {s.provider}:{s.sku} (${s.price_per_gpu:.4f}/GPU/hr) disagree by {delta:+.1%}, "
+            f"past the {CROSS_CHECK_FLAG_THRESHOLD:.0%} cross-check floor — flagged instead of applied, "
+            "whatever _classify() made of the primary against the catalog")
+
+
+# What this floor governs, and what it deliberately does not. Owner decision,
+# 2026-09-22: it decides whether the tool may APPLY a new value on its own. It
+# does not decide whether an already-attributed price is shown as sourced.
+#
+# Three tiers sit past it today — h100-80/hyper (Azure $12.29 against AWS
+# $6.88), h100-80/spec (Lambda $3.99 against CoreWeave $6.16) and b200-192/spec
+# (Lambda $6.69 against CoreWeave $8.60) — and all three keep their provenance.
+# The disagreement is not a parsing error: those providers really do charge
+# those amounts, and naming the provider is exactly what makes each price true.
+# "The hyperscaler price for an H100" is not a quantity that exists, which is
+# why the cost surfaces name a source at all.
+#
+# Stripping their provenance to satisfy this floor would leave the price on
+# screen with nothing saying where it came from — the unattributed number this
+# whole commit exists to remove. So the spread is reported to a person, above,
+# and the label stays.
+
+
 def run(gpus_data, source_map, shared, only=None, slugs=None):
     outcomes = []
     for slug, row in gpus_data.items():
@@ -744,8 +801,16 @@ def run(gpus_data, source_map, shared, only=None, slugs=None):
                 except SourceError as e:
                     secondary_readings.append(e)
             status, proposed = _classify(row.get(tier), reading.price_per_gpu)
+            # A cross-check that disagrees hard with the primary overrides
+            # CONFIRMED/MOVED the same way a >40% catalog move does: withhold
+            # the value and surface it for a human, rather than let a primary
+            # that merely agrees with a stale catalog sail through while a
+            # live secondary is shouting that something is wrong.
+            note = _cross_check_disagreement(reading, secondary_readings)
+            if note and status in ("CONFIRMED", "MOVED"):
+                status, proposed = "FLAGGED", None
             outcomes.append(Outcome(slug, tier, status, current=row.get(tier), proposed=proposed,
-                                     reading=reading, secondary=secondary_readings))
+                                     reading=reading, secondary=secondary_readings, note=note or ""))
     return outcomes
 
 
@@ -753,7 +818,15 @@ def apply_outcomes(gpus_data, outcomes):
     """Mutate gpus_data (the catalog's "data" dict) in place for CONFIRMED and
     MOVED outcomes: MOVED rewrites the price, both rewrite priceSource for
     that tier. FLAGGED/ABORTED/MANUAL never touch the row. Returns whether
-    anything changed, so the caller knows whether there is a file to write."""
+    anything changed, so the caller knows whether there is a file to write.
+
+    priceSource[tier]["price"] is the reading this run actually compared
+    against the catalog (oc.reading.price_per_gpu, rounded the same way a
+    MOVED value is), not oc.proposed — _classify() sets proposed=current for
+    CONFIRMED, which would make a CONFIRMED row's provenance simply echo the
+    catalog back and defeat the point of recording what was read. For MOVED
+    the two are the same number by construction (both round the same fetch),
+    so this needs no CONFIRMED/MOVED branch of its own."""
     changed = False
     for oc in outcomes:
         if oc.status not in ("CONFIRMED", "MOVED"):
@@ -764,6 +837,7 @@ def apply_outcomes(gpus_data, outcomes):
         row.setdefault("priceSource", {})[oc.tier] = {
             "provider": oc.reading.provider, "sku": oc.reading.sku,
             "region": oc.reading.region, "date": oc.reading.date,
+            "price": round(oc.reading.price_per_gpu, 2),
         }
         changed = True
     return changed
@@ -776,10 +850,16 @@ def _dump_json_value(v):
 
 
 def _dump_row_compact(slug, row):
-    """Render one row the way data/gpus.json writes one GPU per line — not an
-    attempt to reproduce the file's hand-tuned per-column padding (a generic
-    serializer cannot infer that), just enough to keep a real diff readable
-    and confined to the row that changed. See apply_to_text."""
+    """Render one row the way data/gpus.json writes a GPU row: one line, no
+    per-column padding. This used to describe itself as leaving the file's
+    hand-tuned column alignment alone for every row this function did not
+    touch — it did not, in practice: the first run that touched any row lost
+    that row's padding for good, and every run since left the file a little
+    more mixed, part padded, part compact, because a generic serializer
+    cannot infer per-column padding to reproduce it. The fix is not a better
+    serializer; it is one format for the whole file, produced here and
+    applied to every row by apply_to_text() below, not only the row that
+    changed."""
     parts = ", ".join(f"{json.dumps(k)}: {_dump_json_value(v)}" for k, v in row.items())
     return f'    {json.dumps(slug)}: {{ {parts} }}'
 
@@ -788,14 +868,35 @@ _META_LAST_UPDATED_RE = re.compile(r'("last_updated"\s*:\s*)"[^"]*"')
 
 
 def apply_to_text(raw_text, gpus_data, changed_slugs, run_date):
-    """Rewrite only the rows that changed, leaving every other byte of
-    data/gpus.json untouched — the same surgical, marker/anchor-based
-    replacement discipline tools/sync_data.py uses for its generated blocks,
-    and for the same reason: a full json.dump would blow away this file's
-    hand-aligned formatting for every row, not just the ones that changed."""
+    """Rewrite data/gpus.json's row block in one format, whenever there is at
+    least one real change to write.
+
+    An earlier version of this function replaced only the rows named in
+    changed_slugs, on the theory that leaving every other byte alone
+    preserved the file's hand-aligned column formatting for untouched rows.
+    That theory was false in practice, as PR #24 demonstrated: eleven rows
+    were touched over two runs and all eleven came out compact, while the
+    rows no automated source has ever confirmed (rtx4090-24 before this
+    commit, rtx5090-32, rtx6000ada-48) stayed in the old padded style
+    forever — the file was, and would keep becoming, part one format, part
+    the other. A generic serializer cannot reproduce hand-tuned per-column
+    padding (see _dump_row_compact), so the fix is not a better serializer;
+    it is to stop having two formats. Whenever there is at least one real
+    change, every row present in gpus_data is rewritten in the one compact
+    style, not only the rows in changed_slugs — which is what actually
+    normalizes the stragglers, since a row with no automatable source (like
+    the two above) is never itself in changed_slugs. A row whose rendering
+    is already byte-identical to what's on disk produces no diff, so a
+    normal run's diff is still confined to the rows that actually moved —
+    the same property the old code was after, kept without a second format
+    to drift back out of.
+
+    changed_slugs still gates whether anything happens at all: no real
+    change means the file, _meta.last_updated included, is untouched."""
+    if not changed_slugs:
+        return raw_text
     new_text = raw_text
-    for slug in changed_slugs:
-        row = gpus_data[slug]
+    for slug, row in gpus_data.items():
         pattern = re.compile(r'^([ \t]*"' + re.escape(slug) + r'"\s*:\s*\{.*\},?)[ \t]*$', re.MULTILINE)
         m = pattern.search(new_text)
         if not m:
@@ -805,10 +906,9 @@ def apply_to_text(raw_text, gpus_data, changed_slugs, run_date):
         trailing_comma = "," if m.group(1).rstrip().endswith(",") else ""
         replacement = _dump_row_compact(slug, row) + trailing_comma
         new_text = new_text[:m.start()] + replacement + new_text[m.end():]
-    if changed_slugs:
-        new_text, n = _META_LAST_UPDATED_RE.subn(rf'\g<1>"{run_date}"', new_text, count=1)
-        if n != 1:
-            raise SystemExit("apply: could not find _meta.last_updated to update")
+    new_text, n = _META_LAST_UPDATED_RE.subn(rf'\g<1>"{run_date}"', new_text, count=1)
+    if n != 1:
+        raise SystemExit("apply: could not find _meta.last_updated to update")
     return new_text
 
 
@@ -828,12 +928,20 @@ def render_report(outcomes, generated_at):
 
     lines = [f"# Price check — {generated_at}", ""]
 
-    lines += ["## Flagged for manual review (>{:.0%} move — no value applied)".format(FLAG_THRESHOLD)]
+    lines += ["## Flagged for manual review (>{:.0%} move, or cross-check disagreement — "
+              "no value applied)".format(FLAG_THRESHOLD)]
     if by_status["FLAGGED"]:
         for oc in by_status["FLAGGED"]:
             delta = (oc.reading.price_per_gpu - oc.current) / oc.current if oc.current else float("nan")
             lines.append(f"- **{oc.slug}** / {oc.tier}: catalog {oc.current} -> live "
                          f"{oc.reading.price_per_gpu:.4f} ({delta:+.1%}) — {_fmt_reading(oc.reading)}")
+            # Set only when this row was flagged (or downgraded from CONFIRMED/
+            # MOVED) because a cross-check disagreed, not because the primary
+            # itself moved >40% against the catalog — the delta above can be
+            # small or even ~0% in that case, so the note is what explains why
+            # a seemingly ordinary row still has no value applied.
+            if oc.note:
+                lines.append(f"    - {oc.note}")
             for s in oc.secondary:
                 lines.append(f"    - cross-check: {_fmt_reading(s)}")
     else:

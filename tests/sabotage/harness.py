@@ -85,6 +85,34 @@ def restore_files(files):
     assert st.strip() == "", f"tree not clean after restore:\n{st}"
 
 
+CATALOG = "data/gpus.json"
+
+
+def edits_of(spec):
+    """A sabotage is a list of edits, or a dict carrying those edits and how to
+    treat them. Both shapes, one reader."""
+    return spec["edits"] if isinstance(spec, dict) else spec
+
+
+def resyncs(spec, touched):
+    """Whether to re-run tools/sync_data.py after applying.
+
+    Default: yes, whenever the catalog was edited — because that is what a
+    contributor does, and what the project's own rule requires ("never
+    hand-edit a generated block; edit data/gpus.json and run sync_data.py").
+    Without it a catalog sabotage turns tests/sync.test.py red for a reason
+    that has nothing to do with the sabotage: the generated blocks simply no
+    longer match the file. The driver then records a catch, and a false catch
+    is worse than no entry, because it reads as coverage.
+
+    A sabotage whose whole point is leaving the blocks stale says so with
+    {"edits": [...], "resync": False} — and then sync going red IS the catch.
+    """
+    if isinstance(spec, dict) and "resync" in spec:
+        return bool(spec["resync"])
+    return CATALOG in touched
+
+
 def run_driver(sabotages):
     """Run a driver's sabotages one at a time and report which the suite missed.
 
@@ -108,7 +136,7 @@ def run_driver(sabotages):
     sys.stdout.reconfigure(line_buffering=True)
     # Every file this driver could touch, derived from its own sabotages rather
     # than listed by hand: the hand-written lists were one of the six drifts.
-    touchable = sorted({edit[0] for edits in sabotages.values() for edit in edits})
+    touchable = sorted({edit[0] for spec in sabotages.values() for edit in edits_of(spec)})
     patterns = sys.argv[1:]
     if patterns and patterns[0] == "--from":
         keys = list(sabotages)
@@ -120,8 +148,14 @@ def run_driver(sabotages):
     require_green_baseline()
     survived, unapplied = [], []
     for name in names:
+        spec = sabotages[name]
         try:
-            touched = apply_edits(sabotages[name])
+            touched = apply_edits(edits_of(spec))
+            if resyncs(spec, touched):
+                r = subprocess.run(["python3", "tools/sync_data.py"], capture_output=True, text=True)
+                if r.returncode:
+                    raise RuntimeError(f"tools/sync_data.py failed after the edit: "
+                                       f"{(r.stderr or r.stdout).strip()[:200]}")
         except Exception as e:
             print(f"  !! {name}: could not apply: {e}")
             unapplied.append(name)
