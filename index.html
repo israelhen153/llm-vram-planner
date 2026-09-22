@@ -2062,7 +2062,12 @@ function renderNotes(state, computed) {
   // throughput figures it prices — see renderStrategyBadges.
   if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ') + 'NCCL buffers ~0.3 GB/peer. ';
   notes += 'Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. ';
-  notes += 'GPU prices are mid-2026 per-board/hr estimates across 3 tiers. Reserved typically 30-60% off on-demand. ';
+  // Never "estimates": a sourced tier's price is a dated, attributed figure,
+  // not a guess, and this note used to call every tier one regardless — the
+  // same shape of overclaim the deleted composite sub-labels were. renderCost
+  // above already names each tier's source or says "not recorded"; this note
+  // only points there rather than re-describing what it found.
+  notes += 'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier\'s source, or "not recorded" where it has no confirmed source. Reserved typically 30-60% off on-demand. ';
   if (trainingEnabled) notes += 'Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation. ';
   setHTML('notes-output', notes);
 }

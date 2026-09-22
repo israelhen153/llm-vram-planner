@@ -1674,14 +1674,6 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         ("all sourced (synthetic)",
          dict(gr.GPUS["h100-80"], priceSource={"hyper": sourced, "spec": sourced, "spot": sourced}), "all"),
     ]
-    # Scoped to strings that actually carry a cost figure ($X.XX), the same
-    # discovery test/model.test.js's sweep uses — not the whole story blob.
-    # generate_report.py also keeps one general, provider-naming glossary
-    # line in "Notes and assumptions" ("hyperscaler (AWS/GCP/Azure)" etc.,
-    # deliberately left as-is: it describes what a *tier* generically means,
-    # the same way README.md's feature list does, not what supplied *this*
-    # row's number) — a whole-blob check would trip on that line for every
-    # case and prove nothing about the defect this commit actually fixes.
     # A dollar figure, or the dedicated provenance line: reportlab's cost
     # table is plain strings per cell, so the tier's price ("$12.30") and its
     # source ("Source — Hyperscaler: Azure · ... ") are necessarily two
@@ -1694,6 +1686,26 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         cfg, strings = report_strings(card, 1, bpp=2)
         cost_strings = [s for s in strings if cost_line.search(s)]
         assert cost_strings, f"{label}: no cost figure printed at all — report_strings found nothing"
+
+        # Cold-check finding: generate_report.py used to carry a second
+        # composite provider list, in "Notes and assumptions" ("hyperscaler
+        # (AWS/GCP/Azure)" etc.) rather than the cost table itself — a T4
+        # PDF said "Specialized: not recorded" in the cost section and then
+        # named three specialized providers a page later. An earlier version
+        # of this test scoped its composite check to cost_strings only and
+        # excused that line as "a category description", which is wrong: the
+        # requirement is no composite provider list anywhere near a price,
+        # full stop, so this checks every string the report prints, not only
+        # the ones with a dollar figure on them. Same for calling a sourced
+        # price an "estimate" — a dated, attributed figure is not a guess.
+        whole_blob = "\n".join(strings)
+        for composite in OLD_COMPOSITES:
+            assert composite not in whole_blob, (
+                f"{label}: the composite provider list ({composite!r}) appears somewhere in the "
+                f"PDF, even outside the cost table")
+        assert "per-board/hr estimates" not in whole_blob, (
+            f"{label}: still calls GPU prices \"estimates\" — some tiers are sourced, dated, "
+            f"attributed figures, not guesses")
 
         for s in cost_strings:
             for composite in OLD_COMPOSITES:

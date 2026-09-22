@@ -1138,7 +1138,16 @@ class ReportCard:
                          + (", so the throughput and TTFT figures inherit that uncertainty."
                             if c["throughput_modelled"] else "."))
         notes.append("Parameter estimates from presets are approximate. Verify against the model's config.json.")
-        notes.append("GPU prices are mid-2026 per-board/hr estimates across 3 tiers: hyperscaler (AWS/GCP/Azure), specialized (Lambda/CoreWeave/RunPod), spot/marketplace (Vast.ai). Reserved instances typically 30-60% off.")
+        # Never a composite provider list, and never "estimates" for a
+        # sourced price — the same defect the deleted tier-name parentheticals
+        # and composite sub-labels were. The cost section above already names
+        # each tier's own source or says "not recorded"; this note points
+        # there instead of re-describing it with language a sourced,
+        # dated, attributed figure does not deserve.
+        notes.append("GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
+                     "specialized, spot/marketplace — see each tier's own source above, or "
+                     "\"not recorded\" where it has no confirmed source. Reserved instances "
+                     "typically 30-60% off.")
         for n in notes:
             story.append(Paragraph(f"• {n}", self.styles["Small"]))
             story.append(Spacer(1, 1*mm))

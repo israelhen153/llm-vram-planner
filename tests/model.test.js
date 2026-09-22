@@ -2252,14 +2252,47 @@ test('every cost surface names a source or says "not recorded", discovered not e
         assert.ok(text.includes('Lambda'),
           `${label}/${id}: every tier is sourced (lambda), but no source name appears: ${text.slice(0, 300)}`);
       } else {
+        // Not "if the full expected string is found, count it, otherwise say
+        // nothing" — that pattern is what let a cold-check sabotage through
+        // on the PDF side: strip just the date off comparison-output's hyper
+        // line (bypassing priceSourceLabel() itself, so the direct unit test
+        // above cannot see it either) and the loop silently skipped hyper
+        // while still counting spec/spot's correct labels elsewhere in the
+        // same string, or in a different surface entirely. `marker` is a
+        // short, reliable signal that THIS surface is attempting to show
+        // THIS tier at all — the provider name for a sourced tier, or the
+        // literal "not recorded" text otherwise. A surface that never
+        // mentions a tier (renderExecutiveSummary never shows spec) still
+        // correctly skips it; a surface that shows the marker but not the
+        // rest of the expected label now fails instead of going uncounted.
         for (const tier of ['hyper', 'spec', 'spot']) {
           const expected = priceSourceLabel(st, tier);
-          if (!text.includes(expected)) continue;
+          const marker = expected === 'not recorded' ? 'not recorded' : expected.split(' · ')[0];
+          if (!text.includes(marker)) continue;
+          assert.ok(text.includes(expected),
+            `${label}/${id}/${tier}: shows "${marker}" but not the full expected label ` +
+            `${JSON.stringify(expected)}: ${text.slice(0, 300)}`);
           if (expected === 'not recorded') mixedNotRecordedHit++; else mixedSourcedHit++;
         }
       }
     }
     assert.ok(sawCostSurface, `${label}: no surface printed a cost figure at all — the sweep found nothing`);
+    // Cold-check finding: renderNotes()'s general disclaimer line ("GPU
+    // prices are mid-2026 per-board/hr estimates...") named providers and
+    // called every price an estimate, but the text has no dollar figure in
+    // it (COST never matches it), so the per-surface loop above never
+    // discovered it at all — not scoped out on purpose, just never reached.
+    // This checks every renderer's output, cost figure or not, the same way
+    // the PDF-side sweep now checks its whole story rather than only the
+    // cost-bearing strings.
+    const wholePage = Object.values(texts).join('\n');
+    for (const re of OLD_COMPOSITES)
+      assert.ok(!re.test(wholePage),
+        `${label}: the composite provider list (${wholePage.match(re)}) appears somewhere on ` +
+        'the page, even outside a cost figure\'s own text');
+    assert.ok(!wholePage.includes('per-board/hr estimates'),
+      `${label}: still calls GPU prices "estimates" somewhere on the page — some tiers are ` +
+      'sourced, dated, attributed figures, not guesses');
   }
   assert.ok(mixedSourcedHit > 0 && mixedNotRecordedHit > 0,
     `the mixed real row (h100-80) did not exercise both states: sourced=${mixedSourcedHit} ` +
