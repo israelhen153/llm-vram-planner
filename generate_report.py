@@ -1222,9 +1222,19 @@ def interactive_mode():
         hf_model = preset_data["hf"]
         model_name = preset_data["name"]
 
-    print("\nAvailable GPUs:")
+    # Cold-check finding: this menu named neither state, for either price —
+    # unlike every other surface, which says "sourced" or "not recorded" for
+    # each tier. A full "Provider · SKU · region · read date" per row would
+    # not fit a numbered list of a dozen cards, so this is a marker, not the
+    # label itself — spot/hyperscaler, since those are the two prices shown;
+    # the cost table printed after selection carries every tier's full source.
+    print("\nAvailable GPUs (* marks a price with a recorded source; see the cost table after selecting):")
     for i, (k, v) in enumerate(GPUS.items()):
-        print(f"  {i+1:2d}. {k:14s} — {v['name']} ({v['bw']} GB/s, ${v['spot']}-${v['hyper']}/hr)")
+        ps = v.get("priceSource") or {}
+        spot_mark = "*" if "spot" in ps else ""
+        hyper_mark = "*" if "hyper" in ps else ""
+        print(f"  {i+1:2d}. {k:14s} — {v['name']} ({v['bw']} GB/s, "
+             f"${v['spot']}{spot_mark}-${v['hyper']}{hyper_mark}/hr)")
     gpu_choice = int(input("\nSelect GPU number: ").strip()) - 1
     gpu_key = list(GPUS.keys())[gpu_choice]
     gpu = GPUS[gpu_key]

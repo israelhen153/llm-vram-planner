@@ -1772,6 +1772,55 @@ test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
 
 
+MENU_PRICE_RE = re.compile(r"\$[\d.]+(\*?)-\$[\d.]+(\*?)/hr")
+
+
+def check_interactive_gpu_menu_marks_sourced_prices():
+    """Cold-check finding (minor): the interactive CLI's GPU menu named
+    neither state, for either price shown, unlike every other surface. A
+    full "Provider · SKU · region · read date" per row does not fit a
+    numbered list of a dozen cards, so this checks the compact marker
+    instead: every GPU with a recorded spot/hyper source gets a '*' on that
+    specific price, every GPU without does not — checked separately per
+    price, and read off the real catalog rather than a hand-picked pair,
+    so an unusual future catalog (sourced spot but not hyper, say) is
+    still checked correctly instead of by a rule that happens to work for
+    today's rows alone."""
+    # interactive_mode() asks more questions than this test cares about
+    # (preset, precision, KV cache, ...); only the GPU menu it prints before
+    # the first answer is read matters here, and abandoning the script part
+    # way through raises once input() runs dry — expected, not a failure.
+    with unittest.mock.patch("builtins.input", side_effect=["1", "1"]), \
+         contextlib.redirect_stdout(io.StringIO()) as out:
+        try:
+            gr.interactive_mode()
+        except StopIteration:
+            pass
+    printed = out.getvalue()
+    menu_lines = {}
+    for line in printed.splitlines():
+        m = re.match(r"^\s*(\d+)\.\s", line)
+        if m:
+            menu_lines[m.group(1)] = line
+    checked = 0
+    for i, (k, v) in enumerate(gr.GPUS.items()):
+        line = menu_lines.get(str(i + 1))
+        assert line and k in line, f"{k}: not found on its own numbered menu line: {line!r}"
+        price_m = MENU_PRICE_RE.search(line)
+        assert price_m, f"{k}: menu line does not carry a $spot-$hyper/hr figure: {line!r}"
+        spot_starred, hyper_starred = bool(price_m.group(1)), bool(price_m.group(2))
+        ps = v.get("priceSource") or {}
+        checked += 1
+        assert spot_starred == ("spot" in ps), (
+            f"{k}: spot price starred={spot_starred}, but priceSource carries spot={('spot' in ps)}: {line!r}")
+        assert hyper_starred == ("hyper" in ps), (
+            f"{k}: hyper price starred={hyper_starred}, but priceSource carries hyper={('hyper' in ps)}: {line!r}")
+    assert checked == len(gr.GPUS), f"only checked {checked} of {len(gr.GPUS)} catalog rows"
+
+test("the interactive CLI's GPU menu marks a price with a recorded source, per price",
+     check_interactive_gpu_menu_marks_sourced_prices)
+
+
 # ---- hardware with no measured constants ------------------------------------
 # The ruling: a card whose perfKey has no PERF entry gets its full VRAM breakdown,
 # fit verdict, cost and command, and no throughput. Every figure that needs a
