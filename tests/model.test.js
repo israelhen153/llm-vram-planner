@@ -2319,6 +2319,72 @@ test('every cost surface names a source or says "not recorded", discovered not e
     'the sweep has stopped reaching them');
 });
 
+test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
+  /* Cold-check finding: renderComparisons' "Cost/hr" and renderExecutiveSummary's
+     "Monthly cost range" both hardcoded spot as the floor and hyperscaler as
+     the ceiling, which held only while every catalog price satisfied
+     spot <= specialized <= hyperscaler — no longer true for l40s-48 (specialized
+     above hyperscaler) or rtx4090-24 (spot above specialized). The golden alone
+     does not catch a wrong-but-plausible-looking range: this asserts the
+     displayed figures equal Math.min/max of the three hourly costs directly,
+     computed independently of what the renderer did, for every catalog row —
+     not just the two known-broken ones, so a card that develops the same
+     inversion later is caught the same way. Found the hard way: this specific
+     sabotage (spot-to-hyperscaler instead of true min/max) survived with the
+     golden regenerated and every other test green — the golden was the only
+     thing that had ever looked at this line. */
+  let checkedCmp = 0, checkedExec = 0, inverted = 0;
+  for (const [slug, card] of Object.entries(GPU_TABLE)) {
+    // A fresh harness per card: savedSnapshots accumulates on one shared
+    // harness (see the FP8 sweep above), which left an earlier card's
+    // comparison row still in the grid when this reached the next card's —
+    // the regex below matched the FIRST Cost/hr row in the page, not
+    // necessarily this card's.
+    const h = renderHarness();
+    const st = asState(card, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    const trueMin = Math.min(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
+    const trueMax = Math.max(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
+    if (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot))
+      inverted++;   // specialized is the true floor or ceiling, not just spot/hyper — the regime that broke
+
+    h.pushSnapshot(st, c);
+    h.renderComparisons();
+    const cmpText = h.out['comparison-output'] || '';
+    const cmpMatch = /Cost\/hr<\/span><span class="val">\$([\d.]+)–\$([\d.]+)/.exec(cmpText);
+    assert.ok(cmpMatch, `${slug}: renderComparisons printed no Cost/hr range at all`);
+    checkedCmp++;
+    assert.strictEqual(Number(cmpMatch[1]), Number(trueMin.toFixed(2)),
+      `${slug}: renderComparisons' Cost/hr floor is ${cmpMatch[1]}, expected the true cheapest ` +
+      `tier ${trueMin.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
+      `spot=${c.hourlySpot.toFixed(2)})`);
+    assert.strictEqual(Number(cmpMatch[2]), Number(trueMax.toFixed(2)),
+      `${slug}: renderComparisons' Cost/hr ceiling is ${cmpMatch[2]}, expected the true priciest ` +
+      `tier ${trueMax.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
+      `spot=${c.hourlySpot.toFixed(2)})`);
+
+    Object.keys(h.out).forEach(k => delete h.out[k]);
+    h.renderExecutiveSummary(st, c);
+    const execText = h.out['exec-summary'] || '';
+    const execMatch = /Monthly cost range<\/span><span class="exec-value">\$([\d,]+) – \$([\d,]+)\/mo/.exec(execText);
+    assert.ok(execMatch, `${slug}: renderExecutiveSummary printed no Monthly cost range at all`);
+    checkedExec++;
+    const gotCheap = Number(execMatch[1].replace(/,/g, ''));
+    const gotExpensive = Number(execMatch[2].replace(/,/g, ''));
+    assert.strictEqual(gotCheap, Math.round(trueMin * 730),
+      `${slug}: renderExecutiveSummary's monthly floor is $${gotCheap}, expected the true ` +
+      `cheapest tier's $${Math.round(trueMin * 730)}`);
+    assert.strictEqual(gotExpensive, Math.round(trueMax * 730),
+      `${slug}: renderExecutiveSummary's monthly ceiling is $${gotExpensive}, expected the true ` +
+      `priciest tier's $${Math.round(trueMax * 730)}`);
+  }
+  assert.strictEqual(checkedCmp, Object.keys(GPU_TABLE).length);
+  assert.strictEqual(checkedExec, Object.keys(GPU_TABLE).length);
+  assert.ok(inverted >= 2,
+    `only ${inverted} catalog row(s) have specialized as the true floor/ceiling instead of spot/hyper — ` +
+    'expected at least l40s-48 and rtx4090-24, so this sweep is not actually exercising the broken regime');
+});
+
 
 console.log('\nHardware with no measured constants');
 /* The ruling: a card whose perfKey has no PERF entry gets its full VRAM
