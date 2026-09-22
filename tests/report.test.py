@@ -1704,25 +1704,28 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
                 f"{label}: prints a raw None/nan instead of a source or \"not recorded\": {s!r}")
 
         blob = "\n".join(cost_strings)
+        # Checked per tier, not pooled. A pooled "did any tier's expected
+        # string show up anywhere" check is satisfied by ONE correct tier
+        # while a different tier on the same card is broken — h100-80's
+        # Source line renders all three tiers in one string ("Source —
+        # Hyperscaler: ... Specialized: ... Spot: ..."), so a cold-check
+        # sabotage that stripped only hyper's date left spec's label intact,
+        # the pooled count still went positive, and this test stayed green.
+        # Every tier's own expected value must appear, individually.
+        for tier in ("hyper", "spec", "spot"):
+            expected = gr.price_source_label(card, tier)
+            assert expected in blob, (
+                f"{label}/{tier}: expected {expected!r} not found in the cost-bearing text: "
+                f"{blob[:500]}")
+            if expected == "not recorded":
+                mixed_not_recorded_hit += 1
+            else:
+                mixed_sourced_hit += 1
         if shape == "none":
-            assert "not recorded" in blob, f"{label}: no tier is sourced, but no \"not recorded\" appears"
             for p in PROVIDER_NAMES_LIST:
                 assert p not in blob, f"{label}: names provider {p!r} with nothing recorded to back it"
-        elif shape == "all":
-            assert "not recorded" not in blob, (
-                f"{label}: every tier is sourced, but \"not recorded\" still appears")
-            assert "Lambda" in blob, f"{label}: every tier is sourced (lambda), but no source name appears"
-        else:
-            for tier in ("hyper", "spec", "spot"):
-                expected = gr.price_source_label(card, tier)
-                if expected not in blob:
-                    continue
-                if expected == "not recorded":
-                    mixed_not_recorded_hit += 1
-                else:
-                    mixed_sourced_hit += 1
     assert mixed_sourced_hit > 0 and mixed_not_recorded_hit > 0, (
-        f"the mixed real row (h100-80) did not exercise both states: "
+        f"the sweep did not exercise both states across every case: "
         f"sourced={mixed_sourced_hit} not-recorded={mixed_not_recorded_hit}")
 
 test("the PDF cost section names a source or says \"not recorded\", for every shape",
