@@ -29,7 +29,7 @@ import sab
 WF = ".github/workflows/price-refresh.yml"
 PR_IF = "        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}\n        uses: peter-evans/create-pull-request@v6"
 UP_IF = "        if: always()\n        uses: actions/upload-artifact@v4"
-BODY = "      - name: Tell the PR body what the suite did\n        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}"
+BODY = "      - name: Tell the PR body what the suite did\n        id: body\n        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}"
 
 S = {
     # --- the reader read the file differently from YAML ---------------------

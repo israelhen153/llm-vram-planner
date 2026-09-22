@@ -23,7 +23,7 @@ import sab
 
 WF = ".github/workflows/price-refresh.yml"
 DELIV = "        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}"
-BODY = "      - name: Tell the PR body what the suite did\n" + DELIV
+BODY = "      - name: Tell the PR body what the suite did\n        id: body\n" + DELIV
 
 S = {
     # --- the original defects, reverted one at a time -----------------------
@@ -68,10 +68,10 @@ S = {
              "          fi\n\n"
              "      - name: Tell the PR body what the suite did", 1)],
     "C13 only the step that explains the red suite is gated on the suite":
-        [(WF, BODY, "      - name: Tell the PR body what the suite did\n"
+        [(WF, BODY, "      - name: Tell the PR body what the suite did\n        id: body\n"
              "        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' && steps.suite.outcome == 'success' }}", 1)],
     "C14 the same step reverted to a bare, implicitly success()-gated condition":
-        [(WF, BODY, "      - name: Tell the PR body what the suite did\n"
+        [(WF, BODY, "      - name: Tell the PR body what the suite did\n        id: body\n"
              "        if: steps.diff.outputs.changed == 'true'", 1)],
     "C15 the job-level permissions block is removed":
         [(WF, "    permissions:\n      contents: write # to push the branch the PR step opens\n"
