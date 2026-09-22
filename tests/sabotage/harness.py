@@ -80,3 +80,68 @@ def restore(files):
                     "tools/sync_data.py", "data/gpus.json", *sorted(set(files))], check=True)
     st = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
     assert st.strip() == "", f"tree not clean after restore:\n{st}"
+
+
+def run_driver(sabotages):
+    """Run a driver's sabotages one at a time and report which the suite missed.
+
+        python3 <driver> [name-substring ...]    only the sabotages matching one
+        python3 <driver> --from <name-prefix>    from that sabotage onwards
+
+    Every driver used to carry its own copy of this loop — fifteen copies in six
+    different shapes, each commented "same shape as every other driver, on
+    purpose". Some filtered by name and five could not; some matched
+    case-insensitively; one supported --from; each restored its own hand-written
+    list of files when a sabotage failed to apply. The same corpus behaved
+    differently depending on which file you ran. One loop now.
+
+    A sabotage that cannot be applied is NOT a catch: the run exits 2, so a
+    drifted driver cannot report a clean run forever. And the tree must judge
+    green before anything is judged against it — see require_green_baseline.
+    """
+    # Line-buffered, so a log chain.sh is writing shows progress as it happens.
+    # Redirected to a file, Python buffers by the block, and the first ten minutes
+    # of a twenty-minute run read as an empty log — which looks exactly like a hang.
+    sys.stdout.reconfigure(line_buffering=True)
+    # Every file this driver could touch, derived from its own sabotages rather
+    # than listed by hand: the hand-written lists were one of the six drifts.
+    touchable = sorted({edit[0] for edits in sabotages.values() for edit in edits})
+    patterns = sys.argv[1:]
+    if patterns and patterns[0] == "--from":
+        keys = list(sabotages)
+        names = keys[keys.index(next(k for k in keys if k.startswith(patterns[1]))):]
+    else:
+        names = [n for n in sabotages
+                 if not patterns or any(p.lower() in n.lower() for p in patterns)]
+    print(f"{len(names)} sabotage(s)")
+    require_green_baseline()
+    survived, unapplied = [], []
+    for name in names:
+        try:
+            touched = apply(sabotages[name])
+        except Exception as e:
+            print(f"  !! {name}: could not apply: {e}")
+            unapplied.append(name)
+            restore(touchable)
+            continue
+        try:
+            results = run_suites()
+        finally:
+            restore(touched)
+        red = {suite: r for suite, r in results.items() if r[0] != 0}
+        if not red:
+            survived.append(name)
+            print(f"  GREEN  {name}   <-- SURVIVED")
+        else:
+            lines = []
+            for suite, (rc, fails, errs, tally) in red.items():
+                first = (fails or errs or ["(no FAIL line)"])[0]
+                lines.append(f"{suite}[{tally[1] if tally else '?'} failed: {first[:120]}]")
+            print(f"  red    {name}\n         " + "\n         ".join(lines))
+    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
+          f"{len(survived)} survived"
+          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
+    for name in survived:
+        print("  SURVIVED: " + name)
+    if unapplied:
+        sys.exit(2)

@@ -3656,10 +3656,17 @@ test('the sabotage README names every driver, and no driver it does not have', (
      because the first attempt at this fix keyed off a string and missed two drivers. */
   const unguarded = onDisk.filter(f => {
     const src = fs.readFileSync(path.join(dir, f), 'utf8');
-    return !/require_green_baseline|already red on the unmodified/.test(src);
+    return !/run_driver\(|require_green_baseline|already red on the unmodified/.test(src);
   });
   assert.deepStrictEqual(unguarded, [],
     `these drivers would judge against a red baseline: ${unguarded.join(', ')}`);
+  /* Every Python driver now proves its baseline by calling harness.run_driver, so the
+     proof lives in one place — and one deleted line there would disarm all of them at
+     once while every driver above still read as guarded. Pin it where it lives. */
+  const harness = fs.readFileSync(path.join(dir, 'harness.py'), 'utf8');
+  const runDriver = harness.slice(harness.indexOf('def run_driver(')).split(/\ndef /)[0];
+  assert.ok(harness.includes('def run_driver(') && /require_green_baseline\(\)/.test(runDriver),
+    'harness.run_driver no longer proves a green baseline, so no Python driver does');
 
   /* The drivers import each other. A run that leaves __pycache__ behind leaves a
      gitignored directory git cannot remove on a branch switch, which strands an

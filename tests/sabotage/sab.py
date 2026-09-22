@@ -188,44 +188,4 @@ S["I3 js: unknown key throws instead of nulling"] = [(IDX, "  const throughputMo
 S["I4 py: unknown key raises instead of None"] = [(GR, "    throughput_modelled = P is not None\n", "    throughput_modelled = P is not None\n    if not throughput_modelled:\n        raise KeyError(perf_key)\n", 1)]
 
 if __name__ == "__main__":
-    pats = sys.argv[1:]
-    if pats and pats[0] == "--from":
-        # Everything from the named sabotage onward, in definition order.
-        keys = list(S)
-        names = keys[keys.index(next(k for k in keys if k.startswith(pats[1]))):]
-    else:
-        names = [n for n in S if not pats or any(p.lower() in n.lower() for p in pats)]
-    print(f"{len(names)} sabotage(s)")
-    require_green_baseline()
-    survived, unapplied = [], []
-    for name in names:
-        try:
-            touched = apply(S[name])
-        except Exception as e:
-            print(f"  !! {name}: could not apply: {e}")
-            unapplied.append(name)
-            restore([IDX, GR, SY])
-            continue
-        try:
-            res = run_suites()
-        finally:
-            restore(touched)
-        red = {k: v for k, v in res.items() if v[0] != 0}
-        if not red:
-            survived.append(name)
-            print(f"  GREEN  {name}   <-- SURVIVED")
-        else:
-            bits = []
-            for k, (rc, fails, errs, tally) in red.items():
-                first = (fails or errs or ["(no FAIL line)"])[0]
-                bits.append(f"{k}[{tally[1] if tally else '?'} failed: {first[:110]}]")
-            print(f"  red    {name}\n         " + "\n         ".join(bits))
-    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
-          f"{len(survived)} survived"
-          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
-    for s in survived:
-        print("  SURVIVED: " + s)
-    if unapplied:
-        # A sabotage that never reached the tree judged nothing. Counting it as
-        # caught is how a drifted driver reports a clean run forever.
-        sys.exit(2)
+    run_driver(S)

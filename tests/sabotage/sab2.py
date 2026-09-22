@@ -5,6 +5,7 @@ import os, sys
 sys.dont_write_bytecode = True   # see the note in sab.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sab
+from harness import run_driver
 from sab import IDX, GR, JS_EXEC_UNKNOWN, JS_TP_TILE, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, PY_NOTMOD_ROW, PY_EXPLAIN
 
 S = {}
@@ -42,39 +43,4 @@ S["M1 js: benchmark panel still drawn for the unknown card"] = [
 S["M2 js: queue warning keeps its 'aggregate throughput above' clause"] = sab.S["H8 js: queue warning always points at 'aggregate throughput above'"]
 
 if __name__ == "__main__":
-    pats = sys.argv[1:]
-    names = [n for n in S if not pats or any(p.lower() in n.lower() for p in pats)]
-    print(f"{len(names)} sabotage(s)")
-    sab.require_green_baseline()
-    survived, unapplied = [], []
-    for name in names:
-        try:
-            touched = sab.apply(S[name])
-        except Exception as e:
-            print(f"  !! {name}: could not apply: {e}")
-            unapplied.append(name)
-            sab.restore([IDX, GR])
-            continue
-        try:
-            res = sab.run_suites()
-        finally:
-            sab.restore(touched)
-        red = {k: v for k, v in res.items() if v[0] != 0}
-        if not red:
-            survived.append(name)
-            print(f"  GREEN  {name}   <-- SURVIVED")
-        else:
-            bits = []
-            for k, (rc, fails, errs, tally) in red.items():
-                first = (fails or errs or ["(no FAIL line)"])[0]
-                bits.append(f"{k}[{tally[1] if tally else '?'} failed: {first[:110]}]")
-            print(f"  red    {name}\n         " + "\n         ".join(bits))
-    print(f"\n{len(names) - len(survived) - len(unapplied)} caught, "
-          f"{len(survived)} survived"
-          + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
-    for s in survived:
-        print("  SURVIVED: " + s)
-    if unapplied:
-        # A sabotage that never reached the tree judged nothing. Counting it as
-        # caught is how a drifted driver reports a clean run forever.
-        sys.exit(2)
+    run_driver(S)
