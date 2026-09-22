@@ -284,6 +284,31 @@ test("every RUNNER_TEMP path handed to an action is one the job's own shell writ
      check_every_temp_file_handed_to_an_action_is_one_the_job_writes)
 
 
+def check_the_report_is_retained_by_an_upload_that_runs_after_the_suite():
+    """The requirement stated directly: the file the PR body is built from must
+    also reach an artifact. Every other rule here constrains the CONDITIONS of
+    whatever steps happen to be present, so replacing the upload step with an
+    `echo` satisfied all of them — its `if: always()` was still permitted, the PR
+    step still handed over a body-path, and the report was simply never retained.
+    Found by re-running round 1's corpus against this rewrite, which is what a
+    corpus is for."""
+    pr = uses_step("peter-evans/create-pull-request")
+    body = ANY_TEMP.findall(str((pr.get("with") or {}).get("body-path", "")))
+    assert body, "the PR step no longer carries a body-path"
+    up = uses_step("actions/upload-artifact")        # exactly one, or this fails
+    assert up in delivery_steps(), (
+        "the upload does not run after the suite, so every rule about the tail "
+        "stops covering it")
+    kept = ANY_TEMP.findall(yaml.safe_dump(up.get("with") or {}))
+    assert body[0] in kept, (
+        f"the report the PR body is built from ({body[0]}) is not among the files "
+        f"the artifact retains ({kept}). On a run whose PR step fails, that report "
+        f"exists nowhere afterwards — which is how 2026-09-21's was lost.")
+
+test("the report the PR body is built from is also retained as an artifact",
+     check_the_report_is_retained_by_an_upload_that_runs_after_the_suite)
+
+
 print("\nThe job proposes; a person decides")
 
 
