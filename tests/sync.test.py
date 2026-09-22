@@ -12,6 +12,7 @@ Run:  python3 tests/sync.test.py
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -122,6 +123,59 @@ def check_price_source_round_trips_py():
 
 test("priceSource with multiple tiers round-trips through Python",
      check_price_source_round_trips_py)
+
+
+def check_a_real_price_source_reaches_both_generated_blocks():
+    """The two tests above prove the wiring with synthetic rows, because when
+    they were written no row in data/gpus.json carried priceSource yet
+    (commit 6's own note: "0/12 populated"). fix/cost-provenance populates
+    real ones, so this checks the actual committed files rather than a fresh
+    render: at least one real row's SKU and priceSource.price must appear
+    verbatim, scoped to that row's own line, in both committed files — not
+    just in what sync_data.py *would* produce (check_sync_is_a_noop_on_a_clean_tree
+    below proves those are the same thing, but this is what "the same thing"
+    is actually worth) and not just anywhere in a 200KB file.
+
+    An earlier version of this test checked str(price) against the WHOLE
+    file with no row scoping and passed by accident: t4-16/hyper's price,
+    0.53, is common enough to turn up elsewhere in index.html by chance, so
+    the assertion was satisfied whether or not priceSource actually reached
+    the block it claimed to check. Caught by sabotaging
+    tools/sync_data.py's GPU_OPTIONAL to drop "priceSource" and re-running
+    sync_data.py: every other test in this file went red: this one did not.
+    Scoping the match to the row's own extracted line, and to the SKU (a
+    long provider-specific string with nothing else in the file to collide
+    with) rather than a bare number, is what makes it a real check."""
+    gpus = sync_data.load_gpus()
+    sourced = [(slug, tier) for slug, row in gpus.items()
+               for tier in row.get("priceSource", {})]
+    assert sourced, "no row in the real data/gpus.json carries priceSource — nothing to check"
+    slug, tier = sourced[0]
+    src = gpus[slug]["priceSource"][tier]
+    assert "price" in src, f"{slug}/{tier}: real priceSource has no price field"
+    assert len(src["sku"]) >= 6, f"{slug}/{tier}: sku {src['sku']!r} too short to be a reliable anchor"
+
+    # The row's own line in each generated block — the same "one GPU per
+    # line" shape tools/price_check.py's apply_to_text relies on — not the
+    # file as a whole, so a match cannot land in some unrelated row or notes.
+    row_patterns = {
+        "index.html": re.compile(r"^\s*'" + re.escape(slug) + r"':\s*\{.*\},?\s*$", re.MULTILINE),
+        "generate_report.py": re.compile(r'^\s*"' + re.escape(slug) + r'":\s*\{.*\},?\s*$', re.MULTILINE),
+    }
+    for label, rel in (("index.html", "index.html"), ("generate_report.py", "generate_report.py")):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+            text = f.read()
+        m = row_patterns[label].search(text)
+        assert m, f"{label}: {slug}'s row not found as a single line in the committed GPU_TABLE block"
+        row_line = m.group(0)
+        assert src["sku"] in row_line, (
+            f"{label}: {slug}/{tier}'s SKU {src['sku']!r} not found on {slug}'s own generated line")
+        assert re.search(r"price['\"]?\s*:\s*" + re.escape(str(src["price"])) + r"\b", row_line), (
+            f"{label}: {slug}/{tier}'s priceSource.price ({src['price']}) not found as a price: "
+            f"field on {slug}'s own generated line: {row_line[:300]}")
+
+test("a real row's priceSource (SKU and price) reaches both committed generated blocks, on that row's own line",
+     check_a_real_price_source_reaches_both_generated_blocks)
 
 
 def check_price_source_free_text_is_escaped():

@@ -2122,6 +2122,154 @@ test('every view that prints a compute figure says when FP8 has no tensor cores'
     `reached ${flagged} cards without FP8 and ${clean} labelled-clean renders — need both regimes`);
 });
 
+console.log('\nCost provenance: a named source, or "not recorded" said plainly, never a guess');
+test('priceSourceLabel formats provider, SKU, region and date — a fixed expectation, not self-referential', () => {
+  /* The sweep below (and its Python twin) computes its own "expected" string
+     by calling this same function, which proves the renderers agree with
+     priceSourceLabel() but cannot catch a bug inside priceSourceLabel()
+     itself — a version that quietly dropped the date would still match its
+     own output. This is the check that cannot pass that way: the expected
+     string is a literal, typed by hand once, not derived from the function
+     under test. */
+  const priceSourceLabelDecl = html.match(/^function priceSourceLabel\(state, tier\) \{[\s\S]*?\n\}$/m);
+  assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
+  const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
+  assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const priceSourceLabel = new Function(
+    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+
+  const state = { priceSource: { hyper: { provider: 'azure', sku: 'Standard_ND96isr_H100_v5',
+                                           region: 'eastus', date: '2026-09-16' } } };
+  assert.strictEqual(priceSourceLabel(state, 'hyper'),
+    'Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16');
+  // Every known provider id renders as a proper display name, not the raw
+  // lowercase source id price_check.py's SOURCE_MAP uses internally.
+  const providers = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda',
+                       coreweave: 'CoreWeave', vast: 'Vast.ai' };
+  for (const [id, name] of Object.entries(providers)) {
+    const st = { priceSource: { spot: { provider: id, sku: 'X', region: 'global', date: '2026-01-01' } } };
+    assert.strictEqual(priceSourceLabel(st, 'spot'), `${name} · X · global · read 2026-01-01`,
+      `provider id ${id} did not render as ${name}`);
+  }
+  // An unrecognised provider id falls back to itself rather than throwing or
+  // silently dropping the field — a real, if unlikely, SOURCE_MAP addition.
+  const unknown = { priceSource: { spec: { provider: 'newvendor', sku: 'Y', region: 'r', date: 'd' } } };
+  assert.strictEqual(priceSourceLabel(unknown, 'spec'), 'newvendor · Y · r · read d');
+  // Absent states, all rendering as exactly "not recorded" — no partial label,
+  // no undefined leaking through.
+  assert.strictEqual(priceSourceLabel({ priceSource: undefined }, 'hyper'), 'not recorded');
+  assert.strictEqual(priceSourceLabel({ priceSource: {} }, 'hyper'), 'not recorded');
+  assert.strictEqual(priceSourceLabel({ priceSource: { spec: { provider: 'x', sku: 'y', region: 'z', date: 'd' } } }, 'hyper'),
+    'not recorded', 'a sourced spec tier must not leak into a hyper lookup');
+});
+
+test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
+  /* Same discovery approach as the two sweeps above: every renderer the
+     harness exposes is invoked, and any rendered element whose text carries
+     a cost figure ($X.XX) is a "cost surface" for this test, found by what
+     it prints rather than by a list of element ids fix/cost-provenance's
+     author happened to think of. The old bug this replaces (a composite
+     "AWS, GCP, Azure on-demand" sub-label naming three providers for one
+     provider's number) lived on exactly the kind of surface an enumerated
+     list would miss on its next addition.
+
+     priceSourceLabel() is extracted from source, the same way formatGB() and
+     bandwidthLabel() are read above, so the expected string is computed by
+     the page's own code and cannot silently drift from what the renderers
+     actually call. */
+  const priceSourceLabelDecl = html.match(/^function priceSourceLabel\(state, tier\) \{[\s\S]*?\n\}$/m);
+  assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
+  const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
+  assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const priceSourceLabel = new Function(
+    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+  assert.strictEqual(priceSourceLabel({ priceSource: undefined }, 'hyper'), 'not recorded');
+
+  const params = {};
+  for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
+    params[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
+  // Renderer names are the same across every harness instance (they come from
+  // the same source slice), so one throwaway instance is enough to discover them.
+  const renderers = Object.keys(renderHarness()).filter(
+    k => /^render/.test(k) && typeof renderHarness()[k] === 'function');
+
+  const OLD_COMPOSITES = [/AWS,\s*GCP,\s*Azure on-demand/i, /Lambda,\s*CoreWeave,\s*RunPod/i,
+                          /Vast\.ai,\s*spot instances/i];
+  const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
+  const COST = /\$[\d,]+\.\d{2}/;
+
+  // h100-80 carries mixed provenance today (hyper+spec sourced, spot not) —
+  // real catalog shape, not invented. rtx5090-32 has no automatable source on
+  // any tier, so every one of its tiers is "not recorded". A synthetic row
+  // with every tier sourced reaches the all-sourced case a real one does not
+  // give us yet.
+  const sourced = { provider: 'lambda', sku: 'TEST PLAN', region: 'global', date: '2026-09-22' };
+  const cases = [
+    ['mixed (real h100-80)', GPU_TABLE['h100-80'], 'mixed'],
+    ['none recorded (real rtx5090-32)', GPU_TABLE['rtx5090-32'], 'none'],
+    ['all sourced (synthetic)',
+     { ...GPU_TABLE['h100-80'], priceSource: { hyper: sourced, spec: sourced, spot: sourced } }, 'all'],
+  ];
+
+  const surfacesSeen = new Set();
+  let mixedSourcedHit = 0, mixedNotRecordedHit = 0;
+  for (const [label, card, shape] of cases) {
+    // A fresh harness per card, like the FP8 sweep above: savedSnapshots
+    // accumulates on one shared harness, which would leave an earlier card's
+    // comparison row still rendering when this reaches the next card.
+    const h = renderHarness();
+    const st = asState(card, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.pushSnapshot(st, c);
+    for (const name of renderers) {
+      const args = params[name].map(pn => (pn === 'computed' ? c : pn === 'state' ? st : undefined));
+      try { h[name](...args); } catch (e) { assert.fail(`${label}: ${name}(...) threw: ${e.message}`); }
+    }
+    const texts = { ...h.out, '(copied report)': h.exportSummary(st, c) };
+    let sawCostSurface = false;
+    for (const [id, text] of Object.entries(texts)) {
+      if (!COST.test(text)) continue;
+      sawCostSurface = true;
+      surfacesSeen.add(id);
+
+      for (const re of OLD_COMPOSITES)
+        assert.ok(!re.test(text),
+          `${label}/${id}: still names the old composite provider list (${text.match(re)}): ` +
+          text.slice(0, 300));
+      assert.ok(!/\bundefined\b|\bnull\b|\bNaN\b/.test(text),
+        `${label}/${id}: prints a raw undefined/null/NaN instead of a source or "not recorded": ` +
+        text.slice(0, 300));
+
+      if (shape === 'none') {
+        assert.ok(text.includes('not recorded'),
+          `${label}/${id}: no tier is sourced, but no "not recorded" appears: ${text.slice(0, 300)}`);
+        for (const p of PROVIDER_NAMES_LIST)
+          assert.ok(!text.includes(p),
+            `${label}/${id}: names provider "${p}" with nothing recorded to back it: ${text.slice(0, 300)}`);
+      } else if (shape === 'all') {
+        assert.ok(!text.includes('not recorded'),
+          `${label}/${id}: every tier is sourced, but "not recorded" still appears: ${text.slice(0, 300)}`);
+        assert.ok(text.includes('Lambda'),
+          `${label}/${id}: every tier is sourced (lambda), but no source name appears: ${text.slice(0, 300)}`);
+      } else {
+        for (const tier of ['hyper', 'spec', 'spot']) {
+          const expected = priceSourceLabel(st, tier);
+          if (!text.includes(expected)) continue;
+          if (expected === 'not recorded') mixedNotRecordedHit++; else mixedSourcedHit++;
+        }
+      }
+    }
+    assert.ok(sawCostSurface, `${label}: no surface printed a cost figure at all — the sweep found nothing`);
+  }
+  assert.ok(mixedSourcedHit > 0 && mixedNotRecordedHit > 0,
+    `the mixed real row (h100-80) did not exercise both states: sourced=${mixedSourcedHit} ` +
+    `not-recorded=${mixedNotRecordedHit}`);
+  assert.ok(surfacesSeen.size >= 3,
+    `only ${surfacesSeen.size} surfaces print a cost figure at all (${[...surfacesSeen].join(', ')}) — ` +
+    'the sweep has stopped reaching them');
+});
+
+
 console.log('\nHardware with no measured constants');
 /* The ruling: a card whose perfKey has no PERF entry gets its full VRAM
    breakdown, fit verdict, cost and vLLM command, and no throughput at all. Every

@@ -1616,6 +1616,136 @@ test("tp and dp in a JSON config reach cfg and change nothing",
      check_tp_dp_json_keys_are_inert)
 
 
+# ---- cost provenance: a named source, or "not recorded" said plainly --------
+print("\nCost provenance: a named source, or \"not recorded\" said plainly, never a guess")
+
+OLD_COMPOSITES = ("AWS/GCP/Azure", "Lambda/CoreWeave", "Vast.ai)",
+                  "AWS, GCP, Azure on-demand", "Lambda, CoreWeave, RunPod", "Vast.ai, spot instances")
+PROVIDER_NAMES_LIST = ("Azure", "AWS", "Lambda", "CoreWeave", "Vast.ai")
+
+
+def check_price_source_label_format_is_a_fixed_expectation():
+    """The discovery sweeps below compute their own "expected" string by
+    calling gr.price_source_label(), which proves the PDF agrees with that
+    function but cannot catch a bug inside the function itself — a version
+    that quietly dropped the date would still match its own output. This is
+    the check that cannot pass that way: every expected string is a literal,
+    typed once, independent of the function under test."""
+    gpu = {"priceSource": {"hyper": {"provider": "azure", "sku": "Standard_ND96isr_H100_v5",
+                                      "region": "eastus", "date": "2026-09-16"}}}
+    assert gr.price_source_label(gpu, "hyper") == (
+        "Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16")
+
+    for provider_id, name in (("azure", "Azure"), ("aws", "AWS"), ("lambda", "Lambda"),
+                              ("coreweave", "CoreWeave"), ("vast", "Vast.ai")):
+        g = {"priceSource": {"spot": {"provider": provider_id, "sku": "X",
+                                       "region": "global", "date": "2026-01-01"}}}
+        assert gr.price_source_label(g, "spot") == f"{name} · X · global · read 2026-01-01", (
+            f"provider id {provider_id!r} did not render as {name!r}")
+
+    # An unrecognised provider id falls back to itself instead of raising or
+    # silently dropping the field.
+    unknown = {"priceSource": {"spec": {"provider": "newvendor", "sku": "Y", "region": "r", "date": "d"}}}
+    assert gr.price_source_label(unknown, "spec") == "newvendor · Y · r · read d"
+
+    assert gr.price_source_label({}, "hyper") == "not recorded"
+    assert gr.price_source_label({"priceSource": {}}, "hyper") == "not recorded"
+    leaky = {"priceSource": {"spec": {"provider": "x", "sku": "y", "region": "z", "date": "d"}}}
+    assert gr.price_source_label(leaky, "hyper") == "not recorded", (
+        "a sourced spec tier must not leak into a hyper lookup")
+
+test("price_source_label formats provider, SKU, region and date — a fixed expectation",
+     check_price_source_label_format_is_a_fixed_expectation)
+
+
+def check_pdf_cost_section_names_a_source_or_says_not_recorded():
+    """Mirrors tests/model.test.js's discovery sweep for the same requirement,
+    on the engine that has no DOM to discover renderers from: report_strings()
+    already walks the whole reportlab story (every Paragraph, table cell and
+    bullet — see story_strings()'s docstring), so "every string the PDF
+    would show" is the discovery here, the same way "every element the page
+    renders" is the discovery on the JS side. price_source_label() is called
+    directly rather than re-extracted from source, since this file already
+    imports generate_report as a real module."""
+    sourced = {"provider": "lambda", "sku": "TEST PLAN", "region": "global", "date": "2026-09-22"}
+    cases = [
+        ("mixed (real h100-80)", dict(gr.GPUS["h100-80"]), "mixed"),
+        ("none recorded (real rtx5090-32)", dict(gr.GPUS["rtx5090-32"]), "none"),
+        ("all sourced (synthetic)",
+         dict(gr.GPUS["h100-80"], priceSource={"hyper": sourced, "spec": sourced, "spot": sourced}), "all"),
+    ]
+    # Scoped to strings that actually carry a cost figure ($X.XX), the same
+    # discovery test/model.test.js's sweep uses — not the whole story blob.
+    # generate_report.py also keeps one general, provider-naming glossary
+    # line in "Notes and assumptions" ("hyperscaler (AWS/GCP/Azure)" etc.,
+    # deliberately left as-is: it describes what a *tier* generically means,
+    # the same way README.md's feature list does, not what supplied *this*
+    # row's number) — a whole-blob check would trip on that line for every
+    # case and prove nothing about the defect this commit actually fixes.
+    # A dollar figure, or the dedicated provenance line: reportlab's cost
+    # table is plain strings per cell, so the tier's price ("$12.30") and its
+    # source ("Source — Hyperscaler: Azure · ... ") are necessarily two
+    # different list elements, unlike the HTML page where a source sub-label
+    # sits inside the very same cell as its price. Both shapes are content
+    # discovered from the story, not an element position picked by hand.
+    cost_line = re.compile(r"\$[\d,]+\.\d{2}|^Source —")
+    mixed_sourced_hit = mixed_not_recorded_hit = 0
+    for label, card, shape in cases:
+        cfg, strings = report_strings(card, 1, bpp=2)
+        cost_strings = [s for s in strings if cost_line.search(s)]
+        assert cost_strings, f"{label}: no cost figure printed at all — report_strings found nothing"
+
+        for s in cost_strings:
+            for composite in OLD_COMPOSITES:
+                assert composite not in s, (
+                    f"{label}: a cost figure's own string still names the old composite "
+                    f"provider list ({composite!r}): {s!r}")
+            assert not re.search(r"\bNone\b|\bnan\b", s), (
+                f"{label}: prints a raw None/nan instead of a source or \"not recorded\": {s!r}")
+
+        blob = "\n".join(cost_strings)
+        if shape == "none":
+            assert "not recorded" in blob, f"{label}: no tier is sourced, but no \"not recorded\" appears"
+            for p in PROVIDER_NAMES_LIST:
+                assert p not in blob, f"{label}: names provider {p!r} with nothing recorded to back it"
+        elif shape == "all":
+            assert "not recorded" not in blob, (
+                f"{label}: every tier is sourced, but \"not recorded\" still appears")
+            assert "Lambda" in blob, f"{label}: every tier is sourced (lambda), but no source name appears"
+        else:
+            for tier in ("hyper", "spec", "spot"):
+                expected = gr.price_source_label(card, tier)
+                if expected not in blob:
+                    continue
+                if expected == "not recorded":
+                    mixed_not_recorded_hit += 1
+                else:
+                    mixed_sourced_hit += 1
+    assert mixed_sourced_hit > 0 and mixed_not_recorded_hit > 0, (
+        f"the mixed real row (h100-80) did not exercise both states: "
+        f"sourced={mixed_sourced_hit} not-recorded={mixed_not_recorded_hit}")
+
+test("the PDF cost section names a source or says \"not recorded\", for every shape",
+     check_pdf_cost_section_names_a_source_or_says_not_recorded)
+
+
+def check_pdf_tier_names_are_bare():
+    """The old defect in its most literal form: the tier name column itself
+    used to carry the composite list — the cell's whole string used to BE
+    "Hyperscaler (AWS/GCP/Azure)". report_strings() surfaces each table cell
+    as its own list element (see story_strings()'s _cellvalues walk), so
+    membership is exact-match by construction: if the parenthetical were
+    still there, the bare name below would not be a member of strings at
+    all, it would be missing, which is what a regression here looks like."""
+    cfg, strings = report_strings(dict(gr.GPUS["h100-80"]), 1, bpp=2)
+    assert "Hyperscaler" in strings, "the PDF cost table lost its Hyperscaler tier name"
+    assert "Specialized" in strings, "the PDF cost table lost its Specialized tier name"
+    assert "Spot / marketplace" in strings, "the PDF cost table lost its Spot / marketplace tier name"
+
+test("the PDF cost table's tier names carry no provider parenthetical",
+     check_pdf_tier_names_are_bare)
+
+
 # ---- hardware with no measured constants ------------------------------------
 # The ruling: a card whose perfKey has no PERF entry gets its full VRAM breakdown,
 # fit verdict, cost and command, and no throughput. Every figure that needs a

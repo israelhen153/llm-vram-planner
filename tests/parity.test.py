@@ -767,11 +767,16 @@ else:
     drift = []
     for key in sorted(GPUS):
         # Numeric fields compare with a tolerance; everything else — names,
-        # vendor, perfKey, form, the caps object, the optional default flag —
-        # is an exact match, and .get() rather than [] so a field present on
-        # one side only reads as drift instead of raising.
+        # vendor, perfKey, form, the caps object, the optional default flag,
+        # and now priceSource — is an exact match (Python dict equality is
+        # already deep, so a nested object compares the same way a scalar
+        # does), and .get() rather than [] so a field present on one side
+        # only reads as drift instead of raising. priceSource was added by
+        # fix/cost-provenance: js_value()/py_value() are two independent
+        # nested-dict renderers, and nothing else here would catch the two
+        # disagreeing about a provider name or a date.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
-                  "name", "vendor", "perfKey", "devices", "form", "caps", "default"):
+                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:
