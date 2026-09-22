@@ -62,7 +62,7 @@ JS_EXEC_UNKNOWN = "    html += `<div class=\"exec-row\"><span class=\"exec-label
 JS_MD_UNKNOWN = "    : `- Throughput and TTFT: not modelled. No measured utilisation is published for ${state.gpuName}, and estimating either would mean borrowing another architecture's constants, which do not transfer.\\n`;\n"
 JS_NOTES_UNKNOWN = "    : 'Throughput is not modelled for this hardware: no measured utilisation is published for it. ';\n"
 JS_BADGE = "${computed.throughputModelled ? 'PCIe — 45-60% perf loss, worse with more devices' : 'PCIe — no NVLink; the speed cost is not modelled for this hardware'}"
-JS_GETSPEC = "           vendor: g.vendor, perfKey: g.perfKey, devices: g.devices, form: g.form, caps: g.caps };\n"
+JS_GETSPEC = "           vendor: g.vendor, perfKey: g.perfKey, devices: g.devices, form: g.form, caps: g.caps,\n"
 JS_STATE_PK = "    perfKey: gpu.perfKey,\n"
 JS_TP_GATE = "  if (!computed.throughputModelled) {\n    /* And no benchmark panel."
 JS_TP_TILE = "<p class=\"label\">Throughput and TTFT</p><p class=\"value\">Not modelled</p><p class=\"sub\">${unmodelledNote}</p>"

@@ -149,17 +149,17 @@ S["F11 py: max_batch_kv None without constants"] = [(REPORT_PY, PY_RET_BATCH, " 
 S["F12 py: tp/dp None without constants"] = [(REPORT_PY, PY_RET_TP, "        \"tp\": tp if throughput_modelled else None, \"dp\": dp if throughput_modelled else None,\n", 1)]
 S["F13 py: fits None without constants"] = [(REPORT_PY, PY_RET_FITS, "        \"fits\": fits if throughput_modelled else None, \"comfortable\": comfortable,\n", 1)]
 S["F14 py: PDF max-context row hidden without constants (renderer only)"] = [(REPORT_PY, PY_MAXCTX_ROW, "            [\"Max context (1 user, 90% util)\", fmt_k(c[\"max_ctx_1\"]) + \" tokens\" if c[\"throughput_modelled\"] else \"not modelled\"],\n", 1)]
-S["F15 py: PDF cost section skipped without constants (renderer only)"] = [(REPORT_PY, PY_COST_HEAD + "        cost_data = [", "        if c[\"throughput_modelled\"]:\n          story.append(Paragraph(\"Cost estimate\", self.styles[\"SectionHead\"]))\n        cost_data = [", 1),
+S["F15 py: PDF cost section skipped without constants (renderer only)"] = [(REPORT_PY, PY_COST_HEAD, "        if c[\"throughput_modelled\"]:\n          story.append(Paragraph(\"Cost estimate\", self.styles[\"SectionHead\"]))\n", 1),
     (REPORT_PY, "        story.append(cost_table)\n", "        if c[\"throughput_modelled\"]: story.append(cost_table)\n", 1)]
 S["F16 both: weights null/None in both engines"] = S["F1 js: weightsGB null without constants"] + S["F10 py: weights_gb None without constants"]
 S["F17 both: max batch null/None in both engines"] = S["F2 js: maxBatchByKV null without constants"] + S["F11 py: max_batch_kv None without constants"]
 
 # ---- G. plumbing that drops perfKey ----
-S["G1 js: getGpuSpec drops perfKey"] = [(INDEX_HTML, JS_GETSPEC, "           vendor: g.vendor, devices: g.devices, form: g.form, caps: g.caps };\n", 1)]
+S["G1 js: getGpuSpec drops perfKey"] = [(INDEX_HTML, JS_GETSPEC, "           vendor: g.vendor, devices: g.devices, form: g.form, caps: g.caps,\n", 1)]
 S["G2 js: readInputState drops perfKey"] = [(INDEX_HTML, JS_STATE_PK, "", 1)]
 S["G3 js: readInputState fills perfKey from vendor"] = [(INDEX_HTML, JS_STATE_PK, "    perfKey: gpu.vendor,\n", 1)]
-S["G4 js: getGpuSpec fills perfKey from vendor"] = [(INDEX_HTML, JS_GETSPEC, "           vendor: g.vendor, perfKey: g.vendor, devices: g.devices, form: g.form, caps: g.caps };\n", 1)]
-S["G5 js: getGpuSpec hardcodes perfKey 'nvidia'"] = [(INDEX_HTML, JS_GETSPEC, "           vendor: g.vendor, perfKey: 'nvidia', devices: g.devices, form: g.form, caps: g.caps };\n", 1)]
+S["G4 js: getGpuSpec fills perfKey from vendor"] = [(INDEX_HTML, JS_GETSPEC, "           vendor: g.vendor, perfKey: g.vendor, devices: g.devices, form: g.form, caps: g.caps,\n", 1)]
+S["G5 js: getGpuSpec hardcodes perfKey 'nvidia'"] = [(INDEX_HTML, JS_GETSPEC, "           vendor: g.vendor, perfKey: 'nvidia', devices: g.devices, form: g.form, caps: g.caps,\n", 1)]
 S["G6 py: interactive_mode drops perfKey"] = [(REPORT_PY, PY_B_INTERACTIVE, "        \"kv_bpp\": kv_bpp,", 1)]
 S["G7 py: from_json preset branch drops perfKey"] = [(REPORT_PY, PY_B_JSON, "            \"kv_bpp\": raw.get(\"kv_bpp\", 2),", 1)]
 S["G8 py: from_json raw branch drops perfKey"] = [(REPORT_PY, PY_B_RAW, "", 1)]
