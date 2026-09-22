@@ -2034,7 +2034,15 @@ function renderComparisons() {
     html += c.throughputModelled
       ? `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">~${formatTokens(c.singleStreamTokS)} / ${formatTokens(c.aggregateTokS)} tok/s${c.dp > 1 ? '<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">unmeasured above 2 devices</span>' : ''}${c.fp8NoTensorCores ? '<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">no FP8 tensor cores — aggregate is the FP16 ceiling</span>' : ''}</span></div>`
       : `<div class="row"><span class="label">Per-user / aggregate</span><span class="val">not modelled<br><span style="color:var(--warning-text);font-size:10px;font-weight:500">no measured utilisation for this hardware — borrowed constants do not transfer</span></span></div>`;
-    html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}</span></div>`;
+    /* Cold-check finding: not always spot-to-hyperscaler. That ordering held
+       only while every catalog price happened to satisfy spot <= specialized
+       <= hyperscaler, which a real price move is not obliged to preserve —
+       l40s-48's own specialized tier ($2.25) is now above its hyperscaler
+       tier ($1.86), and rtx4090-24's spot ($0.54) sits above its specialized
+       tier ($0.45). A range has to span whichever tier is actually cheapest
+       and priciest, not whichever tier is cheapest and priciest by name. */
+    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot];
+    html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${Math.min(...cmpCosts).toFixed(2)}–$${Math.max(...cmpCosts).toFixed(2)}</span></div>`;
     /* One card can hold a sourced tier beside an unrecorded one (h100-80 today
        has hyper+spec sourced and spot not), so this is per snapshot like the
        two rows above, not a page-level fact. Three short lines rather than
@@ -2146,8 +2154,16 @@ function renderExecutiveSummary(state, computed) {
   const verdictLabel = computed.comfortable ? 'READY TO DEPLOY' : computed.fits ? 'TIGHT — RISK OF OOM' : 'DOES NOT FIT';
   const verdictIcon = computed.comfortable ? 'ico-check' : computed.fits ? 'ico-alert-triangle' : 'ico-x';
 
-  const monthlyCheapest = Math.round(computed.hourlySpot * 730);
-  const monthlyExpensive = Math.round(computed.hourlyHyper * 730);
+  // Not always spot-to-hyperscaler: that ordering held only while every
+  // catalog price happened to satisfy spot <= specialized <= hyperscaler,
+  // which a real price move is not obliged to preserve (l40s-48's
+  // specialized tier is now above its hyperscaler tier; rtx4090-24's spot
+  // is above its specialized tier). A range has to span whichever tier is
+  // actually cheapest and priciest, not whichever tier is cheapest and
+  // priciest by name — see the same fix in renderComparisons.
+  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot];
+  const monthlyCheapest = Math.round(Math.min(...execCosts) * 730);
+  const monthlyExpensive = Math.round(Math.max(...execCosts) * 730);
 
   let html = `<p class="exec-headline"><svg class="ti-ico" style="color:var(${verdictColor});margin-right:6px" aria-hidden="true" focusable="false"><use href="#${verdictIcon}"></use></svg>${modelName}</p>`;
 
@@ -2185,12 +2201,15 @@ function renderExecutiveSummary(state, computed) {
     html += `<div class="exec-row"><span class="exec-label">Speed and server throughput</span><span class="exec-value">Not modelled <span style="color:var(--warning-text);font-weight:500">· no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer</span></span></div>`;
   }
   html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
-  // The range above is spot-to-hyperscaler (monthlyCheapest/monthlyExpensive,
-  // both derived from those two tiers only) -- this names their sources, not
-  // specialized's, which the range never uses. A manager reading this view
-  // sees the same two states as every other surface: a named source, or
-  // "not recorded" said plainly, never the old three-provider description.
-  html += `<div class="exec-row"><span class="exec-label" style="font-size:11px">Cost source</span><span class="exec-value" style="font-size:11px;font-weight:400;color:var(--text-muted)">Spot: ${priceSourceLabel(state, 'spot')} · Hyperscaler: ${priceSourceLabel(state, 'hyper')}</span></div>`;
+  // Which tier is cheapest and which is priciest now varies by card (see
+  // execCosts above), so a fixed "Spot: ... Hyperscaler: ..." label would
+  // sometimes name the wrong two tiers as the ones behind the range, or
+  // leave the third — which the range may still reflect — unsourced. All
+  // three, always, matching renderComparisons' own cost-source row: a
+  // manager reading this view sees the same two states as every other
+  // surface for every tier, a named source or "not recorded" said plainly,
+  // never the old three-provider description.
+  html += `<div class="exec-row"><span class="exec-label" style="font-size:11px">Cost source</span><span class="exec-value" style="font-size:11px;font-weight:400;color:var(--text-muted)">Hyper: ${priceSourceLabel(state, 'hyper')} · Spec: ${priceSourceLabel(state, 'spec')} · Spot: ${priceSourceLabel(state, 'spot')}</span></div>`;
   html += `<div class="exec-row" style="border:none"><span class="exec-label">Precision</span><span class="exec-value">${state.bytesPerParam <= 0.5 ? 'INT4 (quantized)' : state.bytesPerParam <= 1 ? 'FP8' : 'BF16 (full precision)'}</span></div>`;
   if (computed.dp > 1) html += `<div style="margin-top:10px;font-size:12px;color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>Across ${computed.deviceCount} devices the tool picks TP=${computed.tp} × DP=${computed.dp} by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured${computed.throughputModelled ? ', so treat the throughput figures as a ceiling to test, not a quote' : ''}.</div>`;
 

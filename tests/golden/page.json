@@ -84,7 +84,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -288,7 +288,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $13,140 – $71,832/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $13,140 – $71,832/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -518,7 +518,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $110 – $387/mo Cost source Spot: not recorded · Hyperscaler: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $110 – $387/mo Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -722,7 +722,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× A100 40 GB VRAM used 32.6 GiB / 40 GiB per device (81%) Max concurrent users (8K context) 19 Speed per user ~64 tokens/sec Total server throughput ~525 tokens/sec Monthly cost range $460 – $2,482/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× A100 40 GB VRAM used 32.6 GiB / 40 GiB per device (81%) Max concurrent users (8K context) 19 Speed per user ~64 tokens/sec Total server throughput ~525 tokens/sec Monthly cost range $460 – $2,482/mo Cost source Hyper: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -928,7 +928,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× A100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~84 tokens/sec Total server throughput ~688 tokens/sec Monthly cost range $723 – $2,993/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96amsr_A100_v4 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× A100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~84 tokens/sec Total server throughput ~688 tokens/sec Monthly cost range $723 – $2,993/mo Cost source Hyper: Azure · Standard_ND96amsr_A100_v4 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA A100 SXM (80 GB, 240 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1134,7 +1134,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× B200 192 GB VRAM used 32.6 GiB / 192 GiB per device (17%) Max concurrent users (8K context) 156 Speed per user ~328 tokens/sec Total server throughput ~2.7K tokens/sec Monthly cost range $1,548 – $10,395/mo Cost source Spot: not recorded · Hyperscaler: AWS · p6-b200.48xlarge · US East (N. Virginia) · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× B200 192 GB VRAM used 32.6 GiB / 192 GiB per device (17%) Max concurrent users (8K context) 156 Speed per user ~328 tokens/sec Total server throughput ~2.7K tokens/sec Monthly cost range $1,548 – $10,395/mo Cost source Hyper: AWS · p6-b200.48xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: Lambda · NVIDIA B200 SXM6 (180 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1340,7 +1340,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 48.6 GiB / 80 GiB per device (61%) Max concurrent users (8K context) 55 Speed per user ~145 tokens/sec Total server throughput ~11.9K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 48.6 GiB / 80 GiB per device (61%) Max concurrent users (8K context) 55 Speed per user ~145 tokens/sec Total server throughput ~11.9K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -1551,7 +1551,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "70B model DOES NOT FIT Hardware 1× H100 80 GB VRAM used 173 GiB / 80 GiB per device (216%) Max concurrent users (8K context) 0 Speed per user ~16 tokens/sec Total server throughput ~16 tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "70B model DOES NOT FIT Hardware 1× H100 80 GB VRAM used 173 GiB / 80 GiB per device (216%) Max concurrent users (8K context) 0 Speed per user ~16 tokens/sec Total server throughput ~16 tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -1763,7 +1763,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 22.3 GiB / 80 GiB per device (28%) Max concurrent users (8K context) 65 Speed per user ~384 tokens/sec Total server throughput ~1.7K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision FP8"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 22.3 GiB / 80 GiB per device (28%) Max concurrent users (8K context) 65 Speed per user ~384 tokens/sec Total server throughput ~1.7K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision FP8"
    },
    "gpu-cards": {
     "attrs": [
@@ -1970,7 +1970,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 29.6 GiB / 80 GiB per device (37%) Max concurrent users (8K context) 55 Speed per user ~116 tokens/sec Total server throughput ~283 tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 29.6 GiB / 80 GiB per device (37%) Max concurrent users (8K context) 55 Speed per user ~116 tokens/sec Total server throughput ~283 tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -2176,7 +2176,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "org/imported-8b READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "org/imported-8b READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -2382,7 +2382,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 25.1 GiB / 80 GiB per device (31%) Max concurrent users (8K context) 62 Speed per user ~259 tokens/sec Total server throughput ~1.5K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision FP8"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 25.1 GiB / 80 GiB per device (31%) Max concurrent users (8K context) 62 Speed per user ~259 tokens/sec Total server throughput ~1.5K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision FP8"
    },
    "gpu-cards": {
     "attrs": [
@@ -2600,7 +2600,7 @@
      "style=font-size:13px;margin-right:4px;vertical-align:-2px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 16× H100 80 GB VRAM used 20.7 GiB / 80 GiB per device (26%) Max concurrent users (8K context) 344 Speed per user ~105 tokens/sec · unmeasured above 2 devices Total server throughput ~1.3K tokens/sec · unmeasured above 2 devices Monthly cost range $26,280 – $143,664/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision) Across 16 devices the tool picks TP=8 × DP=2 by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured, so treat the throughput figures as a ceiling to test, not a quote."
+    "text": "70B model READY TO DEPLOY Hardware 16× H100 80 GB VRAM used 20.7 GiB / 80 GiB per device (26%) Max concurrent users (8K context) 344 Speed per user ~105 tokens/sec · unmeasured above 2 devices Total server throughput ~1.3K tokens/sec · unmeasured above 2 devices Monthly cost range $26,280 – $143,664/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision) Across 16 devices the tool picks TP=8 × DP=2 by rule of thumb and prices the interconnect with a heuristic. Nothing above 2 devices is measured, so treat the throughput figures as a ceiling to test, not a quote."
    },
    "gpu-cards": {
     "attrs": [
@@ -2843,7 +2843,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "26B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 30.1 GiB / 80 GiB per device (38%) Max concurrent users (8K context) 180 Speed per user ~478 tokens/sec Total server throughput ~3.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "26B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 30.1 GiB / 80 GiB per device (38%) Max concurrent users (8K context) 180 Speed per user ~478 tokens/sec Total server throughput ~3.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3071,7 +3071,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "30B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 41.8 GiB / 80 GiB per device (52%) Max concurrent users (8K context) 56 Speed per user ~453 tokens/sec Total server throughput ~1.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "30B model READY TO DEPLOY Hardware 2× H100 80 GB VRAM used 41.8 GiB / 80 GiB per device (52%) Max concurrent users (8K context) 56 Speed per user ~453 tokens/sec Total server throughput ~1.9K tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3304,7 +3304,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "671B model DOES NOT FIT Hardware 2× H100 80 GB VRAM used 631 GiB / 80 GiB per device (789%) Max concurrent users (8K context) 0 Speed per user ~42 tokens/sec Total server throughput ~42 tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 17 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "671B model DOES NOT FIT Hardware 2× H100 80 GB VRAM used 631 GiB / 80 GiB per device (789%) Max concurrent users (8K context) 0 Speed per user ~42 tokens/sec Total server throughput ~42 tokens/sec Monthly cost range $3,285 – $17,958/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 17 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -3533,7 +3533,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.3 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 171 Speed per user ~112 tokens/sec Total server throughput ~1.4K tokens/sec Monthly cost range $13,140 – $71,832/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.3 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 171 Speed per user ~112 tokens/sec Total server throughput ~1.4K tokens/sec Monthly cost range $13,140 – $71,832/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3759,7 +3759,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed per user ~59 tokens/sec Total server throughput ~739 tokens/sec Monthly cost range $13,140 – $71,832/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "70B model READY TO DEPLOY Hardware 8× H100 80 GB VRAM used 23.2 GiB / 80 GiB per device (29%) Max concurrent users (8K context) 172 Speed per user ~59 tokens/sec Total server throughput ~739 tokens/sec Monthly cost range $13,140 – $71,832/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -3986,7 +3986,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Spot: not recorded · Hyperscaler: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H100 80 GB VRAM used 32.6 GiB / 80 GiB per device (41%) Max concurrent users (8K context) 55 Speed per user ~137 tokens/sec Total server throughput ~1.1K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -4192,7 +4192,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× H200 141 GB VRAM used 32.6 GiB / 141 GiB per device (23%) Max concurrent users (8K context) 110 Speed per user ~197 tokens/sec Total server throughput ~1.6K tokens/sec Monthly cost range $1,825 – $5,774/mo Cost source Spot: not recorded · Hyperscaler: AWS · p5en.48xlarge · US East (N. Virginia) · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× H200 141 GB VRAM used 32.6 GiB / 141 GiB per device (23%) Max concurrent users (8K context) 110 Speed per user ~197 tokens/sec Total server throughput ~1.6K tokens/sec Monthly cost range $1,825 – $5,774/mo Cost source Hyper: AWS · p5en.48xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: CoreWeave · NVIDIA HGX H200 · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -4403,7 +4403,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× L4 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~12 tokens/sec Total server throughput ~49 tokens/sec Monthly cost range $161 – $584/mo Cost source Spot: not recorded · Hyperscaler: AWS · g6.xlarge · US East (N. Virginia) · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× L4 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~12 tokens/sec Total server throughput ~49 tokens/sec Monthly cost range $161 – $584/mo Cost source Hyper: AWS · g6.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -4564,7 +4564,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× L40S 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~35 / 292 tok/s Cost/hr $0.90–$1.86 Cost source Hyper: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: CoreWeave · NVIDIA L40S · global · read 2026-09-22 Spot: not recorded"
+    "text": "8B model GPU 1× L40S 48 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~35 / 292 tok/s Cost/hr $0.90–$2.25 Cost source Hyper: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 Spec: CoreWeave · NVIDIA L40S · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -4612,7 +4612,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× L40S 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~35 tokens/sec Total server throughput ~292 tokens/sec Monthly cost range $657 – $1,358/mo Cost source Spot: not recorded · Hyperscaler: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× L40S 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~35 tokens/sec Total server throughput ~292 tokens/sec Monthly cost range $657 – $1,643/mo Cost source Hyper: AWS · g6e.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: CoreWeave · NVIDIA L40S · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -4770,7 +4770,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 4090 24 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~41 / 165 tok/s Cost/hr $0.54–$0.75 Cost source Hyper: not recorded Spec: not recorded Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22"
+    "text": "8B model GPU 1× RTX 4090 24 GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~41 / 165 tok/s Cost/hr $0.45–$0.75 Cost source Hyper: not recorded Spec: not recorded Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22"
    },
    "cost-output": {
     "attrs": [
@@ -4823,7 +4823,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× RTX 4090 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~41 tokens/sec Total server throughput ~165 tokens/sec Monthly cost range $394 – $548/mo Cost source Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 · Hyperscaler: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× RTX 4090 24 GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~41 tokens/sec Total server throughput ~165 tokens/sec Monthly cost range $329 – $548/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5037,7 +5037,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× RTX 5090 32 GB VRAM used 32.6 GiB / 32 GiB per device (102%) Max concurrent users (8K context) 12 Speed per user ~73 tokens/sec Total server throughput ~521 tokens/sec Monthly cost range $329 – $650/mo Cost source Spot: not recorded · Hyperscaler: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× RTX 5090 32 GB VRAM used 32.6 GiB / 32 GiB per device (102%) Max concurrent users (8K context) 12 Speed per user ~73 tokens/sec Total server throughput ~521 tokens/sec Monthly cost range $329 – $650/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5246,7 +5246,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× RTX 6000 Ada 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~39 tokens/sec Total server throughput ~324 tokens/sec Monthly cost range $438 – $1,095/mo Cost source Spot: not recorded · Hyperscaler: not recorded Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× RTX 6000 Ada 48 GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~39 tokens/sec Total server throughput ~324 tokens/sec Monthly cost range $438 – $1,095/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -5452,7 +5452,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× RTX PRO 6000 96 GB VRAM used 32.6 GiB / 96 GiB per device (34%) Max concurrent users (8K context) 69 Speed per user ~73 tokens/sec Total server throughput ~605 tokens/sec Monthly cost range $1,460 – $3,650/mo Cost source Spot: not recorded · Hyperscaler: not recorded Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× RTX PRO 6000 96 GB VRAM used 32.6 GiB / 96 GiB per device (34%) Max concurrent users (8K context) 69 Speed per user ~73 tokens/sec Total server throughput ~605 tokens/sec Monthly cost range $1,460 – $3,650/mo Cost source Hyper: not recorded · Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -5665,7 +5665,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed per user ~25 tokens/sec Total server throughput ~84 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $110 – $387/mo Cost source Spot: not recorded · Hyperscaler: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 25.1 GiB / 16 GiB per device (157%) Max concurrent users (8K context) 5 Speed per user ~25 tokens/sec Total server throughput ~84 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $110 – $387/mo Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision FP8 Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5882,7 +5882,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 32.6 GiB / 16 GiB per device (203%) Max concurrent users (8K context) 0 Speed per user ~13 tokens/sec Total server throughput ~13 tokens/sec Monthly cost range $110 – $387/mo Cost source Spot: not recorded · Hyperscaler: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× T4 16 GB VRAM used 32.6 GiB / 16 GiB per device (203%) Max concurrent users (8K context) 0 Speed per user ~13 tokens/sec Total server throughput ~13 tokens/sec Monthly cost range $110 – $387/mo Cost source Hyper: AWS · g4dn.xlarge · US East (N. Virginia) · read 2026-09-22 · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 3 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
