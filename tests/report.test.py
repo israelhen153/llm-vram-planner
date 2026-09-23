@@ -80,14 +80,63 @@ class HeldClock(datetime):
 
 gr.datetime = HeldClock
 
-# The clocks every report this suite builds printed, one entry per build, read
-# where every build passes: story_strings(). One probe config is not enough. A
-# cold check read the clock around the hold only when the weights were FP8,
-# and a single-config check could not see it. The test at the end of this file
-# holds every build to HELD.
+# Every clock the report prints, recorded in the report's own classes rather
+# than in a helper that reads it. The first cold check read the clock around
+# the hold for FP8 reports only, which a one-config check could not see. The
+# second found that a recorder inside story_strings() missed every report
+# report_text() builds. Every build, however it is read, goes through
+# ReportCard.generate(). The cover is a Paragraph, and the page date is drawn
+# on a canvas. The test registered last holds all of them to HELD.
 COVER_CLOCK = re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}")
 BARE_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-CLOCKS_SEEN = []
+COVERS = []       # the cover clocks of each completed generate(), as a set
+PAGE_DATES = []   # the bare dates each page callback drew
+_building = []
+
+
+class RecordingParagraph(gr.Paragraph):
+    def __init__(self, text, *args, **kwargs):
+        if _building:
+            _building[-1].update(COVER_CLOCK.findall(str(text)))
+        super().__init__(text, *args, **kwargs)
+
+
+def _covers_recorded(generate):
+    def wrapper(self, *args, **kwargs):
+        _building.append(set())
+        try:
+            result = generate(self, *args, **kwargs)
+        finally:
+            covers = _building.pop()
+        COVERS.append(covers)
+        return result
+    return wrapper
+
+
+def _page_dates_recorded(header_footer):
+    def wrapper(self, canvas_obj, doc):
+        drawn = []
+
+        class Canvas:
+            def __getattr__(_, name):
+                attr = getattr(canvas_obj, name)
+                if not name.startswith("draw"):
+                    return attr
+
+                def draw(*args, **kwargs):
+                    drawn.extend(a for a in args if isinstance(a, str))
+                    return attr(*args, **kwargs)
+                return draw
+        try:
+            return header_footer(self, Canvas(), doc)
+        finally:
+            PAGE_DATES.append([t for t in drawn if BARE_DATE.fullmatch(t)])
+    return wrapper
+
+
+gr.Paragraph = RecordingParagraph
+gr.ReportCard.generate = _covers_recorded(gr.ReportCard.generate)
+gr.ReportCard._header_footer = _page_dates_recorded(gr.ReportCard._header_footer)
 
 pass_ct = fail_ct = 0
 
@@ -1321,8 +1370,6 @@ def story_strings(cfg, comp=None):
     # And anything it said while building, on either stream.
     for stream in (printed, complained):
         seen.extend(line for line in stream.getvalue().splitlines() if line.strip())
-    CLOCKS_SEEN.append(([m.group(0) for s in seen for m in COVER_CLOCK.finditer(s)],
-                        [s for s in seen if BARE_DATE.fullmatch(s)]))
     return seen
 
 
@@ -2701,28 +2748,32 @@ test("the report still says exactly what the golden records",
 
 
 def check_every_report_built_here_read_the_held_clock():
-    """Every report this suite built printed HELD, in both of its clocks: every
-    golden case, every absent-constants pair, every packaging probe. So no check
-    here depends on when it runs, and a clock read that goes around the hold
-    (time.strftime, date.today(), a second import of datetime) fails here the
-    day it lands, on whichever config it is gated on, as long as some check
-    builds that config. Registered last so it sees every build.
+    """Every report this suite built printed HELD, on its cover and on every page:
+    every golden case, every absent-constants pair, every packaging probe, however
+    the suite read it (story_strings(), report_text() or a real PDF). The record
+    is kept in the report's own classes, so a helper added later is covered too.
+    A clock read that goes around the hold fails here the day it lands, on
+    whichever config it is gated on, as long as some check builds that config.
+    Registered last, so it sees every build.
 
-    HELD must also sit far from any real clock. A hold at the real time, taken
-    once at import, keeps the run consistent, but a clock read around it prints
-    the same minute and passes."""
+    HELD must also sit far from any real clock. A hold taken at the real time
+    keeps a run consistent, but a clock read around it prints the same minute
+    and passes."""
     real = datetime.now()
     assert abs((real - HELD).days) > 365, (
         f"HELD is {HELD}, within a year of the real clock ({real:%Y-%m-%d}), so a report that "
         f"reads the real clock prints what the held one would")
-    wrong = [(covers, dates) for covers, dates in CLOCKS_SEEN
-             if covers != [HELD_COVER] * CLOCKS_PER_CASE or dates != [HELD_DATE] * BARE_DATES_PER_CASE]
+    wrong = [c for c in COVERS if c != {HELD_COVER}]
     assert not wrong, (
-        f"{len(wrong)} of {len(CLOCKS_SEEN)} reports did not print the held clock "
-        f"({HELD_COVER!r}, {HELD_DATE!r}); the first: {wrong[0]!r}")
-    assert len(CLOCKS_SEEN) >= len(golden_cases()), (
-        f"only {len(CLOCKS_SEEN)} reports were built, fewer than the golden's "
-        f"{len(golden_cases())} cases, so this saw too little")
+        f"{len(wrong)} of {len(COVERS)} reports did not print exactly the held cover clock "
+        f"{HELD_COVER!r}; the first printed {sorted(wrong[0])!r}")
+    wrong_dates = [d for d in PAGE_DATES if d != [HELD_DATE]]
+    assert not wrong_dates, (
+        f"{len(wrong_dates)} of {len(PAGE_DATES)} pages did not draw exactly the held date "
+        f"{HELD_DATE!r}; the first drew {wrong_dates[0]!r}")
+    assert len(COVERS) >= len(golden_cases()) and PAGE_DATES, (
+        f"only {len(COVERS)} reports and {len(PAGE_DATES)} pages were recorded, fewer than the "
+        f"golden's {len(golden_cases())} cases, so this saw too little")
 
 test("every report this suite built printed the held clock, so no check depends on when it runs",
      check_every_report_built_here_read_the_held_clock)
