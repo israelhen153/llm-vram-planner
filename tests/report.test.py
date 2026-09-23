@@ -2431,6 +2431,63 @@ test("the interactive menu offers no FP8 on a gated card, says why, and keeps IN
      check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it)
 
 
+# What each interactive menu choice is, as the contract: its bytes per parameter and
+# the --quantization it means.
+MENU_QUANT = {"BF16": (2.0, ""), "FP8": (1.0, "fp8"), "INT4/AWQ": (0.5, "awq"),
+              "Q4_K_M": (0.63, "gguf"), "Q6_K": (0.82, "gguf")}
+
+
+def check_every_interactive_choice_names_its_quantization_in_the_command():
+    """interactive_mode() never set quant, so the PDF's command carried no
+    --quantization for any choice. For FP8 that loaded BF16 weights, twice the
+    memory the report had sized. Every choice the menu prints, on a card that runs
+    all of them: the choice is the one asked for, and the command names it."""
+    for n, label in enumerate(MENU_QUANT, 1):
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index("h100-80") + 1), "1",
+                   str(n), "n", "8192", "1"]
+        out = io.StringIO()
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(out):
+            cfg = gr.interactive_mode()
+        assert f"  {n}. {label} (" in out.getvalue(), f"menu choice {n} is not {label}: {out.getvalue()[-400:]}"
+        bpp, quant = MENU_QUANT[label]
+        assert (cfg["bpp"], cfg["quant"]) == (bpp, quant), f"{label}: cfg says {cfg['bpp']}, {cfg['quant']!r}"
+        c = gr.compute(cfg)
+        cmd = gr.build_vllm_cmd(cfg, c)
+        assert c["fits"], f"{label}: 8B should fit one H100, or this checks nothing"
+        assert ((f"    --quantization {quant} \\" in cmd.split("\n")) if quant else "--quantization" not in cmd), (
+            f"{label}: the command does not say --quantization {quant or '(none)'}: {cmd}")
+
+test("every interactive precision choice names its quantization in the PDF's command",
+     check_every_interactive_choice_names_its_quantization_in_the_command)
+
+
+def check_a_one_byte_json_config_is_fp8_in_the_command():
+    """from_json() accepted {"bpp": 1} with no quant, and compute() sized it as FP8
+    while the command named no quantization, so it loaded BF16. One byte per
+    parameter is FP8, by compute()'s own test, so the command now says so. A width
+    that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is left as the config
+    gave it, and an explicit quant is never overridden."""
+    def plan(raw):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(dict({"preset": "llama31-8b", "gpu": "h100-80"}, **raw), f)
+        try:
+            cfg = gr.from_json(f.name)
+        finally:
+            os.unlink(f.name)
+        return cfg, gr.build_vllm_cmd(cfg, gr.compute(cfg))
+    cfg, cmd = plan({"bpp": 1})
+    assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (cfg.get("quant"), cmd)
+    cfg, cmd = plan({"bpp": 0.5})
+    assert not cfg.get("quant") and "--quantization" not in cmd, (cfg.get("quant"), cmd)
+    cfg, cmd = plan({"bpp": 1, "quant": "fp8"})
+    assert cfg["quant"] == "fp8", cfg.get("quant")
+    cfg, cmd = plan({"bpp": 0.5, "quant": "gptq"})
+    assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (cfg.get("quant"), cmd)
+
+test("a JSON config at one byte per parameter is FP8 in the command; other widths are left as given",
+     check_a_one_byte_json_config_is_fp8_in_the_command)
+
+
 test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
 

@@ -1523,24 +1523,28 @@ def interactive_mode():
                   + ("its devices use Infinity Fabric." if gpu.get("form") == "oam" else "assuming PCIe."))
 
     print("\nPrecision options:")
-    prec_opts = [(2.0, "BF16"), (1.0, "FP8"), (0.5, "INT4/AWQ"), (0.63, "Q4_K_M"), (0.82, "Q6_K")]
+    # Each choice with the --quantization it means, so the PDF's command names it.
+    # Without it the command printed no flag at all: an FP8 plan loaded BF16 weights,
+    # twice the memory the report sized it for.
+    prec_opts = [(2.0, "BF16", ""), (1.0, "FP8", "fp8"), (0.5, "INT4/AWQ", "awq"),
+                 (0.63, "Q4_K_M", "gguf"), (0.82, "Q6_K", "gguf")]
     # No FP8 on a card vLLM has no FP8 weight kernel for, and why; INT4/AWQ stays the default.
     blocked = fp8_weights_blocked(gpu)
     if blocked:
         prec_opts = [o for o in prec_opts if o[1] != "FP8"]
         print(f"FP8 is not offered: {blocked}")
-    default_prec = next(i for i, (_, l) in enumerate(prec_opts, 1) if l == "INT4/AWQ")
-    for i, (v, l) in enumerate(prec_opts):
+    default_prec = next(i for i, (_, l, _q) in enumerate(prec_opts, 1) if l == "INT4/AWQ")
+    for i, (v, l, _q) in enumerate(prec_opts):
         print(f"  {i+1}. {l} ({v} B/param)")
     prec_choice = int(input(f"Select [{default_prec}]: ").strip() or str(default_prec)) - 1
-    bpp = prec_opts[prec_choice][0]
+    bpp, quant = prec_opts[prec_choice][0], prec_opts[prec_choice][2]
 
     kv_bpp = 1 if input("FP8 KV cache? [y/n, default n]: ").strip().lower() == "y" else 2
     ctx = int(input("Context length [8192]: ").strip() or "8192")
     conc = int(input("Concurrent requests [1]: ").strip() or "1")
 
     return {
-        **arch, "bpp": bpp, "ctx": ctx, "conc": conc,
+        **arch, "bpp": bpp, "quant": quant, "ctx": ctx, "conc": conc,
         "n_gpu": n_gpu, "gpu": gpu, "nvlink": nvlink, "vendor": gpu["vendor"],
         "perfKey": gpu["perfKey"],
         "kv_bpp": kv_bpp, "hf_model": hf_model, "model_name": model_name,
@@ -1630,6 +1634,13 @@ def validate_arch(cfg):
     if isinstance(n_gpu, (int, float)) and not isinstance(n_gpu, bool) and n_gpu != int(n_gpu):
         raise TypeError(f"cfg['n_gpu'] must be a whole number, got {n_gpu!r}")
 
+    # One byte per parameter is FP8, the same test compute() uses, so a config that
+    # says so without naming a quantization gets --quantization fp8 in its command.
+    # Without it the command loaded BF16 weights, twice what the report sized. Other
+    # widths are left alone: 0.5 is AWQ, GPTQ or a GGUF level, and only the config
+    # can say which.
+    if cfg.get("bpp") == 1 and not cfg.get("quant"):
+        cfg["quant"] = "fp8"
     # FP8 weights, by quant or by one byte per parameter, on a card vLLM has no FP8
     # weight kernel for: refused, not planned.
     return refuse_fp8_where_vllm_cannot(cfg)
