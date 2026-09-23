@@ -705,6 +705,32 @@ test('every catalog row declares the FP8 support its silicon actually has', () =
       ` — this flag halves the compute ceiling and prints a user-facing warning`);
   }
 });
+test('the AMD rows carry the figures AMD publishes, and are the AMD rows', () => {
+  /* Literals, typed from AMD's own documents — docs/research/amd-gpu-specs.md
+     cites each. A card with no throughput constants shows its TFLOPS nowhere,
+     so a figure off by 2x, the MI250X's 383 read per GCD and doubled as this
+     project's own research once did, passed every other test
+     (engine_r6_amd_rows C3). The vendor is pinned for the same reason: the
+     first AMD row relabelled nvidia slid into the end of the NVIDIA section
+     with the dropdown's text unchanged (C7). A row added under vendor amd
+     without deciding its figures here fails. */
+  const AMD_SPECS = {
+    'rx7900xtx-24': { gb: 24, bw: 960, tflops: 123, devices: 1, form: 'consumer', fp8: false },
+    'mi210-64': { gb: 64, bw: 1638.4, tflops: 181, devices: 1, form: 'pcie', fp8: false },
+    'mi250x-128': { gb: 128, bw: 3276.8, tflops: 383, devices: 2, form: 'oam', fp8: false },
+    'mi300x-192': { gb: 192, bw: 5325, tflops: 1307.4, devices: 1, form: 'oam', fp8: true },
+    'mi325x-256': { gb: 256, bw: 6000, tflops: 1307.4, devices: 1, form: 'oam', fp8: true },
+  };
+  const amd = Object.keys(GPU_TABLE).filter(k => GPU_TABLE[k].vendor !== 'nvidia').sort();
+  assert.deepStrictEqual(amd, Object.keys(AMD_SPECS).sort(),
+    'the rows whose vendor is not nvidia are not exactly the pinned AMD rows');
+  for (const [slug, want] of Object.entries(AMD_SPECS)) {
+    const row = GPU_TABLE[slug];
+    assert.strictEqual(row.vendor, 'amd', `${slug}.vendor`);
+    const got = { gb: row.gb, bw: row.bw, tflops: row.tflops, devices: row.devices, form: row.form, fp8: row.caps.fp8 };
+    assert.deepStrictEqual(got, want, `${slug} no longer carries AMD's published figures`);
+  }
+});
 test('every catalog row names the constants its silicon was measured with', () => {
   /* A literal per row, for the reason the FP8 flags above are literals: which
      constants a card runs on is a statement about hardware, and a catalog
@@ -1195,7 +1221,12 @@ const asState = (card, count, extra = {}) => ({
   priceSource: card.priceSource,
   priceRecord: card.priceRecord,
   gpuForm: card.form,
-  gpuName: card.name, ...extra,
+  /* The name as the page's state carries it: getGpuSpec() drops the space
+     ("MI250X 128GB"), as stateFor() above does. card.name kept the catalog's
+     spelling, so no state built here ever carried the name the page does — a
+     leak keyed on it passed the whole suite (engine_r6_amd_rows A5), and the
+     golden recorded a spelling the page never shows. */
+  gpuName: displayName(card), ...extra,
 });
 // The same silicon described as one dual-device board, or as two single-device
 // boards. Every number except the per-board cost must agree.
@@ -2592,8 +2623,9 @@ const PROBE_LOADS = [
 const PROBE_UNKNOWN_KEYS = ['no-such-key',
   ...new Set(Object.values(GPU_TABLE).map(g => g.perfKey).filter(k => !Object.hasOwn(PERF, k)))];
 assert.ok(PROBE_UNKNOWN_KEYS.length >= 2, 'no catalog row names a key PERF lacks, so only the placeholder is probed');
-/* The names no catalog row carries, for the probe axis below that needs one. */
-const CATALOG_NAMES = new Set(Object.values(GPU_TABLE).map(g => g.name));
+/* Every catalog row's name as the page's state spells it, for the probe axis
+   below that needs a name no row carries. */
+const CATALOG_NAMES = new Set(Object.values(GPU_TABLE).map(displayName));
 const absentProbes = () => {
   const probes = [];
   let i = 0;
