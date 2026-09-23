@@ -92,6 +92,7 @@ const stateFor = (gpu, o = {}) => ({
     priceRecord: gpu.priceRecord,
     priceNote: gpu.priceNote,
     priceLead: gpu.priceLead,
+    gfx: gpu.gfx,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1224,6 +1225,7 @@ const asState = (card, count, extra = {}) => ({
   priceRecord: card.priceRecord,
   priceNote: card.priceNote,
   priceLead: card.priceLead,
+  gfx: card.gfx,
   gpuForm: card.form,
   /* The name as the page's state carries it: getGpuSpec() drops the space
      ("MI250X 128GB"), as stateFor() above does. card.name kept the catalog's
@@ -3667,6 +3669,7 @@ test('the page hands the engine each tier\'s price exactly as the catalog record
     assert.deepStrictEqual(st.priceRecord, gpu.priceRecord, `${key}: the state's priceRecord`);
     assert.deepStrictEqual(st.priceNote, gpu.priceNote, `${key}: the state's priceNote`);
     assert.deepStrictEqual(st.priceLead, gpu.priceLead, `${key}: the state's priceLead`);
+    assert.strictEqual(st.gfx, gpu.gfx, `${key}: the state's gfx`);
     if (gpu.priceNote) noted++;
   }
   assert.ok(nulls > 0 && priced > 0, `the catalog gave ${nulls} null and ${priced} priced tiers — this needs both`);
@@ -4174,17 +4177,152 @@ test('no document promises a --device flag', () => {
     'README.md': readmeDoc, 'ROADMAP.md': roadmapDoc, 'CONTRIBUTING.md': contributing,
     'docs/MODEL.md': fs.readFileSync(path.join(ROOT, 'docs', 'MODEL.md'), 'utf8'),
   };
+  /* Docker has a --device flag of its own, and vLLM's ROCm image needs two of them,
+     `--device /dev/kfd` and `--device /dev/dri`, to see the GPUs. Those two are not
+     vLLM's flag, so they are allowed as exactly themselves, and nothing else is. */
+  const DOCKER_DEVICE = /--device \/dev\/(kfd|dri)\b/g;
   for (const [name, text] of Object.entries(docs)) {
-    for (const line of text.split('\n').filter(l => l.includes('--device'))) {
+    for (const line of text.split('\n').filter(l => l.replace(DOCKER_DEVICE, '').includes('--device'))) {
       assert.ok(/\b(no|not|never)\b/i.test(line),
         `${name} mentions --device without denying it: ${line.trim()}`);
     }
   }
-  // And neither engine may emit it, which is what the denial is asserting.
+  // And neither engine may emit vLLM's, which is what the denial is asserting.
   const py = fs.readFileSync(path.join(ROOT, 'generate_report.py'), 'utf8');
   for (const [name, src] of [['index.html', html], ['generate_report.py', py]]) {
-    assert.ok(!/['"`]--device/.test(src), `${name} emits a --device flag`);
+    assert.ok(!/['"`]--device/.test(src.replace(DOCKER_DEVICE, '')), `${name} emits a --device flag`);
   }
+});
+
+console.log('\nROCm: vLLM\'s own image, and what else running it needs');
+/* The contract the ROCm command rests on, written out: vLLM v0.30.0's own image, the
+   flags vLLM's docs give for it, word for word, and per LLVM target whether FP8
+   weights load, whether AITER is there, and whether the FP8 KV path is unverified
+   (docs/research/vllm-rocm.md). The table is read from the page once, here, and held
+   to these literals. */
+const ROCM_TABLE = new Function(`${html.match(/^const ROCM = \{[\s\S]*?\n\};$/m)[0]}; return ROCM;`)();
+const ROCM_IMAGE = 'vllm/vllm-openai-rocm:v0.30.0';
+const ROCM_FLAGS = ['--group-add=video', '--cap-add=SYS_PTRACE', '--security-opt seccomp=unconfined',
+                    '--device /dev/kfd', '--device /dev/dri', '-v ~/.cache/huggingface:/root/.cache/huggingface',
+                    '--env "HF_TOKEN=$HF_TOKEN"', '-p 8000:8000', '--ipc=host'];
+const ROCM_ARCH = { gfx90a: { fp8Weights: false, aiter: false, fp8KvUnverified: false },
+                    gfx942: { fp8Weights: true, aiter: true, fp8KvUnverified: false },
+                    gfx1100: { fp8Weights: false, aiter: false, fp8KvUnverified: true } };
+/* Every weight option the page offers, read from its own <select>: each option's
+   attributes in any order, and all of them, or the read fails. */
+const PAGE_WEIGHT_OPTIONS = (() => {
+  const at = html.indexOf('<select id="weight-precision"');
+  const sel = html.slice(at, html.indexOf('</select>', at));
+  const opts = [...sel.matchAll(/<option\b([^>]*)>/g)].map(m => ({
+    bytesPerParam: Number((m[1].match(/\bvalue="([\d.]+)"/) || [])[1]),
+    quantMethod: (m[1].match(/\bdata-q="(\w*)"/) || [])[1] }));
+  assert.ok(opts.length >= 10 && opts.length === (sel.match(/<option\b/g) || []).length
+            && opts.every(o => Number.isFinite(o.bytesPerParam) && typeof o.quantMethod === 'string'),
+    'the weight options could not all be read');
+  return opts;
+})();
+const DENSE_8B = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
+
+test('the ROCm table says what vLLM v0.30.0 and AMD say, each line with a source of the kind it claims', () => {
+  assert.strictEqual(ROCM_TABLE.image, ROCM_IMAGE);
+  assert.deepStrictEqual(ROCM_TABLE.dockerFlags, ROCM_FLAGS);
+  assert.deepStrictEqual(ROCM_TABLE.arch, ROCM_ARCH);
+  assert.strictEqual(ROCM_TABLE.vllm, 'v0.30.0');
+  const PINNED = /^https:\/\/(github\.com\/vllm-project\/vllm\/(blob|releases\/tag)\/v0\.30\.0([\/#]|$)|github\.com\/vllm-project\/vllm-gguf-plugin$|rocm\.docs\.amd\.com\/|instinct\.docs\.amd\.com\/|github\.com\/israelhen153\/llm-vram-planner\/blob\/HEAD\/docs\/research\/vllm-rocm\.md$)/;
+  for (const [id, [text, source]] of Object.entries(ROCM_TABLE.lines)) {
+    assert.ok(typeof text === 'string' && text.trim().endsWith('.'), `line ${id} is not a sentence`);
+    assert.ok(PINNED.test(source), `line ${id}: ${source} is not a v0.30.0 vLLM source, AMD's own page, the plugin, or the planner's notes`);
+  }
+});
+
+test('every AMD row names an LLVM target the ROCm table knows, and no NVIDIA row names one', () => {
+  const used = new Set();
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    if (g.vendor === 'amd') {
+      assert.ok(Object.hasOwn(ROCM_ARCH, g.gfx), `${key}: gfx ${g.gfx} is not a target the ROCm table knows`);
+      used.add(g.gfx);
+    } else assert.strictEqual(g.gfx, undefined, `${key}: an NVIDIA row carries a gfx`);
+  }
+  assert.deepStrictEqual([...used].sort(), Object.keys(ROCM_ARCH).sort(), 'the ROCm table knows a target no row uses');
+});
+
+test("an AMD card's command is vLLM's ROCm image with the same serve arguments; an NVIDIA card's is unchanged", () => {
+  /* The property: the launcher differs, the plan does not. The arguments after the
+     image are exactly the ones `vllm serve` gets for the same plan, since the image's
+     entrypoint is `vllm serve`. Every catalog card, every weight option the page
+     offers, both KV types, one to three boards, a local path and a hub id. */
+  let amd = 0, nvidia = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE)) {
+    for (const opt of PAGE_WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2, 3]) {
+      const h = renderHarness();
+      const st = asState(card, boards, { ...DENSE_8B, ...opt, kvBytesPerValue: kv });
+      const c = h.computeInference(st);
+      for (const model of ['/opt/models/YourModel', 'meta-llama/Llama-3.1-8B-Instruct']) {
+        const cmd = h.buildVllmCommand(st, c, model);
+        const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}, ${model}`;
+        if (!c.fits) { assert.ok(cmd.startsWith('# Does not fit'), `${where}: no fit, and a command`); continue; }
+        const serve = h.buildVllmCommand({ ...st, vendor: 'nvidia' }, c, model);
+        const head = `vllm serve ${model} \\\n`;
+        assert.ok(serve.startsWith(head), `${where}: the vllm serve form lost its head`);
+        if (card.vendor !== 'amd') {
+          assert.strictEqual(cmd, serve, `${where}: an NVIDIA card's command is not the vllm serve one`);
+          nvidia++;
+          continue;
+        }
+        const want = ['docker run --rm \\', ...ROCM_FLAGS.map(f => `    ${f} \\`),
+                      ...(ROCM_ARCH[card.gfx].aiter ? ['    --env VLLM_ROCM_USE_AITER=1 \\'] : []),
+                      ...(model.startsWith('/') ? [`    -v ${model}:${model} \\`] : []),
+                      `    ${ROCM_IMAGE} \\`, `    ${model} \\`].join('\n') + '\n' + serve.slice(head.length);
+        assert.strictEqual(cmd, want, `${where}: the ROCm command`);
+        for (const never of ['CUDA_VISIBLE_DEVICES', 'vllm serve', 'rocm/vllm'])
+          assert.ok(!cmd.includes(never), `${where}: the ROCm command says ${never}`);
+        amd++;
+      }
+    }
+  }
+  assert.ok(amd >= 200 && nvidia >= 400, `checked ${amd} AMD and ${nvidia} NVIDIA commands`);
+});
+
+test('the ROCm lines under the command are the ones that apply, each with its source, and only on AMD', () => {
+  /* Which lines apply is re-derived here from the plan, not taken from the page:
+     always the image, the wheels, choosing GPUs and the both-set failure; the GCD
+     line on a board of two devices; AITER on or off by target; AWQ/GPTQ's docs and
+     source when either is chosen; the plugin for GGUF; the unverified FP8 KV path
+     where the target has one; and the notes. None when no command is printed. */
+  const L = ROCM_TABLE.lines;
+  const expected = (card, st) => {
+    if (card.vendor !== 'amd') return [];
+    const arch = ROCM_ARCH[card.gfx];
+    return [L.image, L.wheels, L.hip, L.hipBoth, ...(card.devices > 1 ? [L.gcd] : []),
+            ...(arch.aiter ? [L.aiterOn, L.aiterDefault] : [L.aiterOff]),
+            ...(['awq', 'gptq'].includes(st.quantMethod) ? [L.awqDocs, L.awqSource] : []),
+            ...(st.quantMethod === 'gguf' ? [L.gguf] : []),
+            ...(st.kvBytesPerValue < 2 && arch.fp8KvUnverified ? [L.kvUnverified] : []), L.more];
+  };
+  const pageLine = ([text, source]) => `<div>${text.replace(/`([^`]+)`/g, '<code>$1</code>')} (<a href="${source}" target="_blank" style="color:var(--accent-text)">source</a>)</div>`;
+  let shown = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE)) {
+    for (const opt of PAGE_WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2]) {
+      const h = renderHarness();
+      const st = asState(card, boards, { ...DENSE_8B, ...opt, kvBytesPerValue: kv });
+      const c = h.computeInference(st);
+      h.renderCommand(st, c);
+      const panel = h.out['command-output'] || '';
+      const report = h.exportSummary(st, c);
+      const want = c.fits ? expected(card, st) : [];
+      const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}`;
+      for (const line of Object.values(L)) {
+        const on = want.includes(line);
+        assert.strictEqual(panel.includes(pageLine(line)), on, `${where}: the command panel ${on ? 'lacks' : 'shows'} "${line[0].slice(0, 60)}"`);
+      }
+      const section = report.includes('\n## Running on ROCm\n') ? report.split('\n## Running on ROCm\n')[1].split('\n## ')[0] : null;
+      if (want.length) {
+        assert.strictEqual(section, want.map(([t, s]) => `- ${t} (source: ${s})`).join('\n') + '\n', `${where}: the copied report's ROCm section`);
+        shown++;
+      } else assert.strictEqual(section, null, `${where}: a ROCm section where none applies`);
+    }
+  }
+  assert.ok(shown >= 50, `only ${shown} plans showed ROCm lines`);
 });
 
 console.log('\nShared links resolve to the card they named');
@@ -4375,6 +4513,13 @@ const goldenCases = () => {
      asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
     ['h100-80 x1 — 256 at 1K, so the KV queue warning',
      asState(h, 1, { ...dense8B, contextLength: 1024, concurrency: 256 })],
+    // ROCm: vLLM's own image, and the lines that apply to the plan.
+    ['mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines',
+     asState(GPU_TABLE['mi300x-192'], 1, { ...dense8B, bytesPerParam: 0.5, quantMethod: 'awq', hasNVLink: false })],
+    ['mi250x-128 x2 — four GCDs on two boards',
+     asState(GPU_TABLE['mi250x-128'], 2, { ...dense8B, hasNVLink: false })],
+    ['rx7900xtx-24 x1 — an FP8 KV cache on RDNA3, the unverified path, 4 users so it fits',
+     asState(GPU_TABLE['rx7900xtx-24'], 1, { ...dense8B, kvBytesPerValue: 1, concurrency: 4, hasNVLink: false })],
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
      asState(h, 1, { ...dense8B, contextLength: 32768, concurrency: 4,
                      sharedPrefix: 8192, prefixCaching: true })],
@@ -4477,6 +4622,12 @@ test('the golden records every catalog row, and the shapes that change what the 
     'fp8 weights on silicon without them': sts =>
       sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
+    'a ROCm command with AITER on': sts => sts.some(st => st.vendor === 'amd' && st.gfx === 'gfx942'),
+    'a ROCm command on more than one dual-GCD board': sts =>
+      sts.some(st => st.vendor === 'amd' && st.gpuDevices > 1 && st.gpuCount > 1),
+    // Printed only under a command, so only a plan that fits records it.
+    'an FP8 KV cache on RDNA3': sts =>
+      sts.some(st => st.gfx === 'gfx1100' && st.kvBytesPerValue < 2 && computeInference(st).fits),
     'a shared prefix': sts => sts.some(st => st.sharedPrefix > 0),
     'a batch the KV cache cannot hold': sts =>
       sts.some(st => computeInference(st).batchLimitedByKV),

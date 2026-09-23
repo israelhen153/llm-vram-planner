@@ -2270,6 +2270,75 @@ test("the PDF prints the overhead compute() charges, in the words of the card's 
      check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words)
 
 
+def prec_quant_pairs():
+    """Every --prec value from_cli_args() knows, with the quantization it maps to,
+    read from its own table so a precision added there is covered here too."""
+    src = open(gr.__file__).read()
+    table = re.search(r'"quant": \{([^}]*)\}', src)
+    assert table, "from_cli_args() no longer has the --prec -> quant table this reads"
+    pairs = re.findall(r'"(\w+)":"(\w*)"', table.group(1))
+    assert {q for _, q in pairs} >= {"", "fp8", "awq", "gptq", "gguf"}, pairs
+    return pairs
+
+
+def check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need():
+    """The PDF's side of the ROCm contract. On an AMD card, the command is vLLM's
+    own ROCm image at the pinned release, with AITER on exactly where the target
+    has it. Under the command, a "Running on ROCm" block carries exactly the lines
+    that apply, in order, each with its source as an address. Which lines apply is
+    re-derived here from the plan, not taken from generate_report.py. On an NVIDIA
+    card there is none of it. Every catalog card, every --prec value
+    from_cli_args() knows, both KV types, one and two boards."""
+    L = gr.ROCM["lines"]
+    arch_of = {"gfx90a": (False, False), "gfx942": (True, False), "gfx1100": (False, True)}   # (aiter, fp8KvUnverified)
+    shown = 0
+    for slug, card in gr.GPUS.items():
+        for token, quant in prec_quant_pairs():
+            for fp8_kv in (False, True):
+                for ngpu in (1, 2):
+                    args = cli_args_for("llama31-8b")
+                    args.gpu, args.prec, args.fp8_kv, args.ngpu = slug, token, fp8_kv, ngpu
+                    cfg = gr.from_cli_args(args)
+                    c = gr.compute(cfg)
+                    strings = story_strings(cfg)
+                    where = f"{slug} --prec {token} fp8_kv={fp8_kv} x{ngpu}"
+                    if card["vendor"] != "amd" or not c["fits"]:
+                        assert "<b>Running on ROCm</b>" not in strings, f"{where}: a ROCm block where none applies"
+                        if card["vendor"] != "amd":
+                            assert not any("docker run" in s for s in strings), f"{where}: an NVIDIA card got the ROCm command"
+                        continue
+                    aiter, kv_unverified = arch_of[card["gfx"]]
+                    want = [L["image"], L["wheels"], L["hip"], L["hipBoth"]]
+                    want += [L["gcd"]] if card["devices"] > 1 else []
+                    want += [L["aiterOn"], L["aiterDefault"]] if aiter else [L["aiterOff"]]
+                    want += [L["awqDocs"], L["awqSource"]] if quant in ("awq", "gptq") else []
+                    want += [L["gguf"]] if quant == "gguf" else []
+                    want += [L["kvUnverified"]] if fp8_kv and kv_unverified else []
+                    want += [L["more"]]
+                    at = strings.index("<b>Running on ROCm</b>")
+                    got = strings[at + 1: at + 1 + len(want)]
+                    assert got == [text.replace("`", "") + f" (source: {source})" for text, source in want], (
+                        f"{where}: the ROCm block is {got!r}")
+                    after = strings[at + 1 + len(want)] if at + 1 + len(want) < len(strings) else ""
+                    assert "(source: https://github.com/vllm-project" not in after, (
+                        f"{where}: the ROCm block has a line beyond the ones that apply: {after!r}")
+                    # reportlab stores each command line without its leading spaces.
+                    assert "docker run --rm \\" in strings and "vllm/vllm-openai-rocm:v0.30.0 \\" in strings, (
+                        f"{where}: the command is not vLLM's ROCm image")
+                    assert ("--env VLLM_ROCM_USE_AITER=1 \\" in strings) == aiter, (
+                        f"{where}: AITER is not exactly where the target has it")
+                    # The command's own lines; the guidance names CUDA_VISIBLE_DEVICES to say it no longer applies.
+                    start = strings.index("docker run --rm \\")
+                    end = next(i for i in range(start, len(strings)) if "--max-model-len" in strings[i])
+                    assert not any(bad in s for s in strings[start:end + 1] for bad in ("vllm serve", "CUDA_VISIBLE_DEVICES", "rocm/vllm")), (
+                        f"{where}: the ROCm command says vllm serve, CUDA_VISIBLE_DEVICES or rocm/vllm")
+                    shown += 1
+    assert shown >= 50, f"only {shown} AMD plans reached the PDF"
+
+test("an AMD card's PDF runs vLLM's own ROCm image and says what else it needs, each line with its source",
+     check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need)
+
+
 test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
 
@@ -2990,6 +3059,12 @@ def golden_cases():
         ("t4-16 x1 — fp8 weights on silicon that does not, so the caveat",
          cfg(t4, 1, bpp=1, quant="fp8", nvlink=False)),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
+        # ROCm: vLLM's own image, and the lines that apply to the plan.
+        ("mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines",
+         cfg(gr.GPUS["mi300x-192"], 1, bpp=0.5, quant="awq", nvlink=False)),
+        ("mi250x-128 x2 — four GCDs on two boards", cfg(gr.GPUS["mi250x-128"], 2, nvlink=False)),
+        ("rx7900xtx-24 x1 — an FP8 KV cache on RDNA3, the unverified path, 4 users so it fits",
+         cfg(gr.GPUS["rx7900xtx-24"], 1, kv_bpp=1, conc=4, nvlink=False)),
         ("h100-80 x1 — a model imported by id rather than named by a preset",
          cfg(h, 1, hf_model="org/imported-8b", model_name="imported-8b", preset=None)),
         # No catalog row is keyless until the AMD rows land. What the report says
@@ -3115,6 +3190,12 @@ def check_the_golden_records_the_shapes_that_matter():
         "a batch the KV cache cannot hold":
             lambda cs: any(comp(c)["batch_limited"] for c in cs),
         "a model imported by id": lambda cs: any(c.get("hf_model") for c in cs),
+        "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),
+        "a ROCm command on more than one dual-GCD board":
+            lambda cs: any(c["gpu"]["vendor"] == "amd" and c["gpu"]["devices"] > 1 and c["n_gpu"] > 1 for c in cs),
+        # Printed only under a command, so only a plan that fits records it.
+        "an FP8 KV cache on RDNA3": lambda cs: any(c["gpu"].get("gfx") == "gfx1100" and c["kv_bpp"] < 2
+                                                   and comp(c)["fits"] for c in cs),
     }
     gone = [name for name, hits in shapes.items() if not hits(cfgs)]
     assert not gone, "the golden no longer records: " + ", ".join(gone)

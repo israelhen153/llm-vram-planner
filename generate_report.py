@@ -96,11 +96,11 @@ GPUS = {
     "rtxpro-96": {"gb":96,"bw":1792,"hyper":3.36,"spec":2.5,"spot":2.0,"tflops":504,"name":"RTX PRO 6000 96 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"pcie","caps":{"fp8": True},"priceSource":{"spec": {"provider": "coreweave", "sku": "NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory)", "region": "global", "date": "2026-09-22", "price": 2.5}, "hyper": {"provider": "aws", "sku": "g7e.2xlarge", "region": "US East (N. Virginia)", "date": "2026-09-23", "price": 3.36}},"priceNote":{"spot": {"reason": "In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX PRO 6000 hasn't been confirmed against a live query yet.", "checked": "2026-09-23"}}},
     "h200-141": {"gb":141,"bw":4800,"hyper":7.91,"spec":6.31,"spot":2.5,"tflops":990,"name":"H200 141 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p5en.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 7.91}, "spec": {"provider": "coreweave", "sku": "NVIDIA HGX H200", "region": "global", "date": "2026-09-22", "price": 6.31}},"priceNote":{"spot": {"reason": "In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the H200 hasn't been confirmed against a live query yet.", "checked": "2026-09-23"}}},
     "b200-192": {"gb":192,"bw":8000,"hyper":14.24,"spec":6.69,"spot":2.12,"tflops":2250,"name":"B200 192 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p6-b200.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 14.24}, "spec": {"provider": "lambda", "sku": "NVIDIA B200 SXM6 (180 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 6.69}},"priceNote":{"spot": {"reason": "In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the B200 hasn't been confirmed against a live query yet.", "checked": "2026-09-23"}}},
-    "rx7900xtx-24": {"gb":24,"bw":960,"hyper":None,"spec":None,"spot":None,"tflops":123,"name":"RX 7900 XTX 24 GB","vendor":"amd","perfKey":"rdna3","devices":1,"form":"consumer","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card.", "checked": "2026-09-23"}, "spec": {"reason": "No hourly rate anywhere: HOSTKEY rents it only monthly, as a pre-order.", "checked": "2026-09-23"}, "spot": {"reason": "Vast.ai lists no RX 7900 XTX offers.", "checked": "2026-09-23"}}},
-    "mi210-64": {"gb":64,"bw":1638.4,"hyper":None,"spec":None,"spot":None,"tflops":181,"name":"MI210 64 GB","vendor":"amd","perfKey":"cdna2","devices":1,"form":"pcie","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}},"priceLead":{"spec": [{"provider": "Runcrate", "price": 0.82, "url": "https://www.runcrate.ai/pricing/gpu/mi210", "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.", "about": "https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md"}]}},
-    "mi250x-128": {"gb":128,"bw":3276.8,"hyper":None,"spec":None,"spot":None,"tflops":383,"name":"MI250X 128 GB","vendor":"amd","perfKey":"cdna2","devices":2,"form":"oam","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "Cirrascale lists the MI250, not the MI250X, and only monthly. The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}},"priceLead":{"spec": [{"provider": "Runcrate", "price": 1.35, "url": "https://www.runcrate.ai/pricing/gpu/mi250x", "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.", "about": "https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md"}]}},
-    "mi300x-192": {"gb":192,"bw":5325,"hyper":6.0,"spec":2.39,"spot":1.11,"tflops":1307.4,"name":"MI300X 192 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2", "date": "2026-09-23", "price": 6.0}, "spot": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5 (Spot)", "region": "eastus2", "date": "2026-09-23", "price": 1.11}},"priceRecord":{"spec": {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global", "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}}},
-    "mi325x-256": {"gb":256,"bw":6000,"hyper":None,"spec":3.8,"spot":None,"tflops":1307.4,"name":"MI325X 256 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceRecord":{"spec": {"provider": "DigitalOcean", "sku": "AMD Instinct\u2122 MI325X", "region": "global", "date": "2026-09-23", "price": 3.8, "url": "https://www.digitalocean.com/pricing/gpu-droplets"}},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spot": {"reason": "Vultr lists a preemptible plan, but no location offers it; its rate is shown below as a lead.", "checked": "2026-09-23"}},"priceLead":{"spot": [{"provider": "Vultr", "price": 2.0, "url": "https://api.vultr.com/v2/plans-metal", "date": "2026-09-23", "why": "It is the preemptible rate of an 8-GPU bare-metal plan that Vultr's API lists with no location offering it."}]}},
+    "rx7900xtx-24": {"gb":24,"bw":960,"hyper":None,"spec":None,"spot":None,"tflops":123,"name":"RX 7900 XTX 24 GB","vendor":"amd","perfKey":"rdna3","devices":1,"form":"consumer","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card.", "checked": "2026-09-23"}, "spec": {"reason": "No hourly rate anywhere: HOSTKEY rents it only monthly, as a pre-order.", "checked": "2026-09-23"}, "spot": {"reason": "Vast.ai lists no RX 7900 XTX offers.", "checked": "2026-09-23"}},"gfx":"gfx1100"},
+    "mi210-64": {"gb":64,"bw":1638.4,"hyper":None,"spec":None,"spot":None,"tflops":181,"name":"MI210 64 GB","vendor":"amd","perfKey":"cdna2","devices":1,"form":"pcie","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}},"priceLead":{"spec": [{"provider": "Runcrate", "price": 0.82, "url": "https://www.runcrate.ai/pricing/gpu/mi210", "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.", "about": "https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md"}]},"gfx":"gfx90a"},
+    "mi250x-128": {"gb":128,"bw":3276.8,"hyper":None,"spec":None,"spot":None,"tflops":383,"name":"MI250X 128 GB","vendor":"amd","perfKey":"cdna2","devices":2,"form":"oam","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "Cirrascale lists the MI250, not the MI250X, and only monthly. The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}},"priceLead":{"spec": [{"provider": "Runcrate", "price": 1.35, "url": "https://www.runcrate.ai/pricing/gpu/mi250x", "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.", "about": "https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md"}]},"gfx":"gfx90a"},
+    "mi300x-192": {"gb":192,"bw":5325,"hyper":6.0,"spec":2.39,"spot":1.11,"tflops":1307.4,"name":"MI300X 192 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2", "date": "2026-09-23", "price": 6.0}, "spot": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5 (Spot)", "region": "eastus2", "date": "2026-09-23", "price": 1.11}},"priceRecord":{"spec": {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global", "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}},"gfx":"gfx942"},
+    "mi325x-256": {"gb":256,"bw":6000,"hyper":None,"spec":3.8,"spot":None,"tflops":1307.4,"name":"MI325X 256 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceRecord":{"spec": {"provider": "DigitalOcean", "sku": "AMD Instinct\u2122 MI325X", "region": "global", "date": "2026-09-23", "price": 3.8, "url": "https://www.digitalocean.com/pricing/gpu-droplets"}},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spot": {"reason": "Vultr lists a preemptible plan, but no location offers it; its rate is shown below as a lead.", "checked": "2026-09-23"}},"priceLead":{"spot": [{"provider": "Vultr", "price": 2.0, "url": "https://api.vultr.com/v2/plans-metal", "date": "2026-09-23", "why": "It is the preemptible rate of an 8-GPU bare-metal plan that Vultr's API lists with no location offering it."}]},"gfx":"gfx942"},
 }
 # GPU_TABLE:END
 
@@ -730,6 +730,86 @@ def device_count_for(cfg):
     return cfg["n_gpu"] * ((cfg.get("gpu") or {}).get("devices", 1) or 1)
 
 
+# vLLM on AMD, as vLLM v0.30.0 and AMD's own pages state it, read 2026-09-23;
+# docs/research/vllm-rocm.md has every line with its source. Keyed by the catalog's
+# gfx, the card's LLVM target, not by perfKey, which selects throughput constants.
+# index.html carries the same table under the same name, and tests/parity.test.py
+# holds the two equal.
+# Backticks mark code; the PDF prints them as plain text.
+ROCM = {'vllm': 'v0.30.0',
+ 'checked': '2026-09-23',
+ 'image': 'vllm/vllm-openai-rocm:v0.30.0',
+ 'dockerFlags': ['--group-add=video',
+                 '--cap-add=SYS_PTRACE',
+                 '--security-opt seccomp=unconfined',
+                 '--device /dev/kfd',
+                 '--device /dev/dri',
+                 '-v ~/.cache/huggingface:/root/.cache/huggingface',
+                 '--env "HF_TOKEN=$HF_TOKEN"',
+                 '-p 8000:8000',
+                 '--ipc=host'],
+ 'arch': {'gfx90a': {'fp8Weights': False, 'aiter': False, 'fp8KvUnverified': False},
+          'gfx942': {'fp8Weights': True, 'aiter': True, 'fp8KvUnverified': False},
+          'gfx1100': {'fp8Weights': False, 'aiter': False, 'fp8KvUnverified': True}},
+ 'lines': {'image': ["This is vLLM's own ROCm image, pinned to `v0.30.0`, the release these lines were "
+                     "checked against on 2026-09-23. AMD's `rocm/vllm` images are deprecated.",
+                     'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/getting_started/installation/gpu.rocm.inc.md#L353-L394'],
+           'wheels': ["vLLM's ROCm wheels are built for Python 3.12 only, and on any other Python the "
+                      'installer silently falls back to the CUDA wheel, which fails on AMD GPUs. The image '
+                      'avoids that.',
+                      'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/getting_started/installation/gpu.rocm.inc.md#L30-L32'],
+           'hip': ['To choose GPUs, add `--env HIP_VISIBLE_DEVICES=0,1` before the image name, with your own '
+                   'device IDs. Since v0.30.0, vLLM on ROCm no longer falls back to `CUDA_VISIBLE_DEVICES`.',
+                   'https://github.com/vllm-project/vllm/releases/tag/v0.30.0'],
+           'hipBoth': ['If both are set and differ, vLLM stops at startup.',
+                       'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L127-L137'],
+           'gcd': ['Each board of this card is two GPUs to ROCm, one per GCD, so N boards are 2N device IDs.',
+                   'https://instinct.docs.amd.com/projects/system-acceptance/en/latest/gpus/mi250.html'],
+           'aiterOn': ["`VLLM_ROCM_USE_AITER=1` turns on AITER, AMD's kernel library; AMD's vLLM guide says "
+                       'to always set it on Instinct MI300-series GPUs.',
+                       'https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference-optimization/vllm-optimization.html'],
+           'aiterDefault': ['vLLM leaves AITER off unless it is set.',
+                            'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/envs.py#L1231-L1232'],
+           'aiterOff': ["AITER, AMD's kernel library, is enabled only on CDNA3 and newer, so this card runs "
+                        'without it.',
+                        'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/_aiter_ops.py#L138-L160'],
+           'awqDocs': ["vLLM's quantization table marks AWQ and GPTQ as unsupported on AMD GPUs.",
+                       'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/README.md#L69-L70'],
+           'awqSource': ["v0.30.0's ROCm platform accepts both; this tool has not run either.",
+                         'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L503-L527'],
+           'gguf': ["GGUF needs `vllm-gguf-plugin`, which this image doesn't include. The plugin lists ROCm "
+                    'among its prerequisites; this tool has not run it.',
+                    'https://github.com/vllm-project/vllm-gguf-plugin'],
+           'kvUnverified': ["On RDNA, vLLM v0.30.0's custom paged-attention kernel takes only the default KV "
+                            'cache type, so an FP8 cache runs on another kernel path, which this tool has '
+                            'not verified.',
+                            'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L401-L410'],
+           'more': ["Every line here, and what could not be verified, is in the planner's ROCm notes.",
+                    'https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/vllm-rocm.md']}}
+
+
+def rocm_guidance(cfg):
+    """The ROCm lines that apply to a plan, in the order a reader needs them, and
+    none on an NVIDIA card. Mirrors rocmGuidance() in index.html."""
+    gpu = cfg.get("gpu") or {}
+    if gpu.get("vendor") != "amd":
+        return []
+    arch = ROCM["arch"].get(gpu.get("gfx"), {})
+    lines = ROCM["lines"]
+    out = [lines["image"], lines["wheels"], lines["hip"], lines["hipBoth"]]
+    if gpu.get("devices", 1) > 1:
+        out.append(lines["gcd"])
+    out += [lines["aiterOn"], lines["aiterDefault"]] if arch.get("aiter") else [lines["aiterOff"]]
+    if cfg.get("quant") in ("awq", "gptq"):
+        out += [lines["awqDocs"], lines["awqSource"]]
+    if cfg.get("quant") == "gguf":
+        out.append(lines["gguf"])
+    if cfg.get("kv_bpp", 2) < 2 and arch.get("fp8KvUnverified"):
+        out.append(lines["kvUnverified"])
+    out.append(lines["more"])
+    return out
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
@@ -738,12 +818,27 @@ def build_vllm_cmd(cfg, comp):
     # and this command is meant to be copied straight into a terminal.
     # shlex.quote() is a no-op on an ordinary value and neutralizes anything
     # that isn't one, instead of executing it.
-    hf = shlex.quote(cfg.get("hf_model", "/opt/models/YourModel"))
+    model = cfg.get("hf_model", "/opt/models/YourModel")
+    hf = shlex.quote(model)
     # The split compute() sharded against, not a second derivation of it: the
     # figures above this command and the command itself are now the same number
     # by construction rather than by two call sites agreeing.
     tp, dp = comp["tp"], comp["dp"]
-    parts = [f"vllm serve {hf} \\"]
+    # On AMD, vLLM's own ROCm image with the flags its docs give, then the same
+    # arguments `vllm serve` takes, since the image's entrypoint is `vllm serve`.
+    # AITER goes on where AMD says to set it, and a local model path is mounted at
+    # the same path. Mirrors buildVllmCommand() in index.html.
+    gpu = cfg.get("gpu") or {}
+    arch = ROCM["arch"].get(gpu.get("gfx"), {}) if gpu.get("vendor") == "amd" else None
+    if arch is not None:
+        parts = ["docker run --rm \\"] + [f"    {flag} \\" for flag in ROCM["dockerFlags"]]
+        if arch.get("aiter"):
+            parts.append("    --env VLLM_ROCM_USE_AITER=1 \\")
+        if str(model or "").startswith("/"):
+            parts.append(f"    -v {hf}:{hf} \\")
+        parts += [f"    {ROCM['image']} \\", f"    {hf} \\"]
+    else:
+        parts = [f"vllm serve {hf} \\"]
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     # More than one device, which is what the board count used to mean on every
     # single-device card — so the command is unchanged for every catalogued row.
@@ -1181,6 +1276,14 @@ class ReportCard:
         cmd = build_vllm_cmd(cfg, c)
         for line in cmd.split("\n"):
             story.append(Paragraph(line, self.styles["CmdCode"]))
+        # What else running this on ROCm needs, each line with its source as an
+        # address: a PDF is forwarded without the page.
+        rocm = rocm_guidance(cfg) if c["fits"] else []
+        if rocm:
+            story.append(Spacer(1, 1.5*mm))
+            story.append(Paragraph("<b>Running on ROCm</b>", self.styles["Small"]))
+            for text, source in rocm:
+                story.append(Paragraph(text.replace("`", "") + f" (source: {source})", self.styles["Small"]))
         story.append(Spacer(1, 3*mm))
 
         # ---- Notes ----

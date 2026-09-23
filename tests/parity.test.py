@@ -33,14 +33,14 @@ tree = ast.parse(src)
 # Every module-level name compute() closes over must be listed here, and must be
 # a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
 # gets skipped, and surfaces as a bare NameError from inside compute() much later.
-wanted = {"GIB", "GPUS", "PERF"}
+wanted = {"GIB", "GPUS", "PERF", "ROCM"}
 # build_vllm_cmd/split_parallelism/device_count_for don't close over any of the
 # above (they take cfg/comp as plain dicts and gpu_count as a plain int), so
 # wanted stays as-is — they just need to ride along in the same exec(), because
 # compute() now calls split_parallelism(device_count_for(cfg)) for the TP/DP
 # split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
-              "device_count_for", "interconnect_name"}
+              "device_count_for", "interconnect_name", "rocm_guidance"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -57,6 +57,7 @@ compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
 supports_nvlink = ns["supports_nvlink"]
 interconnect_name = ns["interconnect_name"]
 build_vllm_cmd = ns["build_vllm_cmd"]
+ROCM, rocm_guidance = ns["ROCM"], ns["rocm_guidance"]
 # build_vllm_cmd() reads the split off comp rather than deriving it, so the
 # command matrix at the bottom has to derive one to hand it — with this engine's
 # own function, so what that section compares is still two derivations.
@@ -811,7 +812,7 @@ else:
         # disagreeing about a provider name or a date.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
                   "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource",
-                  "priceRecord", "priceNote", "priceLead"):
+                  "priceRecord", "priceNote", "priceLead", "gfx"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:
@@ -1027,7 +1028,7 @@ else:
 # which meant only 4 of the 8 (quant, prefix_caching) pairs ever occurred.
 GPU_COUNTS = [1, 2, 3, 6, 8, 12, 16, 17, 64, 100, 128, 256]
 PREFIX_CACHING_VALUES = [True, False]
-QUANT_VALUES = [None, "awq", "gptq", "gguf"]
+QUANT_VALUES = [None, "awq", "gptq", "gguf", "fp8"]
 IS_MOE_VALUES = [False, True]
 KV_BPP_VALUES = [2, 1]  # BF16 vs FP8 KV cache -> --kv-cache-dtype fp8
 MAX_CTX_1 = 8192
@@ -1105,6 +1106,22 @@ EXTRA_CASES = [
 ]
 MATRIX.extend(EXTRA_CASES)
 
+# AMD: vLLM's ROCm image in place of `vllm serve`, with AITER where the target has it
+# and a mount for a local path. Every AMD row in the catalog, so a target added
+# tomorrow is compared the day it lands, at one board and three, with the
+# precisions and both KV types, and a local path and a hub id.
+for slug, row in GPUS.items():
+    if row["vendor"] != "amd":
+        continue
+    for n in (1, 3):
+        for q in (None, "awq", "gguf", "fp8"):
+            for kv in (2, 1):
+                for hf in ("/opt/models/YourModel", "meta-llama/Llama-3.1-8B-Instruct"):
+                    MATRIX.append({"n_gpu": n, "prefix_caching": True, "fits": True, "quant": q,
+                                   "is_moe": False, "kv_bpp": kv, "ctx": 16384, "hf_model": hf,
+                                   "devices": row["devices"], "vendor": "amd", "gfx": row["gfx"],
+                                   "skip_reason": None})
+
 for unsafe in UNSAFE_HF_MODELS:
     MATRIX.append({
         "n_gpu": 1, "prefix_caching": True, "fits": True, "quant": None,
@@ -1127,7 +1144,7 @@ def py_comp(m):
 py_cmds = [
     build_vllm_cmd(
         {"hf_model": m["hf_model"], "ctx": m["ctx"], "n_gpu": m["n_gpu"],
-         "gpu": {"devices": m.get("devices", 1)},
+         "gpu": {"devices": m.get("devices", 1), "vendor": m.get("vendor", "nvidia"), "gfx": m.get("gfx")},
          "quant": m["quant"], "prefix_caching": m["prefix_caching"],
          "kv_bpp": m["kv_bpp"]},
         py_comp(m),
@@ -1144,14 +1161,16 @@ function extract(sig) {
   const e = html.indexOf('\n}\n', s);
   return html.slice(s, e + 2);
 }
-const src = extract('function splitParallelism(gpuCount) {')
+const rocm = html.match(/^const ROCM = \{[\s\S]*?\n\};$/m);
+if (!rocm) throw new Error('ROCM not found in index.html');
+const src = rocm[0] + '\n' + extract('function splitParallelism(gpuCount) {')
           + extract('function parallelismFor(state) {')
           + extract('function buildVllmCommand(state, computed, modelPath) {');
 const api = new Function(`${src}; return {buildVllmCommand, parallelismFor};`)();
 const scenarios = JSON.parse(process.argv[2]);
 const MAX_CTX_1 = 8192; // must match Python's MAX_CTX_1 above
 console.log(JSON.stringify(scenarios.map((m) => {
-  const state = {gpuCount: m.n_gpu, gpuDevices: m.devices || 1,
+  const state = {gpuCount: m.n_gpu, gpuDevices: m.devices || 1, vendor: m.vendor || 'nvidia', gfx: m.gfx,
    quantMethod: m.quant || '', kvBytesPerValue: m.kv_bpp,
    prefixCaching: m.prefix_caching, contextLength: m.ctx};
   // The split this engine derives, standing in for the one computeInference()
@@ -1172,7 +1191,8 @@ if proc.returncode:
 else:
     js_cmds = json.loads(proc.stdout)
     for m, py_cmd, js_cmd in zip(MATRIX, py_cmds, js_cmds):
-        label = (f"n_gpu={m['n_gpu']} prefix_caching={m['prefix_caching']} fits={m['fits']} "
+        label = (f"{m.get('vendor', 'nvidia')}{('/' + m['gfx']) if m.get('gfx') else ''} "
+                 f"n_gpu={m['n_gpu']} prefix_caching={m['prefix_caching']} fits={m['fits']} "
                  f"quant={m['quant']!r} is_moe={m['is_moe']} kv_bpp={m['kv_bpp']} ctx={m['ctx']} "
                  f"hf_model={m['hf_model']!r}")
         if m["skip_reason"]:
@@ -1189,6 +1209,41 @@ else:
         else:
             print(f"  ok   emitted vllm command matches ({label})")
             passed += 1
+
+# The ROCm table is maintained twice, like the GPU tables: index.html's ROCM drives
+# the page's command and lines, generate_report.py's the PDF's. And which lines
+# apply is decided twice, by rocmGuidance() and rocm_guidance(), over every AMD
+# row, every precision, both KV types and one board and three.
+js_rocm = json.loads(subprocess.run(
+    ["node", "-e", """
+const h=require('fs').readFileSync(process.argv[1],'utf8');
+const m=h.match(/^const ROCM = \\{[\\s\\S]*?\\n\\};$/m);
+const f=h.match(/^function rocmGuidance\\(state\\) \\{[\\s\\S]*?\\n\\}$/m);
+if(!m||!f) throw new Error('ROCM or rocmGuidance() not found in index.html');
+const api=new Function(`${m[0]}\\n${f[0]}; return {ROCM, rocmGuidance};`)();
+const plans=JSON.parse(process.argv[2]);
+console.log(JSON.stringify({table: api.ROCM, lines: plans.map(p => api.rocmGuidance(p))}));""",
+     os.path.join(ROOT, "index.html"),
+     json.dumps([{"vendor": row["vendor"], "gfx": row.get("gfx"), "gpuDevices": row["devices"] * n,
+                  "quantMethod": q or "", "kvBytesPerValue": kv}
+                 for row in GPUS.values() for n in (1, 3) for q in (None, "awq", "gptq", "gguf", "fp8") for kv in (2, 1)])],
+    capture_output=True, text=True, check=True).stdout)
+if js_rocm["table"] == ROCM:
+    print("  ok   both engines carry the same ROCm table")
+    passed += 1
+else:
+    print("  FAIL the ROCm table differs between the engines")
+    failed += 1
+py_lines = [rocm_guidance({"gpu": {"vendor": row["vendor"], "gfx": row.get("gfx"), "devices": row["devices"] * n},
+                           "quant": q, "kv_bpp": kv})
+            for row in GPUS.values() for n in (1, 3) for q in (None, "awq", "gptq", "gguf", "fp8") for kv in (2, 1)]
+bad = [i for i, (a, b) in enumerate(zip(js_rocm["lines"], py_lines)) if a != [list(x) for x in b]]
+if not bad and len(py_lines) == len(js_rocm["lines"]) and any(py_lines):
+    print(f"  ok   both engines choose the same ROCm lines for {len(py_lines)} plans")
+    passed += 1
+else:
+    print(f"  FAIL the engines choose different ROCm lines for {len(bad)} of {len(py_lines)} plans")
+    failed += 1
 
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
