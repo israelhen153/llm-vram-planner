@@ -1958,6 +1958,9 @@ test("price_source_label formats provider, SKU, region and date — a fixed expe
 # On a card with a null tier, the one sentence that explains the table's wording for it.
 NULL_TIER_SENTENCE = ("\"No confirmed hourly price\" marks a tier for which no provider's own page "
                       "prices this card by the hour.")
+# On a card with a lead, the one sentence that says what a lead is.
+LEAD_SENTENCE = ("A lead is an hourly price found but not confirmed: it is shown with why, and no figure in "
+                 "this report uses it.")
 NOTES_PRICE_SENTENCE = (
     "GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
     "specialized, spot/marketplace — see each tier's own source above, or "
@@ -2051,7 +2054,7 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         outside = "\n".join(s for s in whole_blob.split("\n") if not s.startswith("Source — "))
         for sentence in re.split(r"(?<=\.)\s+", outside):
             if re.search(r"\bprices?\b", sentence, re.I) and "$" not in sentence:
-                assert sentence.strip().lstrip("\u2022 ").startswith((NOTES_PRICE_SENTENCE, NULL_TIER_SENTENCE)), (
+                assert sentence.strip().lstrip("\u2022 ").startswith((NOTES_PRICE_SENTENCE, NULL_TIER_SENTENCE, LEAD_SENTENCE)), (
                     f"{label}: the PDF says something about price outside the cost table that is "
                     f"not the one sentence it may say — {sentence.strip()[:200]!r}")
         assert "per-board/hr estimates" not in whole_blob, (
@@ -2189,6 +2192,43 @@ def check_every_noted_tier_says_why_in_the_pdf():
 
 test("every tier the catalog notes says why in the PDF, verbatim, under the Source line, and nowhere else",
      check_every_noted_tier_says_why_in_the_pdf)
+
+
+def lead_line(name, lead):
+    """A lead as the PDF prints it, written out here as the contract."""
+    return (f"{name} — Lead, not used: {lead['provider']} lists ${lead['price']:.2f}/hr (read {lead['date']}, "
+            f"{lead['url']}). {lead['why']}" + (f" About {lead['provider']}: {lead['about']}" if lead.get("about") else ""))
+
+
+def check_a_lead_changes_no_figure_in_the_pdf():
+    """The owner's rule for Runcrate, and for every lead since: shown, never used as
+    a price. Take a lead out of the catalog and compute() returns exactly what it
+    did, and the PDF loses the lead's own lines and its sentence in the notes, and
+    nothing else. Every catalog row that carries a lead, at one board and three."""
+    names = {"hyper": "Hyperscaler", "spec": "Specialized", "spot": "Spot"}
+    rows = [(slug, card) for slug, card in gr.GPUS.items() if card.get("priceLead")]
+    assert len(rows) >= 3, f"only {len(rows)} catalog rows carry a lead — this checks too little"
+    for slug, card in rows:
+        bare = {k: v for k, v in card.items() if k != "priceLead"}
+        for boards in (1, 3):
+            cfg_lead, with_lead = report_strings(card, boards, bpp=2)
+            cfg_bare, without = report_strings(bare, boards, bpp=2)
+            assert gr.compute(cfg_lead) == gr.compute(cfg_bare), f"{slug} x{boards}: a lead changed what compute() returns"
+            lines = [lead_line(names[tier], lead) for tier, leads in card["priceLead"].items() for lead in leads]
+            for line in lines:
+                assert with_lead.count(line) == 1, f"{slug} x{boards}: the lead line appears {with_lead.count(line)} times"
+            rest = [s for s in with_lead if s not in lines]
+            rest = [s.replace(LEAD_SENTENCE, "").rstrip() if LEAD_SENTENCE in s else s for s in rest]
+            rest = [s for s in rest if s.strip("\u2022 ")]
+            assert rest == [s for s in without if s.strip("\u2022 ")], (
+                f"{slug} x{boards}: with its lead taken out of the text, the PDF still differs from the catalog without it")
+            for tier, leads in card["priceLead"].items():
+                for lead in leads:
+                    figure = f"${lead['price']:.2f}"
+                    assert not any(figure in s for s in rest), f"{slug} x{boards}: the lead's figure appears outside the lead"
+
+test("a lead changes no figure in the PDF: every row with one reports identically without it, but for the lead",
+     check_a_lead_changes_no_figure_in_the_pdf)
 
 
 test("the PDF cost table's tier names carry no provider parenthetical",

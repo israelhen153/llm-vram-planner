@@ -1571,5 +1571,124 @@ test("every real tier carries exactly one of priceSource, priceRecord and priceN
      check_every_real_tier_says_how_its_figure_was_reached)
 
 
+PRICE_LEAD_FIELDS = {"provider", "price", "url", "date", "why"}
+PRICE_LEAD_OPTIONAL = {"about"}
+
+
+def price_lead_problems(rows, today):
+    """Every rule a lead must satisfy. A lead is an hourly price someone lists for a
+    tier that has no confirmed price, and that could not be confirmed: shown, with
+    why and where, and used in no figure. Only on a null tier, because a priced
+    tier's answer is its price. It carries the page it was read on (https, the
+    page itself, not a site's front page), the day it was read, and why it could
+    not be confirmed. The why is a sentence with no dollar figure; the lead's own
+    price is its price field, printed once."""
+    import datetime as _dt
+    bad = []
+    for slug, row in rows.items():
+        for tier, leads in (row.get("priceLead") or {}).items():
+            where = f"{slug}/{tier}"
+            if tier not in ("hyper", "spec", "spot"):
+                bad.append(f"{where}: not a price tier")
+                continue
+            if row.get(tier) is not None:
+                bad.append(f"{where}: the tier has a price — a lead goes only where there is none")
+            if not isinstance(leads, list) or not leads:
+                bad.append(f"{where}: must be a non-empty list of leads")
+                continue
+            for i, lead in enumerate(leads):
+                at = f"{where}[{i}]"
+                if not isinstance(lead, dict) or not (PRICE_LEAD_FIELDS <= set(lead) <= PRICE_LEAD_FIELDS | PRICE_LEAD_OPTIONAL):
+                    bad.append(f"{at}: fields {sorted(lead) if isinstance(lead, dict) else lead!r}, expected "
+                               f"{sorted(PRICE_LEAD_FIELDS)} and optionally {sorted(PRICE_LEAD_OPTIONAL)}")
+                    continue
+                if not isinstance(lead["provider"], str) or not lead["provider"].strip():
+                    bad.append(f"{at}.provider: {lead['provider']!r} — must be a non-empty name")
+                if not isinstance(lead["price"], (int, float)) or isinstance(lead["price"], bool) or lead["price"] <= 0:
+                    bad.append(f"{at}.price: {lead['price']!r} — must be a positive number")
+                for field in ("url", "about"):
+                    if field not in lead:
+                        continue
+                    url = lead[field]
+                    if not isinstance(url, str) or not url.startswith("https://"):
+                        bad.append(f"{at}.{field}: {url!r} — must be a page, over https")
+                    elif urllib.parse.urlparse(url).path in ("", "/"):
+                        bad.append(f"{at}.{field}: {url!r} names a site, not the page")
+                try:
+                    read = _dt.datetime.strptime(str(lead["date"]), "%Y-%m-%d").date()
+                    if read > today:
+                        bad.append(f"{at}.date: {lead['date']} is after today ({today})")
+                except ValueError:
+                    bad.append(f"{at}.date: {lead['date']!r} is not YYYY-MM-DD")
+                why = lead["why"]
+                if not isinstance(why, str) or not why.strip():
+                    bad.append(f"{at}.why: {why!r} — must say why the lead is not used")
+                else:
+                    if "$" in why:
+                        bad.append(f"{at}.why: carries a dollar figure — the lead's price is its price field")
+                    if not why.rstrip().endswith("."):
+                        bad.append(f"{at}.why: must end as a sentence ends")
+                    if NOTE_LEAK_WORDS.search(why):
+                        bad.append(f"{at}.why: uses {NOTE_LEAK_WORDS.search(why).group(0)!r}, a word the leak checks read as an escaped value")
+    return bad
+
+
+def check_every_price_lead_rule_is_exercised():
+    """Each rule, broken on its own by one fixture, must be the one reported, and a
+    valid lead reports nothing."""
+    import datetime as _dt
+    today = _dt.date(2026, 9, 23)
+    good = {"provider": "Runcrate", "price": 0.82, "url": "https://www.runcrate.ai/pricing/gpu/mi210",
+            "date": "2026-09-23", "why": "Its own pricing page lists no AMD GPU.",
+            "about": "https://github.com/x/y/blob/HEAD/docs/research/runcrate-due-diligence.md"}
+
+    def rows_with(lead=good, tier="spec", **row):
+        base = {"hyper": None, "spec": None, "spot": 1.0, "priceLead": {tier: [lead]}}
+        base.update(row)
+        return {"x": base}
+
+    assert price_lead_problems(rows_with(), today) == [], f"a valid lead was refused: {price_lead_problems(rows_with(), today)}"
+    no_about = {k: v for k, v in good.items() if k != "about"}
+    assert price_lead_problems(rows_with(no_about), today) == [], "a lead without an about link was refused"
+    breaks = {
+        "a priced tier": (rows_with(tier="spot"), "the tier has a price"),
+        "not a list": (rows_with(priceLead={"spec": good}), "non-empty list"),
+        "an empty list": (rows_with(priceLead={"spec": []}), "non-empty list"),
+        "a missing field": (rows_with({k: v for k, v in good.items() if k != "url"}), "expected"),
+        "an extra field": (rows_with(dict(good, region="global")), "expected"),
+        "a blank provider": (rows_with(dict(good, provider=" ")), ".provider:"),
+        "a zero price": (rows_with(dict(good, price=0)), "positive number"),
+        "a string price": (rows_with(dict(good, price="0.82")), "positive number"),
+        "a plain-http url": (rows_with(dict(good, url="http://www.runcrate.ai/pricing/gpu/mi210")), "over https"),
+        "a front-page url": (rows_with(dict(good, url="https://www.runcrate.ai/")), "names a site"),
+        "a front-page about": (rows_with(dict(good, about="https://github.com/")), "names a site"),
+        "a date after today": (rows_with(dict(good, date="2026-09-24")), "after today"),
+        "a malformed date": (rows_with(dict(good, date="23/09/2026")), "not YYYY-MM-DD"),
+        "a blank why": (rows_with(dict(good, why="")), "why the lead is not used"),
+        "a figure in the why": (rows_with(dict(good, why="It says $0.82 only.")), "dollar figure"),
+        "no closing period": (rows_with(dict(good, why="Unconfirmed")), "sentence ends"),
+        "a leak word": (rows_with(dict(good, why="There is none elsewhere.")), "leak checks"),
+        "a lead on no tier": (rows_with(priceLead={"total": [good]}), "not a price tier"),
+    }
+    for what, (rows, words) in breaks.items():
+        found = price_lead_problems(rows, today)
+        assert any(words in f for f in found), f"{what} was not reported by its own rule: {found}"
+
+test("every priceLead rule is reached by a fixture that breaks it, and a valid lead passes",
+     check_every_price_lead_rule_is_exercised)
+
+
+def check_every_real_price_lead_follows_the_rules():
+    import datetime as _dt
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad = price_lead_problems(rows, _dt.datetime.now(_dt.timezone.utc).date())
+    assert not bad, "priceLead breaks a rule:\n       " + "\n       ".join(bad)
+    held = sum(len(ls) for r in rows.values() for ls in (r.get("priceLead") or {}).values())
+    assert held >= 3, f"only {held} real lead(s) — the rules above checked almost nothing"
+
+test("every real priceLead follows the rules", check_every_real_price_lead_follows_the_rules)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

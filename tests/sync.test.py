@@ -377,6 +377,26 @@ test("priceNote is optional and round-trips through both languages, prose intact
      check_a_price_note_round_trips_through_both_languages)
 
 
+def check_a_price_lead_round_trips_through_both_languages():
+    """priceLead is optional too, and is the only field that holds a list of
+    objects: written only where a row carries it, intact in both generated blocks."""
+    lead = {"provider": "Runcrate", "price": 0.82, "url": "https://www.runcrate.ai/pricing/gpu/mi210",
+            "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU.",
+            "about": "https://github.com/x/y/blob/HEAD/docs/research/runcrate-due-diligence.md"}
+    rows = {"probe-lead": dict(NULL_TIER_ROW, priceLead={"hyper": [lead, dict(lead, provider="Other", price=1.5)]}),
+            "probe-plain": dict(NULL_TIER_ROW)}
+    assert js_eval(sync_data.render_gpu_js(rows), "GPU_TABLE") == rows, "the JS block did not round-trip"
+    block = sync_data.render_gpu_py(rows)
+    ns = {}
+    exec("\n".join(l for l in block.splitlines() if not l.startswith("#")), ns)
+    assert ns["GPUS"] == rows, "the Python block did not round-trip"
+    assert "priceLead" not in sync_data.render_gpu_js({"probe-plain": NULL_TIER_ROW}), "a row without priceLead was given one"
+
+
+test("priceLead is optional and round-trips through both languages, a list of leads intact",
+     check_a_price_lead_round_trips_through_both_languages)
+
+
 def check_marker_text_in_a_value_is_refused():
     """A note discussing this tool by name is ordinary contributor prose.
 

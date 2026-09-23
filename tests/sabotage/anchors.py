@@ -166,7 +166,7 @@ PY_TIER_HYPERSCALER = "            [\"Hyperscaler\",\n"
 PY_SOURCE_HYPER_LINE = "            f\"Source — Hyperscaler: {price_source_label(gpu, 'hyper')}. \"\n"
 PY_NOTES_COMPOSITE_OPEN = ("        notes.append(\"GPU prices are mid-2026 per-board/hr figures "
                            "across 3 tiers: hyperscaler, \"\n")
-SYNC_OPTIONAL = "GPU_OPTIONAL = (\"default\", \"priceSource\", \"priceRecord\", \"priceNote\")\n"
+SYNC_OPTIONAL = "GPU_OPTIONAL = (\"default\", \"priceSource\", \"priceRecord\", \"priceNote\", \"priceLead\")\n"
 PRICE_CROSS_CHECK_THRESHOLD = "CROSS_CHECK_FLAG_THRESHOLD = 0.20\n"
 PRICE_APPLY_LOOP = "    new_text = raw_text\n    for slug, row in gpus_data.items():\n"
 PRICE_FIELD_LINE = "            \"price\": round(oc.reading.price_per_gpu, 2),\n"

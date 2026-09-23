@@ -97,10 +97,10 @@ GPUS = {
     "h200-141": {"gb":141,"bw":4800,"hyper":7.91,"spec":6.31,"spot":2.5,"tflops":990,"name":"H200 141 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p5en.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 7.91}, "spec": {"provider": "coreweave", "sku": "NVIDIA HGX H200", "region": "global", "date": "2026-09-22", "price": 6.31}},"priceNote":{"spot": {"reason": "In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the H200 hasn't been confirmed against a live query yet.", "checked": "2026-09-23"}}},
     "b200-192": {"gb":192,"bw":8000,"hyper":14.24,"spec":6.69,"spot":2.12,"tflops":2250,"name":"B200 192 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p6-b200.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 14.24}, "spec": {"provider": "lambda", "sku": "NVIDIA B200 SXM6 (180 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 6.69}},"priceNote":{"spot": {"reason": "In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the B200 hasn't been confirmed against a live query yet.", "checked": "2026-09-23"}}},
     "rx7900xtx-24": {"gb":24,"bw":960,"hyper":None,"spec":None,"spot":None,"tflops":123,"name":"RX 7900 XTX 24 GB","vendor":"amd","perfKey":"rdna3","devices":1,"form":"consumer","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card.", "checked": "2026-09-23"}, "spec": {"reason": "No hourly rate anywhere: HOSTKEY rents it only monthly, as a pre-order.", "checked": "2026-09-23"}, "spot": {"reason": "Vast.ai lists no RX 7900 XTX offers.", "checked": "2026-09-23"}}},
-    "mi210-64": {"gb":64,"bw":1638.4,"hyper":None,"spec":None,"spot":None,"tflops":181,"name":"MI210 64 GB","vendor":"amd","perfKey":"cdna2","devices":1,"form":"pcie","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "Runcrate's MI210 page advertises an hourly rate, but Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}}},
-    "mi250x-128": {"gb":128,"bw":3276.8,"hyper":None,"spec":None,"spot":None,"tflops":383,"name":"MI250X 128 GB","vendor":"amd","perfKey":"cdna2","devices":2,"form":"oam","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "Cirrascale lists the MI250, not the MI250X, and only monthly. Runcrate's MI250X page advertises an hourly rate, but Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}}},
+    "mi210-64": {"gb":64,"bw":1638.4,"hyper":None,"spec":None,"spot":None,"tflops":181,"name":"MI210 64 GB","vendor":"amd","perfKey":"cdna2","devices":1,"form":"pcie","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}},"priceLead":{"spec": [{"provider": "Runcrate", "price": 0.82, "url": "https://www.runcrate.ai/pricing/gpu/mi210", "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.", "about": "https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md"}]}},
+    "mi250x-128": {"gb":128,"bw":3276.8,"hyper":None,"spec":None,"spot":None,"tflops":383,"name":"MI250X 128 GB","vendor":"amd","perfKey":"cdna2","devices":2,"form":"oam","caps":{"fp8": False},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spec": {"reason": "Cirrascale lists the MI250, not the MI250X, and only monthly. The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.", "checked": "2026-09-23"}, "spot": {"reason": "No spot or marketplace offer found.", "checked": "2026-09-23"}},"priceLead":{"spec": [{"provider": "Runcrate", "price": 1.35, "url": "https://www.runcrate.ai/pricing/gpu/mi250x", "date": "2026-09-23", "why": "Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.", "about": "https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md"}]}},
     "mi300x-192": {"gb":192,"bw":5325,"hyper":6.0,"spec":2.39,"spot":1.11,"tflops":1307.4,"name":"MI300X 192 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2", "date": "2026-09-23", "price": 6.0}, "spot": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5 (Spot)", "region": "eastus2", "date": "2026-09-23", "price": 1.11}},"priceRecord":{"spec": {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global", "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}}},
-    "mi325x-256": {"gb":256,"bw":6000,"hyper":None,"spec":3.8,"spot":None,"tflops":1307.4,"name":"MI325X 256 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceRecord":{"spec": {"provider": "DigitalOcean", "sku": "AMD Instinct\u2122 MI325X", "region": "global", "date": "2026-09-23", "price": 3.8, "url": "https://www.digitalocean.com/pricing/gpu-droplets"}},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spot": {"reason": "Vultr lists a preemptible plan, but no location offers it.", "checked": "2026-09-23"}}},
+    "mi325x-256": {"gb":256,"bw":6000,"hyper":None,"spec":3.8,"spot":None,"tflops":1307.4,"name":"MI325X 256 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceRecord":{"spec": {"provider": "DigitalOcean", "sku": "AMD Instinct\u2122 MI325X", "region": "global", "date": "2026-09-23", "price": 3.8, "url": "https://www.digitalocean.com/pricing/gpu-droplets"}},"priceNote":{"hyper": {"reason": "No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud.", "checked": "2026-09-23"}, "spot": {"reason": "Vultr lists a preemptible plan, but no location offers it; its rate is shown below as a lead.", "checked": "2026-09-23"}},"priceLead":{"spot": [{"provider": "Vultr", "price": 2.0, "url": "https://api.vultr.com/v2/plans-metal", "date": "2026-09-23", "why": "It is the preemptible rate of an 8-GPU bare-metal plan that Vultr's API lists with no location offering it."}]}},
 }
 # GPU_TABLE:END
 
@@ -195,6 +195,23 @@ def price_note_text(gpu, tier):
         return ""
     note = (gpu.get("priceNote") or {}).get(tier)
     return f"{note['reason']} Checked {note['checked']}." if note else ""
+
+
+def price_leads(gpu, tier):
+    """Prices someone lists for a tier with no confirmed price, and that could not
+    be confirmed: shown with why and where, and used in no figure. Only on a null
+    tier. Mirrors priceLeads() in index.html."""
+    if gpu.get(tier) is not None:
+        return []
+    return (gpu.get("priceLead") or {}).get(tier) or []
+
+
+def price_lead_text(lead):
+    """One lead as a sentence, with its page and, where the catalog has one, what
+    is known about the provider. Mirrors priceLeadText() in index.html."""
+    return (f"Lead, not used: {lead['provider']} lists ${lead['price']:.2f}/hr (read {lead['date']}, "
+            f"{lead['url']}). {lead['why']}"
+            + (f" About {lead['provider']}: {lead['about']}" if lead.get("about") else ""))
 
 
 def nvlink_for(gpu, requested):
@@ -1146,6 +1163,10 @@ class ReportCard:
                if price_note_text(gpu, tier)]
         if why:
             story.append(Paragraph("Why — " + " ".join(why), self.styles["Small"]))
+        # And any price found for a tier with none, shown as what it is, with its page.
+        for name, tier in (("Hyperscaler", "hyper"), ("Specialized", "spec"), ("Spot", "spot")):
+            for lead in price_leads(gpu, tier):
+                story.append(Paragraph(f"{name} — {price_lead_text(lead)}", self.styles["Small"]))
         story.append(Spacer(1, 3*mm))
 
         # ---- vLLM Command ----
@@ -1226,6 +1247,9 @@ class ReportCard:
         if any(gpu.get(t) is None for t in ("hyper", "spec", "spot")):
             notes.append("\"No confirmed hourly price\" marks a tier for which no provider's own page "
                          "prices this card by the hour.")
+        if any(price_leads(gpu, t) for t in ("hyper", "spec", "spot")):
+            notes.append("A lead is an hourly price found but not confirmed: it is shown with why, and no "
+                         "figure in this report uses it.")
         notes.append("GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
                      "specialized, spot/marketplace — see each tier's own source above, or "
                      "\"not recorded\" where it has no confirmed source. Reserved instances "

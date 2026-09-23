@@ -543,10 +543,10 @@ const GPU_TABLE = {
   'h200-141': { gb:141, bw:4800, hyper:7.91, spec:6.31, spot:2.5, tflops:990, name:'H200 141 GB', vendor:'nvidia', perfKey:'nvidia', devices:1, form:'sxm', caps:{ fp8: true }, priceSource:{ hyper: { provider: 'aws', sku: 'p5en.48xlarge', region: 'US East (N. Virginia)', date: '2026-09-22', price: 7.91 }, spec: { provider: 'coreweave', sku: 'NVIDIA HGX H200', region: 'global', date: '2026-09-22', price: 6.31 } }, priceNote:{ spot: { reason: 'In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the H200 hasn\'t been confirmed against a live query yet.', checked: '2026-09-23' } } },
   'b200-192': { gb:192, bw:8000, hyper:14.24, spec:6.69, spot:2.12, tflops:2250, name:'B200 192 GB', vendor:'nvidia', perfKey:'nvidia', devices:1, form:'sxm', caps:{ fp8: true }, priceSource:{ hyper: { provider: 'aws', sku: 'p6-b200.48xlarge', region: 'US East (N. Virginia)', date: '2026-09-22', price: 14.24 }, spec: { provider: 'lambda', sku: 'NVIDIA B200 SXM6 (180 GB, 208 vCPU tier)', region: 'global', date: '2026-09-22', price: 6.69 } }, priceNote:{ spot: { reason: 'In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the B200 hasn\'t been confirmed against a live query yet.', checked: '2026-09-23' } } },
   'rx7900xtx-24': { gb:24, bw:960, hyper:null, spec:null, spot:null, tflops:123, name:'RX 7900 XTX 24 GB', vendor:'amd', perfKey:'rdna3', devices:1, form:'consumer', caps:{ fp8: false }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card.', checked: '2026-09-23' }, spec: { reason: 'No hourly rate anywhere: HOSTKEY rents it only monthly, as a pre-order.', checked: '2026-09-23' }, spot: { reason: 'Vast.ai lists no RX 7900 XTX offers.', checked: '2026-09-23' } } },
-  'mi210-64': { gb:64, bw:1638.4, hyper:null, spec:null, spot:null, tflops:181, name:'MI210 64 GB', vendor:'amd', perfKey:'cdna2', devices:1, form:'pcie', caps:{ fp8: false }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card: it is missing from the Azure API, Oracle\'s price list, AWS and Google Cloud.', checked: '2026-09-23' }, spec: { reason: 'Runcrate\'s MI210 page advertises an hourly rate, but Runcrate\'s own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed.', checked: '2026-09-23' }, spot: { reason: 'No spot or marketplace offer found.', checked: '2026-09-23' } } },
-  'mi250x-128': { gb:128, bw:3276.8, hyper:null, spec:null, spot:null, tflops:383, name:'MI250X 128 GB', vendor:'amd', perfKey:'cdna2', devices:2, form:'oam', caps:{ fp8: false }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card: it is missing from the Azure API, Oracle\'s price list, AWS and Google Cloud.', checked: '2026-09-23' }, spec: { reason: 'Cirrascale lists the MI250, not the MI250X, and only monthly. Runcrate\'s MI250X page advertises an hourly rate, but Runcrate\'s own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed.', checked: '2026-09-23' }, spot: { reason: 'No spot or marketplace offer found.', checked: '2026-09-23' } } },
+  'mi210-64': { gb:64, bw:1638.4, hyper:null, spec:null, spot:null, tflops:181, name:'MI210 64 GB', vendor:'amd', perfKey:'cdna2', devices:1, form:'pcie', caps:{ fp8: false }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card: it is missing from the Azure API, Oracle\'s price list, AWS and Google Cloud.', checked: '2026-09-23' }, spec: { reason: 'The one hourly rate found, Runcrate\'s, could not be confirmed; it is shown below as a lead.', checked: '2026-09-23' }, spot: { reason: 'No spot or marketplace offer found.', checked: '2026-09-23' } }, priceLead:{ spec: [{ provider: 'Runcrate', price: 0.82, url: 'https://www.runcrate.ai/pricing/gpu/mi210', date: '2026-09-23', why: 'Runcrate\'s own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.', about: 'https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md' }] } },
+  'mi250x-128': { gb:128, bw:3276.8, hyper:null, spec:null, spot:null, tflops:383, name:'MI250X 128 GB', vendor:'amd', perfKey:'cdna2', devices:2, form:'oam', caps:{ fp8: false }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card: it is missing from the Azure API, Oracle\'s price list, AWS and Google Cloud.', checked: '2026-09-23' }, spec: { reason: 'Cirrascale lists the MI250, not the MI250X, and only monthly. The one hourly rate found, Runcrate\'s, could not be confirmed; it is shown below as a lead.', checked: '2026-09-23' }, spot: { reason: 'No spot or marketplace offer found.', checked: '2026-09-23' } }, priceLead:{ spec: [{ provider: 'Runcrate', price: 1.35, url: 'https://www.runcrate.ai/pricing/gpu/mi250x', date: '2026-09-23', why: 'Runcrate\'s own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer.', about: 'https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md' }] } },
   'mi300x-192': { gb:192, bw:5325, hyper:6.0, spec:2.39, spot:1.11, tflops:1307.4, name:'MI300X 192 GB', vendor:'amd', perfKey:'cdna3', devices:1, form:'oam', caps:{ fp8: true }, priceSource:{ hyper: { provider: 'azure', sku: 'Standard_ND96isr_MI300X_v5', region: 'eastus2', date: '2026-09-23', price: 6.0 }, spot: { provider: 'azure', sku: 'Standard_ND96isr_MI300X_v5 (Spot)', region: 'eastus2', date: '2026-09-23', price: 1.11 } }, priceRecord:{ spec: { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' } } },
-  'mi325x-256': { gb:256, bw:6000, hyper:null, spec:3.8, spot:null, tflops:1307.4, name:'MI325X 256 GB', vendor:'amd', perfKey:'cdna3', devices:1, form:'oam', caps:{ fp8: true }, priceRecord:{ spec: { provider: 'DigitalOcean', sku: 'AMD Instinct™ MI325X', region: 'global', date: '2026-09-23', price: 3.8, url: 'https://www.digitalocean.com/pricing/gpu-droplets' } }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card: it is missing from the Azure API, Oracle\'s price list, AWS and Google Cloud.', checked: '2026-09-23' }, spot: { reason: 'Vultr lists a preemptible plan, but no location offers it.', checked: '2026-09-23' } } },
+  'mi325x-256': { gb:256, bw:6000, hyper:null, spec:3.8, spot:null, tflops:1307.4, name:'MI325X 256 GB', vendor:'amd', perfKey:'cdna3', devices:1, form:'oam', caps:{ fp8: true }, priceRecord:{ spec: { provider: 'DigitalOcean', sku: 'AMD Instinct™ MI325X', region: 'global', date: '2026-09-23', price: 3.8, url: 'https://www.digitalocean.com/pricing/gpu-droplets' } }, priceNote:{ hyper: { reason: 'No hyperscaler rents this card: it is missing from the Azure API, Oracle\'s price list, AWS and Google Cloud.', checked: '2026-09-23' }, spot: { reason: 'Vultr lists a preemptible plan, but no location offers it; its rate is shown below as a lead.', checked: '2026-09-23' } }, priceLead:{ spot: [{ provider: 'Vultr', price: 2.0, url: 'https://api.vultr.com/v2/plans-metal', date: '2026-09-23', why: 'It is the preemptible rate of an 8-GPU bare-metal plan that Vultr\'s API lists with no location offering it.' }] } },
 };
 /* GPU_TABLE:END */
 
@@ -671,7 +671,9 @@ function getGpuSpec() {
            // The hand-recorded kind, for a tier no automated source reads.
            priceRecord: g.priceRecord,
            // And why a tier has neither: every tier carries exactly one of the three.
-           priceNote: g.priceNote };
+           priceNote: g.priceNote,
+           // A price found for a null tier and not used, shown as such.
+           priceLead: g.priceLead };
 }
 
 /* Builds the GPU dropdown's <option> elements from GPU_TABLE at load time — the
@@ -967,6 +969,9 @@ function readInputState() {
        no weekly reader covers it, or why a null tier has no price. The catalog
        gives every tier exactly one of the three. */
     priceNote: gpu.priceNote,
+    /* Prices found for a tier with no confirmed price, and not used: shown under
+       that tier's note, and read by no figure. */
+    priceLead: gpu.priceLead,
     gpuName: gpu.name,
     // How many accelerator devices this board presents. 1 for every NVIDIA card
     // here; a multi-GCD board like the MI250X is one row with devices: 2,
@@ -1928,14 +1933,32 @@ function priceNoteLine(state, tier) {
   return note ? `<br><span style="font-size:11px;color:var(--text-muted)">${note}</span>` : '';
 }
 
+/* An hourly price someone lists for a tier that has no confirmed price, and that
+   could not be confirmed: shown, with why it was not used and where it was read,
+   and used in no figure anywhere. Only on a null tier. Mirrored by price_leads()
+   and price_lead_text() in generate_report.py. */
+function priceLeads(state, tier) {
+  if (state[TIER_COST_FIELD[tier]] !== null) return [];
+  return (state.priceLead && state.priceLead[tier]) || [];
+}
+function priceLeadText(lead) {
+  return `Lead, not used: ${lead.provider} lists $${lead.price.toFixed(2)}/hr (read ${lead.date}, ${lead.url}). ${lead.why}`
+    + (lead.about ? ` About ${lead.provider}: ${lead.about}` : '');
+}
+/* The leads under a tier's note in the cost table, each with its page and, where
+   the catalog has one, what is known about the provider. */
+function priceLeadLines(state, tier) {
+  return priceLeads(state, tier).map(lead => `<br><span style="font-size:11px;color:var(--text-muted)">Lead, not used: ${lead.provider} lists $${lead.price.toFixed(2)}/hr (read ${lead.date}). ${lead.why} <a href="${lead.url}" target="_blank" style="color:var(--accent-text)">${lead.provider}'s page</a>${lead.about ? ` · <a href="${lead.about}" target="_blank" style="color:var(--accent-text)">about ${lead.provider}</a>` : ''}</span>`).join('');
+}
+
 function renderCost(state, computed) {
   const monthly = (hourly) => (hourly == null ? null : hourly * 730);
   const monthlyH = monthly(computed.hourlyHyper), monthlyS = monthly(computed.hourlySpec), monthlySp = monthly(computed.hourlySpot);
   let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">';
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px;color:var(--text-secondary);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Per board/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Total/hr (${state.gpuCount}×)</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Monthly (730h)</td></tr>`;
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span>${priceNoteLine(state, 'hyper')}</td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuHyperCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlyHyper, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyH, 0)}</td></tr>`;
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span>${priceNoteLine(state, 'spec')}</td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpecCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpec, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyS, 0)}</td></tr>`;
-  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span>${priceNoteLine(state, 'spot')}</td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpotCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpot, 2)}</td><td style="padding:8px 10px;font-weight:500${monthlySp == null ? '' : ';color:var(--success)'}">${usd(monthlySp, 0)}</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span>${priceNoteLine(state, 'hyper')}${priceLeadLines(state, 'hyper')}</td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuHyperCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlyHyper, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyH, 0)}</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span>${priceNoteLine(state, 'spec')}${priceLeadLines(state, 'spec')}</td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpecCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpec, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyS, 0)}</td></tr>`;
+  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span>${priceNoteLine(state, 'spot')}${priceLeadLines(state, 'spot')}</td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpotCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpot, 2)}</td><td style="padding:8px 10px;font-weight:500${monthlySp == null ? '' : ';color:var(--success)'}">${usd(monthlySp, 0)}</td></tr>`;
   html += '</table></div>';
   html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px">Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand.</div>';
   setHTML('cost-output', html);
@@ -2177,6 +2200,8 @@ function renderNotes(state, computed) {
      "not recorded" and nothing else). Only on a card that has such a tier. */
   if ([state.gpuHyperCost, state.gpuSpecCost, state.gpuSpotCost].includes(null))
     notes += '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour. ';
+  if (['hyper', 'spec', 'spot'].some(tier => priceLeads(state, tier).length))
+    notes += 'A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. ';
   notes += 'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier\'s source, or "not recorded" where it has no confirmed source. Reserved typically 30-60% off on-demand. ';
   if (trainingEnabled) notes += 'Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation. ';
   setHTML('notes-output', notes);
@@ -2396,7 +2421,9 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
     ? `- ${label}: ${NO_PRICE}\n`
     : `- ${label}: $${hourly.toFixed(2)}/hr · $${Math.round(hourly * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, tier)})\n`)
     // Why the tier has no source, or no price, on its own line beneath it.
-    + (priceNoteText(state, tier) ? `  - ${priceNoteText(state, tier)}\n` : '');
+    + (priceNoteText(state, tier) ? `  - ${priceNoteText(state, tier)}\n` : '')
+    // And any price found for it and not used, each on its own line after that.
+    + priceLeads(state, tier).map(lead => `  - ${priceLeadText(lead)}\n`).join('');
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n${costLine('Hyperscaler', computed.hourlyHyper, 'hyper')}${costLine('Specialized', computed.hourlySpec, 'spec')}${costLine('Spot', computed.hourlySpot, 'spot')}`;
   const emitted = document.querySelector('#command-output code');
   report += `\n## vLLM command\n\`\`\`\n${emitted ? emitted.textContent : ''}\n\`\`\`\n`;

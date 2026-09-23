@@ -83,7 +83,8 @@ def load_benchmarks():
 GPU_FIELDS = ("gb", "bw", "hyper", "spec", "spot", "tflops", "name",
               "vendor", "perfKey", "devices", "form", "caps")
 # priceNote is the third provenance kind: why a tier has neither of the other two.
-GPU_OPTIONAL = ("default", "priceSource", "priceRecord", "priceNote")
+# priceLead is a price found for a null tier and not used, shown as such.
+GPU_OPTIONAL = ("default", "priceSource", "priceRecord", "priceNote", "priceLead")
 # The only fields a GPU row may set to null: a price tier with no confirmed
 # hourly price for this card. Still required — a row has to say so, not leave
 # the tier out — and null nowhere else, so a missing value in any other field

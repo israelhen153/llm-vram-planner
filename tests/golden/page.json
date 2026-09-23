@@ -4920,7 +4920,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI210 64GB - Total VRAM: 64 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 64 GiB (FITS) ## Capacity - Max context (1 user): 328K - Max concurrent @ 8K: 41 - Throughput and TTFT: not modelled. No measured utilisation is published for MI210 64GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI210 64GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. - Specialized: no confirmed hourly price - Runcrate's MI210 page advertises an hourly rate, but Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed. Checked 2026-09-23. - Spot: no confirmed hourly price - No spot or marketplace offer found. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI210 64GB - Total VRAM: 64 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 64 GiB (FITS) ## Capacity - Max context (1 user): 328K - Max concurrent @ 8K: 41 - Throughput and TTFT: not modelled. No measured utilisation is published for MI210 64GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI210 64GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. - Specialized: no confirmed hourly price - The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead. Checked 2026-09-23. - Lead, not used: Runcrate lists $0.82/hr (read 2026-09-23, https://www.runcrate.ai/pricing/gpu/mi210). Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer. About Runcrate: https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md - Spot: no confirmed hourly price - No spot or marketplace offer found. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -4953,10 +4953,15 @@
    },
    "cost-output": {
     "attrs": [
+     "href=https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md",
+     "href=https://www.runcrate.ai/pricing/gpu/mi210",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
+     "style=color:var(--accent-text)",
+     "style=color:var(--accent-text)",
+     "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -4980,9 +4985,11 @@
      "style=overflow-x:auto",
      "style=padding:8px 10px",
      "style=padding:8px 10px",
-     "style=padding:8px 10px"
+     "style=padding:8px 10px",
+     "target=_blank",
+     "target=_blank"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. — — — Specialized no confirmed hourly price Runcrate's MI210 page advertises an hourly rate, but Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed. Checked 2026-09-23. — — — Spot / marketplace no confirmed hourly price No spot or marketplace offer found. Checked 2026-09-23. — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. — — — Specialized no confirmed hourly price The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead. Checked 2026-09-23. Lead, not used: Runcrate lists $0.82/hr (read 2026-09-23). Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer. Runcrate's page · about Runcrate — — — Spot / marketplace no confirmed hourly price No spot or marketplace offer found. Checked 2026-09-23. — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5048,7 +5055,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5134,7 +5141,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI250X 128GB (Infinity Fabric) - Total VRAM: 128 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 3.35 GiB - Per-device: 17.2 GiB / 64 GiB (FITS) ## Capacity - Max context (1 user): 774K - Max concurrent @ 8K: 96 - Throughput and TTFT: not modelled. No measured utilisation is published for MI250X 128GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI250X 128GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. - Specialized: no confirmed hourly price - Cirrascale lists the MI250, not the MI250X, and only monthly. Runcrate's MI250X page advertises an hourly rate, but Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed. Checked 2026-09-23. - Spot: no confirmed hourly price - No spot or marketplace offer found. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI250X 128GB (Infinity Fabric) - Total VRAM: 128 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 3.35 GiB - Per-device: 17.2 GiB / 64 GiB (FITS) ## Capacity - Max context (1 user): 774K - Max concurrent @ 8K: 96 - Throughput and TTFT: not modelled. No measured utilisation is published for MI250X 128GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI250X 128GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. - Specialized: no confirmed hourly price - Cirrascale lists the MI250, not the MI250X, and only monthly. The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead. Checked 2026-09-23. - Lead, not used: Runcrate lists $1.35/hr (read 2026-09-23, https://www.runcrate.ai/pricing/gpu/mi250x). Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer. About Runcrate: https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md - Spot: no confirmed hourly price - No spot or marketplace offer found. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --tensor-parallel-size 2 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5167,10 +5174,15 @@
    },
    "cost-output": {
     "attrs": [
+     "href=https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/runcrate-due-diligence.md",
+     "href=https://www.runcrate.ai/pricing/gpu/mi250x",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
+     "style=color:var(--accent-text)",
+     "style=color:var(--accent-text)",
+     "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -5194,9 +5206,11 @@
      "style=overflow-x:auto",
      "style=padding:8px 10px",
      "style=padding:8px 10px",
-     "style=padding:8px 10px"
+     "style=padding:8px 10px",
+     "target=_blank",
+     "target=_blank"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. — — — Specialized no confirmed hourly price Cirrascale lists the MI250, not the MI250X, and only monthly. Runcrate's MI250X page advertises an hourly rate, but Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer, so it could not be confirmed. Checked 2026-09-23. — — — Spot / marketplace no confirmed hourly price No spot or marketplace offer found. Checked 2026-09-23. — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. — — — Specialized no confirmed hourly price Cirrascale lists the MI250, not the MI250X, and only monthly. The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead. Checked 2026-09-23. Lead, not used: Runcrate lists $1.35/hr (read 2026-09-23). Runcrate's own pricing page lists no AMD GPU, and the independent tracker checked lists no Runcrate AMD offer. Runcrate's page · about Runcrate — — — Spot / marketplace no confirmed hourly price No spot or marketplace offer found. Checked 2026-09-23. — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5283,7 +5297,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Infinity Fabric between devices. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Infinity Fabric between devices. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5580,7 +5594,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI325X 256GB - Total VRAM: 256 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 256 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 213 - Throughput and TTFT: not modelled. No measured utilisation is published for MI325X 256GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI325X 256GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. - Specialized: $3.80/hr · $2,774/mo (source: DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly) - Spot: no confirmed hourly price - Vultr lists a preemptible plan, but no location offers it. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI325X 256GB - Total VRAM: 256 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 256 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 213 - Throughput and TTFT: not modelled. No measured utilisation is published for MI325X 256GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI325X 256GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. - Specialized: $3.80/hr · $2,774/mo (source: DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly) - Spot: no confirmed hourly price - Vultr lists a preemptible plan, but no location offers it; its rate is shown below as a lead. Checked 2026-09-23. - Lead, not used: Vultr lists $2.00/hr (read 2026-09-23, https://api.vultr.com/v2/plans-metal). It is the preemptible rate of an 8-GPU bare-metal plan that Vultr's API lists with no location offering it. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5613,10 +5627,13 @@
    },
    "cost-output": {
     "attrs": [
+     "href=https://api.vultr.com/v2/plans-metal",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
+     "style=color:var(--accent-text)",
+     "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -5639,9 +5656,10 @@
      "style=overflow-x:auto",
      "style=padding:8px 10px",
      "style=padding:8px 10px",
-     "style=padding:8px 10px"
+     "style=padding:8px 10px",
+     "target=_blank"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. — — — Specialized DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly $3.80 $3.80 $2,774 Spot / marketplace no confirmed hourly price Vultr lists a preemptible plan, but no location offers it. Checked 2026-09-23. — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: it is missing from the Azure API, Oracle's price list, AWS and Google Cloud. Checked 2026-09-23. — — — Specialized DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly $3.80 $3.80 $2,774 Spot / marketplace no confirmed hourly price Vultr lists a preemptible plan, but no location offers it; its rate is shown below as a lead. Checked 2026-09-23. Lead, not used: Vultr lists $2.00/hr (read 2026-09-23). It is the preemptible rate of an 8-GPU bare-metal plan that Vultr's API lists with no location offering it. Vultr's page — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5707,7 +5725,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [

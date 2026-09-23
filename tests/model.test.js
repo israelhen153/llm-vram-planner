@@ -91,6 +91,7 @@ const stateFor = (gpu, o = {}) => ({
     priceSource: gpu.priceSource,
     priceRecord: gpu.priceRecord,
     priceNote: gpu.priceNote,
+    priceLead: gpu.priceLead,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1222,6 +1223,7 @@ const asState = (card, count, extra = {}) => ({
   priceSource: card.priceSource,
   priceRecord: card.priceRecord,
   priceNote: card.priceNote,
+  priceLead: card.priceLead,
   gpuForm: card.form,
   /* The name as the page's state carries it: getGpuSpec() drops the space
      ("MI250X 128GB"), as stateFor() above does. card.name kept the catalog's
@@ -2297,7 +2299,9 @@ test('every cost surface names a source or says "not recorded", discovered not e
     'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for ' +
     "each tier's source, or \"not recorded\" where it has no confirmed source.",
     // On a card with a null tier, the one sentence that explains the table's wording for it.
-    '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour.'];
+    '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour.',
+    // On a card with a lead, the one sentence that says what a lead is.
+    'A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it.'];
   const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
   // Cold-check finding: renderExecutiveSummary's "Monthly cost range" rounds
   // to whole dollars ("$657", never "$657.00"), so a cents-only pattern
@@ -2518,7 +2522,7 @@ test("every tier the catalog notes says why, under its own label, in the cost ta
       assert.ok(at >= 0, `${key}: the copied report has no ${lineLabel} line`);
       if (note) {
         shown++;
-        assert.ok(row.includes(`</span><br><span style="font-size:11px;color:var(--text-muted)">${note}</span></td>`),
+        assert.ok(row.includes(`</span><br><span style="font-size:11px;color:var(--text-muted)">${note}</span>`),
           `${key}/${tier}: the cost table does not carry the note under the tier's label — ${row.slice(0, 400)}`);
         assert.strictEqual(lines[at + 1], `  - ${note}`, `${key}/${tier}: the copied report's line under ${lineLabel}`);
         for (const [id, text] of Object.entries(h.out))
@@ -2547,6 +2551,92 @@ test('a tier with a reading or a hand record shows that, not a note that slipped
   assert.ok(st.priceSource && st.priceSource.hyper, 'h100-80 no longer has an automated hyper reading; pick another row');
   assert.ok(!(h.out['cost-output'] || '').includes(note.reason), 'the cost table shows a note beside a reading');
   assert.ok(!h.exportSummary(st, c).includes(note.reason), 'the copied report shows a note beside a reading');
+});
+
+/* A lead as the page prints it, written out here as the contract: in the cost table
+   (with its links) and in the copied report (with its addresses). */
+const leadHtml = (l) => `<br><span style="font-size:11px;color:var(--text-muted)">Lead, not used: ${l.provider} lists $${l.price.toFixed(2)}/hr (read ${l.date}). ${l.why} <a href="${l.url}" target="_blank" style="color:var(--accent-text)">${l.provider}'s page</a>${l.about ? ` · <a href="${l.about}" target="_blank" style="color:var(--accent-text)">about ${l.provider}</a>` : ''}</span>`;
+const leadLine = (l) => `  - Lead, not used: ${l.provider} lists $${l.price.toFixed(2)}/hr (read ${l.date}, ${l.url}). ${l.why}` +
+  (l.about ? ` About ${l.provider}: ${l.about}` : '') + '\n';
+const LEAD_SENTENCE = 'A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. ';
+const ROWS_WITH_LEADS = Object.entries(GPU_TABLE).filter(([, g]) => g.priceLead && Object.keys(g.priceLead).length);
+
+test('a lead changes no figure: every row with one renders identically without it, but for the lead itself', () => {
+  /* The owner's rule for Runcrate, and for every lead since: shown, never used as a
+     price. Stated as the property that makes it true: take a lead out of the catalog
+     and nothing the tool computes moves, and no surface changes but by the lead's own
+     text. A lead that reached a range, a monthly total, a comparison or a summary
+     would leave a difference behind here that no text removal accounts for. */
+  assert.ok(ROWS_WITH_LEADS.length >= 3, `only ${ROWS_WITH_LEADS.length} catalog rows carry a lead — this checks too little`);
+  const renderAll = (card, boards) => {
+    const h = renderHarness();
+    const st = asState(card, boards, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.pushSnapshot(st, c);
+    for (const name of Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function')) {
+      try { h[name](st, c); } catch (e) { /* renderers that take other arguments are covered elsewhere */ }
+    }
+    return { c, out: { ...h.out, '(copied report)': h.exportSummary(st, c) } };
+  };
+  for (const [key, gpu] of ROWS_WITH_LEADS) {
+    const bare = { ...gpu }; delete bare.priceLead;
+    for (const boards of [1, 3]) {
+      const withLead = renderAll(gpu, boards), without = renderAll(bare, boards);
+      assert.deepStrictEqual(withLead.c, without.c, `${key} x${boards}: a lead changed what the page computes`);
+      let removed = 0;
+      for (const [id, text] of Object.entries(withLead.out)) {
+        let rest = text;
+        for (const leads of Object.values(gpu.priceLead)) for (const l of leads) {
+          const html = leadHtml(l), line = leadLine(l);
+          if (rest.includes(html)) { rest = rest.split(html).join(''); removed++; }
+          if (rest.includes(line)) { rest = rest.split(line).join(''); removed++; }
+        }
+        rest = rest.split(LEAD_SENTENCE).join('');
+        assert.strictEqual(rest, without.out[id] || '',
+          `${key} x${boards}/${id}: with its lead taken out of the text, the surface still differs from the catalog without it`);
+        for (const leads of Object.values(gpu.priceLead)) for (const l of leads)
+          assert.ok(!rest.includes(`$${l.price.toFixed(2)}`), `${key} x${boards}/${id}: the lead's figure appears outside the lead`);
+      }
+      const expected = Object.values(gpu.priceLead).reduce((n, ls) => n + ls.length, 0) * 2;
+      assert.strictEqual(removed, expected, `${key} x${boards}: expected each lead once in the cost table and once in the report`);
+    }
+  }
+});
+
+test('each lead sits under its own tier, after the note, and only where the tier has no price', () => {
+  const ROWS = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot / marketplace' };
+  const LINES = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot' };
+  for (const [key, gpu] of ROWS_WITH_LEADS) {
+    const h = renderHarness();
+    const st = asState(gpu, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.renderCost(st, c);
+    const report = h.exportSummary(st, c).split('\n');
+    const costRows = (h.out['cost-output'] || '').split('<tr').slice(1);
+    for (const tier of ['hyper', 'spec', 'spot']) {
+      const leads = (gpu.priceLead || {})[tier] || [];
+      const row = costRows.find(r => r.includes(`<b>${ROWS[tier]}</b>`));
+      const at = report.findIndex(l => l.startsWith(`- ${LINES[tier]}: `));
+      if (!leads.length) {
+        assert.ok(!row.includes('Lead, not used'), `${key}/${tier}: a lead appears under a tier that has none`);
+        continue;
+      }
+      assert.strictEqual(gpu[tier], null, `${key}/${tier}: a lead on a priced tier — the catalog tests should refuse this`);
+      const note = catalogNoteText(st, tier);
+      assert.ok(row.includes(`${note}</span>${leads.map(leadHtml).join('')}</td>`),
+        `${key}/${tier}: the cost table does not carry the lead right after the note — ${row.slice(0, 500)}`);
+      assert.deepStrictEqual(report.slice(at + 1, at + 2 + leads.length),
+        [`  - ${note}`, ...leads.map(l => leadLine(l).trimEnd())], `${key}/${tier}: the copied report's lines under ${LINES[tier]}`);
+    }
+  }
+  // And a lead the catalog puts on a priced tier is not shown: a price is the answer there.
+  const h = renderHarness();
+  const priced = { ...GPU_TABLE['h100-80'], priceLead: { hyper: [{ provider: 'X', price: 1.23, url: 'https://x.example/p', date: '2026-09-23', why: 'Test.' }] } };
+  const st = asState(priced, 1, { params: 8, layers: 32 });
+  const c = h.computeInference(st);
+  h.renderCost(st, c);
+  assert.ok(!(h.out['cost-output'] || '').includes('Lead, not used') && !h.exportSummary(st, c).includes('Lead, not used'),
+    'a lead on a priced tier is shown');
 });
 
 test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
@@ -3542,6 +3632,7 @@ test('the page hands the engine each tier\'s price exactly as the catalog record
     assert.deepStrictEqual(st.priceSource, gpu.priceSource, `${key}: the state's priceSource`);
     assert.deepStrictEqual(st.priceRecord, gpu.priceRecord, `${key}: the state's priceRecord`);
     assert.deepStrictEqual(st.priceNote, gpu.priceNote, `${key}: the state's priceNote`);
+    assert.deepStrictEqual(st.priceLead, gpu.priceLead, `${key}: the state's priceLead`);
     if (gpu.priceNote) noted++;
   }
   assert.ok(nulls > 0 && priced > 0, `the catalog gave ${nulls} null and ${priced} priced tiers — this needs both`);
