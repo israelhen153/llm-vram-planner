@@ -2223,6 +2223,16 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
     'Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16', 'a hand record displaced an automated reading');
   assert.strictEqual(priceSourceLabel({ gpuSpotCost: null, priceRecord: { spot: handRec } }, 'spot'),
     'no confirmed hourly price', 'a null tier rendered the hand record attached to it');
+  /* Looked up by the tier asked about. A lookup hard-wired to .spec passed
+     while every real record sat on spec (cold check, round 1): every tier the
+     record is on, asked about every tier, each of them priced and unsourced. */
+  for (const on of ['hyper', 'spec', 'spot'])
+    for (const asked of ['hyper', 'spec', 'spot'])
+      assert.strictEqual(
+        priceSourceLabel({ gpuHyperCost: 1, gpuSpecCost: 1, gpuSpotCost: 1, priceRecord: { [on]: handRec } }, asked),
+        asked === on ? 'RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly'
+                     : 'not recorded',
+        `a record on ${on}, asked about ${asked}`);
 });
 
 test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
@@ -3428,6 +3438,25 @@ test('an SXM card still honours the control in both positions', () => {
     assert.strictEqual(readInputStateFor(key, '0').hasNVLink, false, `${key} ignored PCIe`);
   }
 });
+test('the page hands the engine each tier\'s price exactly as the catalog records it, null included', () => {
+  /* The null-tier tests build their states by hand, so nothing read what
+     getGpuSpec() and readInputState() pass on. A `spot: g.spot ?? g.spec`
+     there printed the specialized price under Spot on the live page with every
+     test green, and `hyper: g.hyper ?? 0` printed $0.00 (cold check, round 1).
+     Driven through the real state builder, for every row and every tier —
+     priced or null — and the provenance each tier carries. */
+  let nulls = 0, priced = 0;
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const st = readInputStateFor(key, '1');
+    for (const [tier, field] of [['hyper', 'gpuHyperCost'], ['spec', 'gpuSpecCost'], ['spot', 'gpuSpotCost']]) {
+      assert.strictEqual(st[field], gpu[tier], `${key}: the state's ${field} is ${st[field]}, the catalog's ${tier} is ${gpu[tier]}`);
+      if (gpu[tier] === null) nulls++; else priced++;
+    }
+    assert.deepStrictEqual(st.priceSource, gpu.priceSource, `${key}: the state's priceSource`);
+    assert.deepStrictEqual(st.priceRecord, gpu.priceRecord, `${key}: the state's priceRecord`);
+  }
+  assert.ok(nulls > 0 && priced > 0, `the catalog gave ${nulls} null and ${priced} priced tiers — this needs both`);
+});
 test('the state carries the perfKey its constants are chosen by, for every row', () => {
   /* Deleting perfKey from readInputState() — or from getGpuSpec(), which it reads
      — leaves the page with no constants for any card. Driven through the real
@@ -3608,6 +3637,26 @@ test('every surface names the link the devices actually talk over, on every form
   assert.deepStrictEqual([...seen].sort(), ['Infinity Fabric', 'NVLink', 'PCIe'],
     'the grid never reached one of the three links, so it checks nothing about it');
   assert.strictEqual(checked, FORMS.length * 2 * 2 * 2);
+  /* And every real row, at several boards: the probes above are one-device
+     boards, so the MI250X — two devices a board — was never named above one
+     board, and a gate keyed on devices and count at once passed (cold check,
+     round 1). Its own name, form, devices and constants, NVLink as the page
+     grants it. */
+  let rows = 0;
+  for (const [key, row] of Object.entries(GPU_TABLE))
+    for (const count of [2, 3, 16])
+      for (const asked of [true, false]) {
+        const hasNVLink = supportsNVLink(row) && asked;
+        const want = hasNVLink ? 'NVLink' : row.form === 'oam' ? 'Infinity Fabric' : 'PCIe';
+        const { html: out } = renderEverything(asState(row, count, { hasNVLink }));
+        const label = `${key} x${count}, NVLink ${asked ? 'asked for' : 'not asked for'}`;
+        assert.ok(out['gpu-cards'].includes(`${want} — `), `${label}: the sharding line does not name ${want}`);
+        assert.ok(out['(copied report)'].includes(`(${want})`), `${label}: the copied report does not name ${want}`);
+        rows++;
+      }
+  assert.ok(Object.values(GPU_TABLE).some(r => r.form === 'oam' && r.devices > 1),
+    'no real row is a multi-device OAM board, so the case that failed is not in the grid');
+  assert.strictEqual(rows, Object.keys(GPU_TABLE).length * 3 * 2);
 });
 test('a deliberate PCIe choice on an SXM card is not overridden', () => {
   const sel = syncFor('h100-80', '0');

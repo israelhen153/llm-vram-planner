@@ -1377,6 +1377,28 @@ def check_every_pdf_surface_names_the_link_the_devices_use():
                     checked += 1
     assert seen == {"NVLink", "Infinity Fabric", "PCIe"}, f"the grid reached only {sorted(seen)}"
     assert checked == len(FORMS) * 2 * 2 * 2
+    # And every real row, at several boards: the probes above are one-device
+    # boards, so the MI250X — two devices a board — was never named above one
+    # board, and a gate keyed on devices and count at once passed (cold check,
+    # round 1). NVLink as every builder grants it.
+    rows = 0
+    for slug, row in gr.GPUS.items():
+        for boards in (2, 3, 16):
+            for asked in (True, False):
+                nvlink = gr.supports_nvlink(row) and asked
+                want = "NVLink" if nvlink else "Infinity Fabric" if row["form"] == "oam" else "PCIe"
+                cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
+                           n_gpu=boards, gpu=row, nvlink=nvlink, kv_bpp=2, vendor=row["vendor"],
+                           perfKey=row["perfKey"], hf_model="m", model_name="M")
+                texts = story_strings(cfg)
+                label = f"{slug} x{boards}, NVLink {'asked for' if asked else 'not asked for'}"
+                assert want in texts, f"{label}: no GPU configuration cell reads {want!r}"
+                assert any(f"({want})" in t for t in texts), f"{label}: the title does not name {want}"
+                assert any(f"{want} interconnect assumed." in t for t in texts), f"{label}: the notes do not name {want}"
+                rows += 1
+    assert any(r["form"] == "oam" and r["devices"] > 1 for r in gr.GPUS.values()), (
+        "no real row is a multi-device OAM board, so the case that failed is not in the grid")
+    assert rows == len(gr.GPUS) * 3 * 2
 
 
 test("every PDF surface names the link the devices actually talk over, on every form",
@@ -1833,6 +1855,14 @@ def check_price_source_label_format_is_a_fixed_expectation():
         "Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16"), "a hand record displaced a reading"
     assert gr.price_source_label({"spot": None, "priceRecord": {"spot": hand}}, "spot") == (
         "no confirmed hourly price"), "a null tier rendered the hand record attached to it"
+    # Looked up by the tier asked about: a lookup hard-wired to "spec" passed
+    # while every real record sat on spec (cold check, round 1).
+    for on in ("hyper", "spec", "spot"):
+        for asked in ("hyper", "spec", "spot"):
+            got = gr.price_source_label({"hyper": 1, "spec": 1, "spot": 1, "priceRecord": {on: hand}}, asked)
+            want = ("RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly"
+                    if asked == on else "not recorded")
+            assert got == want, f"a record on {on}, asked about {asked}: {got!r}"
 
 test("price_source_label formats provider, SKU, region and date — a fixed expectation",
      check_price_source_label_format_is_a_fixed_expectation)

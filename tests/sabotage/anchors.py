@@ -200,6 +200,19 @@ PY_MENU_SPAN = "        if v[\"spot\"] is not None and v[\"hyper\"] is not None:
 PRICE_SPOT_SKU = "    recorded_sku = f\"{sku} ({kind})\" if kind else sku\n"
 PRICE_NULL_GUARD = "            if row.get(tier) is None:\n"
 PRICE_NULL_REFUSAL = "    on_null = automated_null_tiers(catalog[\"data\"], SOURCE_MAP)\n    if on_null:\n"
+# The first cold check of feat/amd-gpus (engine_r7_amd_cold_check.py): the page's
+# catalog-to-state path, the hand record's tier lookup, the fabric's gate, and
+# price_check's writer.
+JS_GETSPEC_PRICES = "  return { key: el.value, gb: g.gb, bw: g.bw, hyper: g.hyper, spec: g.spec, spot: g.spot,\n"
+JS_STATE_SPOT = "    gpuSpotCost: gpu.spot,\n"
+JS_REC_LOOKUP = "  const rec = !src && state.priceRecord && state.priceRecord[tier];\n"
+JS_FABRIC = "  const fabric = interconnectName(state);\n"
+PY_REC_LOOKUP = "    rec = None if src else (gpu.get(\"priceRecord\") or {}).get(tier)\n"
+PRICE_DUMP_ROW = "    parts = \", \".join(f\"{json.dumps(k)}: {_dump_json_value(v)}\" for k, v in row.items())\n"
+PRICE_DUMP_VALUE = ("        return \"{ \" + \", \".join(f\"{json.dumps(k)}: {_dump_json_value(x)}\" for k, x in v.items())"
+                    " + \" }\"\n")
+PRICE_APPLY_MOVED = "        if oc.status == \"MOVED\":\n            row[oc.tier] = oc.proposed\n"
+
 INDEX_HTML = "index.html"
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"

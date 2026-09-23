@@ -18,6 +18,7 @@ import copy
 import json
 import os
 import sys
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -887,6 +888,28 @@ def check_apply_keeps_a_null_tier_null():
 test("apply_to_text() writes a null tier back as null", check_apply_keeps_a_null_tier_null)
 
 
+def check_apply_keeps_a_hand_record_intact():
+    """--apply refreshes provenance on the tiers it read and re-serialises every
+    row. A hand record on another tier of the same row has to come back as it
+    was, URL included: the writer carried no fixture with one, so dropping it —
+    or its URL — passed every test (cold check, round 1)."""
+    rec = {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+           "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}
+    raw = ('{\n  "_meta": {\n    "last_updated": "2026-09-22"\n  },\n  "data": {\n'
+           '    "x": { "hyper": 6.0, "spec": 2.39, "spot": 1.11, "priceRecord": { "spec": '
+           + json.dumps(rec) + ' } }\n  }\n}\n')
+    gpus = json.loads(raw)["data"]
+    confirmed = pc.Outcome("x", "hyper", "CONFIRMED", current=6.0, proposed=6.0,
+                           reading=_reading(price=6.0, date="2026-09-23"))
+    assert pc.apply_outcomes(gpus, [confirmed]), "a CONFIRMED outcome changed nothing"
+    row = json.loads(pc.apply_to_text(raw, gpus, ["x"], "2026-09-23"))["data"]["x"]
+    assert row.get("priceRecord") == {"spec": rec}, f"the hand record did not survive --apply: {row.get('priceRecord')}"
+    assert "hyper" in row.get("priceSource", {}), "the tier that was read gained no provenance"
+
+test("--apply refreshes one tier's provenance and keeps another tier's hand record, URL included",
+     check_apply_keeps_a_hand_record_intact)
+
+
 # ===========================================================================
 # Cross-check disagreement: two live sources for one run, not catalog-vs-live
 # ===========================================================================
@@ -1315,6 +1338,10 @@ def price_record_problems(rows, source_map, today):
                     bad.append(f"{where}.{field}: {rec[field]!r} — must be a non-empty string")
             if isinstance(rec["url"], str) and not rec["url"].startswith("https://"):
                 bad.append(f"{where}.url: {rec['url']!r} — must be the provider's page, over https")
+            elif isinstance(rec["url"], str) and urllib.parse.urlparse(rec["url"]).path in ("", "/"):
+                # A site's front page is not where a reader can check the price
+                # (cold check, round 1: nothing rejected one).
+                bad.append(f"{where}.url: {rec['url']!r} names a site, not the page the price was read on")
             try:
                 read = _dt.datetime.strptime(str(rec["date"]), "%Y-%m-%d").date()
                 if read > today:
@@ -1360,6 +1387,7 @@ def check_every_price_record_rule_is_exercised():
         "an extra field": (rows_with(dict(good, note="x")), "expected exactly"),
         "a blank provider": (rows_with(dict(good, provider=" ")), ".provider:"),
         "a plain-http url": (rows_with(dict(good, url="http://www.runpod.io/")), "over https"),
+        "a front-page url": (rows_with(dict(good, url="https://www.runpod.io/")), "names a site"),
         "a date after today": (rows_with(dict(good, date="2026-09-24")), "after today"),
         "a malformed date": (rows_with(dict(good, date="23/09/2026")), "not YYYY-MM-DD"),
         "a null tier": (rows_with(spec=None), "the tier is null"),
