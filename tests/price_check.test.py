@@ -134,6 +134,23 @@ test("Windows/Spot/Low-Priority rows are excluded even though Windows shares met
      check_azure_isolates_linux_ondemand)
 
 
+def check_azure_spot_meter_says_spot_in_its_sku():
+    """Two tiers can be read off one Azure SKU — MI300X's hyperscaler price and
+    its spot price are both ND96isr_MI300X_v5. The spot reading records "(Spot)"
+    in its SKU, so the page never shows one label beside two prices; the
+    on-demand reading keeps the SKU verbatim."""
+    with fake_http_get((_azure_body(AZURE_H100_ITEMS), {})):
+        spot = pc.fetch_azure("Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5 Spot", 8)
+    assert abs(spot.price_per_gpu - 18.169536 / 8) < 1e-9, spot.price_per_gpu
+    assert spot.sku == "Standard_ND96isr_H100_v5 (Spot)", spot.sku
+    with fake_http_get((_azure_body(AZURE_H100_ITEMS), {})):
+        on_demand = pc.fetch_azure("Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5", 8)
+    assert on_demand.sku == "Standard_ND96isr_H100_v5", on_demand.sku
+
+test("a spot meter's reading says Spot in its SKU; the on-demand reading keeps the SKU verbatim",
+     check_azure_spot_meter_says_spot_in_its_sku)
+
+
 def check_azure_zero_rows_aborts():
     with fake_http_get((_azure_body([]), {})):
         msg = raises(pc.fetch_azure, "Standard_ND97_Nonexistent_v5", "eastus", "X", 8)
@@ -1368,6 +1385,9 @@ def check_every_real_price_record_follows_the_rules():
         rows = json.load(f)["data"]
     bad = price_record_problems(rows, pc.SOURCE_MAP, _dt.datetime.now(_dt.timezone.utc).date())
     assert not bad, "priceRecord breaks a rule:\n       " + "\n       ".join(bad)
+    # A floor, so the rules above cannot pass by having nothing to read.
+    held = sum(len(r.get("priceRecord") or {}) for r in rows.values())
+    assert held >= 2, f"only {held} real priceRecord(s) — the rules above checked almost nothing"
 
 
 test("every real priceRecord follows the rules", check_every_real_price_record_follows_the_rules)

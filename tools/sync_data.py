@@ -71,7 +71,7 @@ def load_benchmarks():
 
 # Field order per table, and the contract each renderer emits. Optional fields
 # are written only on the rows that carry them: `default` marks exactly one
-# card, and a `default: false` on the other eleven would be a value nobody
+# card, and a `default: false` on every other row would be a value nobody
 # wrote in data/gpus.json. Same for `estimated`, which benchmarks/data.json
 # documents as "omit or false for real measurements". `priceSource` is the
 # same shape of optional: no row carries it yet (see _meta.schema.priceSource),

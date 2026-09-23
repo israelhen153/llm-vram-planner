@@ -2057,11 +2057,20 @@ def check_interactive_gpu_menu_marks_sourced_prices():
     for i, (k, v) in enumerate(gr.GPUS.items()):
         line = menu_lines.get(str(i + 1))
         assert line and k in line, f"{k}: not found on its own numbered menu line: {line!r}"
+        # Either kind of named, dated source earns the mark.
+        ps = {**(v.get("priceRecord") or {}), **(v.get("priceSource") or {})}
+        checked += 1
+        if v["spot"] is None or v["hyper"] is None:
+            # A card with a null end shows the tiers it does price, cheapest tier
+            # first, each marked the same way, or the null wording — never "$None".
+            priced = [(t, v[t]) for t in ("spot", "spec", "hyper") if v[t] is not None]
+            want = ("-".join(f"${p}{'*' if t in ps else ''}" for t, p in priced) + "/hr"
+                    if priced else "no confirmed hourly price")
+            assert line.endswith(f", {want})"), f"{k}: menu line should end ', {want})': {line!r}"
+            continue
         price_m = MENU_PRICE_RE.search(line)
         assert price_m, f"{k}: menu line does not carry a $spot-$hyper/hr figure: {line!r}"
         spot_starred, hyper_starred = bool(price_m.group(1)), bool(price_m.group(2))
-        ps = v.get("priceSource") or {}
-        checked += 1
         assert spot_starred == ("spot" in ps), (
             f"{k}: spot price starred={spot_starred}, but priceSource carries spot={('spot' in ps)}: {line!r}")
         assert hyper_starred == ("hyper" in ps), (
@@ -2121,16 +2130,21 @@ PROBE_CARDS = [
     ("T4 16GB (no FP8 cores)", gr.GPUS["t4-16"]),
     ("B200 192GB", gr.GPUS["b200-192"]),
     ("dual-GCD board (2 devices)", DUAL),
-    # Two cards whose vendor is not nvidia, under names no current row has.
-    # data/gpus.json documents `vendor` as the hook for vendor-specific guidance
-    # and the rows that come next are vendor "amd", so a report branching on the
-    # vendor — or on the card's name — is the designed extension rather than a
-    # hypothetical. Their perfKey is one PERF has, because a probe is a pair and
-    # the constants are what the pair varies: fixing the key isolates the vendor.
-    ("MI300X 192GB (amd, oam)",
-     dict(gr.GPUS["b200-192"], name="MI300X 192 GB", vendor="amd", form="oam")),
+    # Two cards whose vendor is not nvidia, under names no catalog row has, so a
+    # report branching on the vendor — or on a name it has never seen — is probed
+    # apart from the real rows below. Their perfKey is one PERF has, because a
+    # probe is a pair and the constants are what the pair varies: fixing the key
+    # isolates the vendor.
+    ("MI355X 288GB (amd, oam, not in the catalog)",
+     dict(gr.GPUS["b200-192"], name="MI355X 288 GB", vendor="amd", form="oam")),
     ("Radeon PRO W7900 (amd, workstation)",
      dict(gr.GPUS["rtx6000ada-48"], name="Radeon PRO W7900 48 GB", vendor="amd")),
+] + [
+    # And every real row whose vendor is not nvidia, derived from the catalog so
+    # a row added later joins the grid: their real names, forms, device counts
+    # and unpriced tiers, given a key PERF has for the side with constants.
+    (f"{g['name']} (catalog, {g['vendor']}, {g['form']})", dict(g, perfKey="nvidia"))
+    for g in gr.GPUS.values() if g["vendor"] != "nvidia"
 ]
 PROBE_PRESETS = [("8B dense", "llama31-8b"), ("70B dense", "llama31-70b"),
                  ("30B MoE", "qwen3-30b"), ("26B SWA", "gemma4-26b"), ("671B MLA", "dsr1-671b")]
@@ -2152,9 +2166,13 @@ PROBE_LOADS = [
      {"ctx": 32768, "conc": 4, "shared_prefix": 8192, "prefix_caching": False}),
 ]
 # More than one key with no PERF entry, because a leak can be gated on the key
-# itself rather than on its absence — and the keys that arrive next are named:
-# cdna2, cdna3, rdna3.
-PROBE_UNKNOWN_KEYS = ["no-such-key", "cdna3"]
+# itself rather than on its absence. Every key a catalog row names that PERF has
+# no entry for — the AMD architectures — derived rather than typed, plus a
+# placeholder no row will ever name.
+PROBE_UNKNOWN_KEYS = ["no-such-key"] + sorted({g["perfKey"] for g in gr.GPUS.values()
+                                                if g["perfKey"] not in gr.PERF})
+assert len(PROBE_UNKNOWN_KEYS) >= 2, "no catalog row names a key PERF lacks, so only the placeholder is probed"
+CATALOG_NAMES = {g["name"] for g in gr.GPUS.values()}
 
 
 def absent_pairs():
@@ -2252,8 +2270,7 @@ def check_without_constants_only_the_figures_that_need_them_go():
         axes["a shared prefix with caching off"] += bool(kcfg.get("shared_prefix")) and not bool(
             kcfg.get("prefix_caching"))
         axes["a vendor that is not nvidia"] += kcfg["gpu"]["vendor"] != "nvidia"
-        axes["a card name unlike the catalog's"] += bool(
-            re.search(r"MI300|Radeon", kcfg["gpu"]["name"]))
+        axes["a card name unlike the catalog's"] += kcfg["gpu"]["name"] not in CATALOG_NAMES
         axes["the placeholder unknown key"] += ucfg["perfKey"] == "no-such-key"
         axes["an unknown key that is not the placeholder"] += ucfg["perfKey"] != "no-such-key"
         for q in ("gguf", "gptq", "awq", "fp8"):
@@ -2671,7 +2688,10 @@ def golden_cases():
         base.update(over)
         return base
 
-    cases = [(f"{slug} — 8B bf16, 16 at 8K", cfg(gr.GPUS[slug], 1))
+    # NVLink as every builder sets it: asked for, and granted only to a board
+    # that has it (nvlink_for). Left on for every card, the MI250X — two devices
+    # on one board with no NVLink — recorded a report the tool cannot produce.
+    cases = [(f"{slug} — 8B bf16, 16 at 8K", cfg(gr.GPUS[slug], 1, nvlink=gr.supports_nvlink(gr.GPUS[slug])))
              for slug in sorted(gr.GPUS)]
     h, t4 = gr.GPUS["h100-80"], gr.GPUS["t4-16"]
     keyless_h, keyless_t4 = dict(h, perfKey="no-such-key"), dict(t4, perfKey="no-such-key")
@@ -2686,7 +2706,7 @@ def golden_cases():
         ("h100-80 x1 — fp8 weights on silicon that has the tensor cores",
          cfg(h, 1, bpp=1, quant="fp8")),
         ("t4-16 x1 — fp8 weights on silicon that does not, so the caveat",
-         cfg(t4, 1, bpp=1, quant="fp8")),
+         cfg(t4, 1, bpp=1, quant="fp8", nvlink=False)),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
         ("h100-80 x1 — a model imported by id rather than named by a preset",
          cfg(h, 1, hf_model="org/imported-8b", model_name="imported-8b", preset=None)),
@@ -2698,7 +2718,7 @@ def golden_cases():
         ("(no constants) h100-80 x8 PCIe — 70B bf16, past one domain",
          cfg(keyless_h, 8, seventy, preset="llama31-70b", nvlink=False)),
         ("(no constants) t4-16 x1 — fp8 on silicon without the tensor cores",
-         cfg(keyless_t4, 1, bpp=1, quant="fp8")),
+         cfg(keyless_t4, 1, bpp=1, quant="fp8", nvlink=False)),
     ]
     return cases
 
@@ -2787,11 +2807,19 @@ def check_the_golden_records_the_shapes_that_matter():
     named = [label for label, _ in cases]
     missing = [slug for slug in gr.GPUS if not any(n.startswith(slug + " ") for n in named)]
     assert not missing, f"the golden stopped recording catalog rows: {missing}"
+    # Every case is a report the tool can produce: NVLink only on a board that has it.
+    unreachable = [label for label, c in cases if c.get("nvlink") and not gr.supports_nvlink(c["gpu"])]
+    assert not unreachable, f"the golden records NVLink on a board without it: {unreachable}"
 
     def comp(cfg):
         return gr.compute(cfg)
 
     shapes = {
+        "an OAM board with more than one device": lambda cs: any(
+            c["gpu"].get("form") == "oam" and gr.device_count_for(c) > 1 for c in cs),
+        "a price tier with no confirmed price": lambda cs: any(
+            c["gpu"].get(t) is None for c in cs for t in ("hyper", "spec", "spot")),
+        "a price recorded by hand": lambda cs: any(c["gpu"].get("priceRecord") for c in cs),
         "a card with constants": lambda cs: any(comp(c)["throughput_modelled"] for c in cs),
         "a card with none": lambda cs: any(not comp(c)["throughput_modelled"] for c in cs),
         "one board": lambda cs: any(c["n_gpu"] == 1 for c in cs),

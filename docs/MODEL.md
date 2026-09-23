@@ -119,7 +119,7 @@ It is gated on the card, not just the selection. Turing and Ampere have no FP8 t
 
 Before this was modelled, both compute figures ran on the BF16 number regardless of precision, so FP8 was **2× understated** on capable hardware — and TTFT worse than that, since prefill is pure compute with no bandwidth roofline to cap it. The figure labelled a ceiling was not one: real FP8 serving exceeded it.
 
-**TFLOPS figures here are dense, not sparse.** NVIDIA datasheets headline the 2:4-structured-sparsity number: the H100 SXM's "1,979 teraFLOPS" carries a footnote reading *"With sparsity"*. LLM inference does not use structured sparsity, so the real dense figure is half that — 989.5. Using the headline number would overstate the ceiling 2×. This trips up a lot of secondary sources, and several web results during this project's research got it wrong.
+**TFLOPS figures here are dense, not sparse.** NVIDIA datasheets headline the 2:4-structured-sparsity number: the H100 SXM's "1,979 teraFLOPS" carries a footnote reading *"With sparsity"*. LLM inference does not use structured sparsity, so the real dense figure is half that — 989.5. Using the headline number would overstate the ceiling 2×. This trips up a lot of secondary sources, and several web results during this project's research got it wrong. AMD prints both figures side by side — the MI300X's 1307.4 TFLOPS BF16 beside 2614.9 "with structured sparsity" — and the catalog's AMD rows take the dense one too. The MI250X's 383 TFLOPS is the whole two-GCD board, not one GCD, which the catalog stores as a board figure and divides by its two devices.
 
 ### TTFT is a different phase entirely
 

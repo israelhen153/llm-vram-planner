@@ -96,6 +96,11 @@ GPUS = {
     "rtxpro-96": {"gb":96,"bw":1792,"hyper":5.0,"spec":2.5,"spot":2.0,"tflops":504,"name":"RTX PRO 6000 96 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"pcie","caps":{"fp8": True},"priceSource":{"spec": {"provider": "coreweave", "sku": "NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory)", "region": "global", "date": "2026-09-22", "price": 2.5}}},
     "h200-141": {"gb":141,"bw":4800,"hyper":7.91,"spec":6.31,"spot":2.5,"tflops":990,"name":"H200 141 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p5en.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 7.91}, "spec": {"provider": "coreweave", "sku": "NVIDIA HGX H200", "region": "global", "date": "2026-09-22", "price": 6.31}}},
     "b200-192": {"gb":192,"bw":8000,"hyper":14.24,"spec":6.69,"spot":2.12,"tflops":2250,"name":"B200 192 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p6-b200.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 14.24}, "spec": {"provider": "lambda", "sku": "NVIDIA B200 SXM6 (180 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 6.69}}},
+    "rx7900xtx-24": {"gb":24,"bw":960,"hyper":None,"spec":None,"spot":None,"tflops":123,"name":"RX 7900 XTX 24 GB","vendor":"amd","perfKey":"rdna3","devices":1,"form":"consumer","caps":{"fp8": False}},
+    "mi210-64": {"gb":64,"bw":1638.4,"hyper":None,"spec":None,"spot":None,"tflops":181,"name":"MI210 64 GB","vendor":"amd","perfKey":"cdna2","devices":1,"form":"pcie","caps":{"fp8": False}},
+    "mi250x-128": {"gb":128,"bw":3276.8,"hyper":None,"spec":None,"spot":None,"tflops":383,"name":"MI250X 128 GB","vendor":"amd","perfKey":"cdna2","devices":2,"form":"oam","caps":{"fp8": False}},
+    "mi300x-192": {"gb":192,"bw":5325,"hyper":6.0,"spec":2.39,"spot":1.11,"tflops":1307.4,"name":"MI300X 192 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2", "date": "2026-09-23", "price": 6.0}, "spot": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5 (Spot)", "region": "eastus2", "date": "2026-09-23", "price": 1.11}},"priceRecord":{"spec": {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global", "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}}},
+    "mi325x-256": {"gb":256,"bw":6000,"hyper":None,"spec":3.8,"spot":None,"tflops":1307.4,"name":"MI325X 256 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceRecord":{"spec": {"provider": "DigitalOcean", "sku": "AMD Instinct MI325X GPU Droplet", "region": "global", "date": "2026-09-23", "price": 3.8, "url": "https://www.digitalocean.com/pricing/gpu-droplets"}}},
 }
 # GPU_TABLE:END
 
@@ -110,7 +115,7 @@ DEFAULT_GPU_KEY = next((k for k, g in GPUS.items() if g.get("default")), next(it
 def supports_nvlink(gpu):
     """Whether this board carries NVLink at all.
 
-    Seven of the twelve catalogued cards do not — T4, L4, RTX 4090, RTX 5090,
+    Seven of the twelve NVIDIA cards do not, nor does any AMD card — T4, L4, RTX 4090, RTX 5090,
     RTX 6000 Ada, L40S, RTX PRO 6000 — yet nvlink defaulted to True at every
     construction site below, so a multi-GPU report on any of them claimed an
     interconnect the machine does not have and scaled throughput by 0.85 for

@@ -693,6 +693,9 @@ test('every catalog row declares the FP8 support its silicon actually has', () =
     'l4-24': true, 'l40s-48': true, 'rtx4090-24': true, 'rtx5090-32': true,
     'rtx6000ada-48': true, 'rtxpro-96': true,
     'h100-80': true, 'h200-141': true, 'b200-192': true,
+    // AMD, per ROCm's precision-support table: FP8 matrix support on CDNA3 only.
+    'rx7900xtx-24': false /* RDNA3 */, 'mi210-64': false /* CDNA2 */, 'mi250x-128': false /* CDNA2 */,
+    'mi300x-192': true /* CDNA3 */, 'mi325x-256': true /* CDNA3 */,
   };
   assert.deepStrictEqual(Object.keys(FP8_BY_ARCH).sort(), Object.keys(GPU_TABLE).sort(),
     'a catalog row was added or removed without deciding its FP8 support here');
@@ -708,13 +711,16 @@ test('every catalog row names the constants its silicon was measured with', () =
      checked against itself passes any value. Moving one row to a key PERF does
      not have — through data/gpus.json and the sync tool, so every other check
      agrees with itself — would take that card's throughput off the page, and
-     no other test reads most of these rows' throughput. All twelve are NVIDIA
-     silicon, and nvidia is the entry PERF has for them. A row added without
-     deciding its key here fails. */
+     no other test reads most of these rows' throughput. The twelve NVIDIA
+     cards run on nvidia, the entry PERF has for them; the five AMD cards name
+     their architecture, which PERF has no entry for, so their throughput is
+     absent by design. A row added without deciding its key here fails. */
   const PERF_KEY_BY_ROW = {
     't4-16': 'nvidia', 'l4-24': 'nvidia', 'rtx4090-24': 'nvidia', 'rtx5090-32': 'nvidia',
     'a100-40': 'nvidia', 'rtx6000ada-48': 'nvidia', 'l40s-48': 'nvidia', 'a100-80': 'nvidia',
     'h100-80': 'nvidia', 'rtxpro-96': 'nvidia', 'h200-141': 'nvidia', 'b200-192': 'nvidia',
+    'rx7900xtx-24': 'rdna3', 'mi210-64': 'cdna2', 'mi250x-128': 'cdna2',
+    'mi300x-192': 'cdna3', 'mi325x-256': 'cdna3',
   };
   assert.deepStrictEqual(Object.keys(PERF_KEY_BY_ROW).sort(), Object.keys(GPU_TABLE).sort(),
     'a catalog row was added or removed without deciding its perfKey here');
@@ -2534,17 +2540,21 @@ const PROBE_CARDS = [
   ['T4 16GB (PCIe, no FP8 cores)', GPU_TABLE['t4-16'], 't4-16'],
   ['B200 192GB (sxm)', GPU_TABLE['b200-192'], 'b200-192'],
   ['dual-GCD board (2 devices)', dualGCD, undefined],
-  /* Two cards whose vendor is not nvidia, under names no current row has.
-     data/gpus.json documents `vendor` as the hook for vendor-specific guidance
-     and the rows that come next are vendor "amd", so a renderer branching on the
-     vendor — or on the card's name, which is the other thing that will look
-     unfamiliar — is the designed extension rather than a hypothetical. Their
-     perfKey is one PERF has, because a probe is a pair and the constants are
-     what the pair varies: fixing the key here is what isolates the vendor. */
-  ['MI300X 192GB (amd, oam)',
-   { ...GPU_TABLE['b200-192'], name: 'MI300X 192 GB', vendor: 'amd', form: 'oam' }, undefined],
+  /* Two cards whose vendor is not nvidia, under names no catalog row has, so a
+     renderer branching on the vendor — or on a name it has never seen — is
+     probed apart from the real rows below. Their perfKey is one PERF has,
+     because a probe is a pair and the constants are what the pair varies:
+     fixing the key here is what isolates the vendor. */
+  ['MI355X 288GB (amd, oam, not in the catalog)',
+   { ...GPU_TABLE['b200-192'], name: 'MI355X 288 GB', vendor: 'amd', form: 'oam' }, undefined],
   ['Radeon PRO W7900 (amd, workstation)',
    { ...GPU_TABLE['rtx6000ada-48'], name: 'Radeon PRO W7900 48 GB', vendor: 'amd' }, undefined],
+  /* And every real row whose vendor is not nvidia, derived from the catalog so
+     a row added later joins the grid without editing this list: their real
+     names, forms, device counts and unpriced tiers, given a key PERF has for the
+     side of the pair with constants. */
+  ...Object.entries(GPU_TABLE).filter(([, g]) => g.vendor !== 'nvidia')
+    .map(([key, g]) => [`${g.name} (catalog, ${g.vendor}, ${g.form})`, { ...g, perfKey: 'nvidia' }, key]),
 ];
 const PROBE_MODELS = [
   ['8B dense', { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 }],
@@ -2574,10 +2584,16 @@ const PROBE_LOADS = [
    { contextLength: 32768, concurrency: 4, sharedPrefix: 8192, prefixCaching: false }],
 ];
 /* More than one key with no PERF entry, because a leak can be gated on the key
-   itself rather than on its absence — and the keys that arrive next are named:
-   cdna2, cdna3, rdna3. One key would have made "the key is unknown" and "the key
-   is this string" the same probe. */
-const PROBE_UNKNOWN_KEYS = ['no-such-key', 'cdna3'];
+   itself rather than on its absence. Every key a catalog row names that PERF has
+   no entry for — the AMD architectures — derived rather than typed, so a leak
+   gated on any real one is probed, plus a placeholder no row will ever name.
+   One key would have made "the key is unknown" and "the key is this string"
+   the same probe. */
+const PROBE_UNKNOWN_KEYS = ['no-such-key',
+  ...new Set(Object.values(GPU_TABLE).map(g => g.perfKey).filter(k => !Object.hasOwn(PERF, k)))];
+assert.ok(PROBE_UNKNOWN_KEYS.length >= 2, 'no catalog row names a key PERF lacks, so only the placeholder is probed');
+/* The names no catalog row carries, for the probe axis below that needs one. */
+const CATALOG_NAMES = new Set(Object.values(GPU_TABLE).map(g => g.name));
 const absentProbes = () => {
   const probes = [];
   let i = 0;
@@ -2623,7 +2639,7 @@ test('the probe grid renders the shapes the tool ships', () => {
     'a full NVLink domain': p => p.known.gpuCount * (p.known.gpuDevices || 1) === 8,
     'past an NVLink domain': p => p.known.gpuCount * (p.known.gpuDevices || 1) > 8,
     'a vendor that is not nvidia': p => p.known.vendor !== 'nvidia',
-    'a card name unlike the catalog\'s': p => /MI300|Radeon/.test(p.known.gpuName),
+    'a card name unlike the catalog\'s': p => !CATALOG_NAMES.has(p.known.gpuName),
     'an unknown key that is not the placeholder': p => p.unknown.perfKey !== 'no-such-key',
     'the placeholder unknown key': p => p.unknown.perfKey === 'no-such-key',
     'FP8 KV cache': p => p.known.kvBytesPerValue < 2,
@@ -4024,8 +4040,14 @@ const GOLDEN_PAGE = path.join(__dirname, 'golden', 'page.json');
    often nobody would read the diff. */
 const goldenCases = () => {
   const dense8B = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
+  /* NVLink as the page sets it: the control asks for it, and readInputState()
+     grants it only to a board that has it. asState() leaves it on for any card,
+     which no single-device row ever shows — the MI250X, two devices on one board
+     with no NVLink, was the first row where the golden recorded a page the tool
+     cannot produce. */
   const cases = Object.keys(GPU_TABLE).sort().map(slug =>
-    [`${slug} — 8B bf16, 16 at 8K`, asState(GPU_TABLE[slug], 1, dense8B)]);
+    [`${slug} — 8B bf16, 16 at 8K`,
+     asState(GPU_TABLE[slug], 1, { ...dense8B, hasNVLink: supportsNVLink(GPU_TABLE[slug]) })]);
   const h = GPU_TABLE['h100-80'], t4 = GPU_TABLE['t4-16'];
   return cases.concat([
     ['h100-80 x8 NVLink — 70B bf16', asState(h, 8, { params: 70, layers: 80 })],
@@ -4044,7 +4066,7 @@ const goldenCases = () => {
     ['h100-80 x1 — fp8 weights on silicon that has the tensor cores',
      asState(h, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
     ['t4-16 x1 — fp8 weights on silicon that does not, so the caveat',
-     asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+     asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
     ['h100-80 x1 — 256 at 1K, so the KV queue warning',
      asState(h, 1, { ...dense8B, contextLength: 1024, concurrency: 256 })],
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
@@ -4068,7 +4090,7 @@ const goldenCases = () => {
                hasNVLink: false })],
     ['(no constants) t4-16 x1 — fp8 on silicon without the tensor cores',
      asState({ ...t4, perfKey: 'no-such-key' }, 1,
-             { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+             { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
   ]);
 };
 
@@ -4124,8 +4146,17 @@ test('the golden records every catalog row, and the shapes that change what the 
   const named = cases.map(([name]) => name);
   const missing = Object.keys(GPU_TABLE).filter(slug => !named.some(n => n.startsWith(`${slug} `)));
   assert.deepStrictEqual(missing, [], `the golden stopped recording catalog rows: ${missing}`);
+  // Every case is a page the tool can produce: NVLink only on a board that has it.
+  const unreachable = cases.filter(([, st]) => st.hasNVLink && !supportsNVLink({ form: st.gpuForm }))
+    .map(([name]) => name);
+  assert.deepStrictEqual(unreachable, [], `the golden records NVLink on a board without it: ${unreachable}`);
   const modelled = st => computeInference(st).throughputModelled;
   const shapes = {
+    'an OAM board with more than one device': sts =>
+      sts.some(st => st.gpuForm === 'oam' && st.gpuCount * (st.gpuDevices || 1) > 1),
+    'a price tier with no confirmed price': sts =>
+      sts.some(st => [st.gpuHyperCost, st.gpuSpecCost, st.gpuSpotCost].includes(null)),
+    'a price recorded by hand': sts => sts.some(st => st.priceRecord && Object.keys(st.priceRecord).length),
     'a card with constants': sts => sts.some(modelled),
     'a card with none': sts => sts.some(st => !modelled(st)),
     'one board': sts => sts.some(st => st.gpuCount === 1),

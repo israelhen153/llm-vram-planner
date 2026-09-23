@@ -211,7 +211,13 @@ def fetch_azure(sku, region, meter_name, divisor):
         raise SourceError(f"azure {sku}: retailPrice is not numeric: {price!r}")
     per_gpu = price / divisor
     _check_band(per_gpu, f"azure:{sku}")
-    return Reading(provider="azure", sku=sku, region=region, price_per_gpu=per_gpu, date=today(),
+    # A spot or low-priority meter is a different price for the same SKU. The
+    # recorded SKU says which, so two tiers read off one SKU — MI300X's
+    # hyperscaler and spot, both ND96isr_MI300X_v5 — never show one label
+    # beside two prices.
+    kind = next((k for k in ("Spot", "Low Priority") if meter_name.endswith(" " + k)), None)
+    recorded_sku = f"{sku} ({kind})" if kind else sku
+    return Reading(provider="azure", sku=recorded_sku, region=region, price_per_gpu=per_gpu, date=today(),
                     evidence=f"${price:.4f}/hr / {divisor} GPUs, meterName={meter_name!r}")
 
 
@@ -612,6 +618,47 @@ SOURCE_MAP = {
         },
         "spot": {"primary": {"kind": "vast", "gpuName": "H100 SXM", "divisor": 1,
                               "minSample": 5, "numGpus": 1}},
+    },
+    # ---- AMD, read 2026-09-23 (docs/research/amd-gpu-pricing.md). A tier the
+    # catalog records as null says here why no price qualified; a tier priced
+    # from a page no reader here can fetch says where its hand record came from.
+    "rx7900xtx-24": {
+        "hyper": {"manual": "no hyperscaler rents this card (checked 2026-09-23)"},
+        "spec": {"manual": "no hourly rate anywhere: HOSTKEY rents it only monthly, as a pre-order "
+                           "(checked 2026-09-23)"},
+        "spot": {"manual": "Vast.ai lists no RX 7900 XTX offers (checked 2026-09-23)"},
+    },
+    "mi210-64": {
+        "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
+                            "AWS or GCP (checked 2026-09-23)"},
+        "spec": {"manual": "Runcrate shows only an average and a range from a generated page, no list "
+                           "price (checked 2026-09-23)"},
+        "spot": {"manual": "no spot or marketplace offer found (checked 2026-09-23)"},
+    },
+    "mi250x-128": {
+        "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
+                            "AWS or GCP (checked 2026-09-23)"},
+        "spec": {"manual": "Cirrascale lists the MI250, not the MI250X, and only monthly; Runcrate shows only "
+                           "an average and a range (checked 2026-09-23)"},
+        "spot": {"manual": "no spot or marketplace offer found (checked 2026-09-23)"},
+    },
+    "mi300x-192": {
+        "hyper": {"primary": {"kind": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2",
+                              "meterName": "ND96isrMI300Xv5", "divisor": 8}},
+        # The lowest confirmed on-demand price, which no reader here can fetch;
+        # recorded by hand in data/gpus.json's priceRecord, with its page.
+        "spec": {"manual": "RunPod Secure Cloud list price, recorded by hand in priceRecord: no RunPod "
+                           "reader in this build"},
+        "spot": {"primary": {"kind": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2",
+                             "meterName": "ND96isrMI300Xv5 Spot", "divisor": 8}},
+    },
+    "mi325x-256": {
+        "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
+                            "AWS or GCP (checked 2026-09-23)"},
+        "spec": {"manual": "DigitalOcean list price, recorded by hand in priceRecord: no DigitalOcean "
+                           "reader in this build"},
+        "spot": {"manual": "Vultr lists a preemptible price, but no location offers the plan "
+                           "(checked 2026-09-23)"},
     },
     "rtxpro-96": {
         "hyper": {"manual": "no hyperscaler rents this card"},
