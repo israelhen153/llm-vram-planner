@@ -137,6 +137,10 @@ PY_RET_BATCH = "        \"eff_batch\": eff_batch, \"max_batch_kv\": max_batch_kv
 PY_RET_TP = "        \"tp\": tp, \"dp\": dp,\n"
 PY_RET_FITS = "        \"fits\": fits, \"comfortable\": comfortable,\n"
 PY_COST_HEAD = "        story.append(Paragraph(\"Cost estimate\", self.styles[\"SectionHead\"]))\n"
+# The two clocks the report prints, which tests/report.test.py holds still —
+# see engine_r8_held_clock.py.
+PY_CLOCK_COVER = "datetime.now().strftime('%B %d, %Y at %H:%M')"
+PY_CLOCK_FOOTER = "datetime.now().strftime(\"%Y-%m-%d\")"
 SYNC_FIELDS = "              \"vendor\", \"perfKey\", \"devices\", \"form\", \"caps\")\n"
 
 # fix/cost-provenance: priceSourceLabel()/price_source_label() and every
