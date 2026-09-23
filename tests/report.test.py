@@ -1474,8 +1474,15 @@ def check_a_null_tier_stays_none_and_every_pdf_surface_says_so():
             if "hyper" in nulls:
                 assert not any(base["priceSource"]["hyper"]["sku"] in t for t in texts), (
                     f"{label}: a null hyper tier still names its source")
+            assert any('"No confirmed hourly price" marks a tier' in t for t in texts), (
+                f"{label}: the notes do not explain the wording a null tier shows")
             checked += 1
     assert checked == 7 * 2
+    priced = story_strings(dict(gr.arch_fields(gr.PRESETS["llama31-8b"]), bpp=2, ctx=8192, conc=16,
+                                n_gpu=1, gpu=base, nvlink=True, kv_bpp=2, vendor=base["vendor"],
+                                perfKey=base["perfKey"], hf_model="m", model_name="M"))
+    assert not any("No confirmed hourly price" in t for t in priced), (
+        "a card with every tier priced explains a wording it never shows")
 
 
 test("a price tier with no confirmed price stays None, and every PDF surface says so",

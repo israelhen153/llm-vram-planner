@@ -3545,9 +3545,19 @@ test('a price tier with no confirmed price stays null, and every cost surface sa
         assert.ok(!text.includes(bad), `${label}: the page prints "${bad}"`);
       if (nulls.includes('hyper'))
         assert.ok(!text.includes(base.priceSource.hyper.sku), `${label}: a null hyper tier still names its source`);
+      // The notes explain the wording, and the spot figure is highlighted only when there is one.
+      assert.ok(out['notes-output'].includes('"No confirmed hourly price" marks a tier'),
+        `${label}: the notes do not explain the wording a null tier shows`);
+      const spotRow = rows.find(r => r.includes('<b>Spot / marketplace</b>'));
+      assert.strictEqual(spotRow.includes('var(--success)'), !nulls.includes('spot'),
+        `${label}: the spot monthly cell is highlighted ${nulls.includes('spot') ? 'over a dash' : 'nowhere'}`);
       checked++;
     }
   assert.strictEqual(checked, 7 * 2, 'not every null pattern was rendered');
+  // And a card that prices every tier says nothing about a wording it never shows.
+  const priced = renderEverything(asState(base, 1, { params: 8, layers: 32 })).html;
+  assert.ok(!priced['notes-output'].includes('No confirmed hourly price'),
+    'a card with every tier priced explains a wording it never shows');
 });
 
 console.log('\nThe interconnect control follows the card');

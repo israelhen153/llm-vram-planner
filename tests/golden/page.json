@@ -4933,7 +4933,6 @@
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
-     "style=color:var(--success);font-weight:500;padding:8px 10px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -4942,6 +4941,7 @@
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
@@ -5021,7 +5021,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5144,7 +5144,6 @@
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
-     "style=color:var(--success);font-weight:500;padding:8px 10px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -5153,6 +5152,7 @@
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
@@ -5253,7 +5253,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Infinity Fabric between devices. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Infinity Fabric between devices. NCCL buffers ~0.3 GB/peer. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -5587,7 +5587,6 @@
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
-     "style=color:var(--success);font-weight:500;padding:8px 10px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -5596,6 +5595,7 @@
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
@@ -5675,7 +5675,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -6666,7 +6666,6 @@
      "style=border-bottom:.5px solid var(--border)",
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
-     "style=color:var(--success);font-weight:500;padding:8px 10px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -6675,6 +6674,7 @@
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
      "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
      "style=font-weight:500;padding:8px 10px",
@@ -6758,7 +6758,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is not modelled for this hardware: no measured utilisation is published for it. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [

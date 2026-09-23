@@ -1107,7 +1107,9 @@ class ReportCard:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("LINEBELOW", (0, 0), (-1, -2), 0.3, C_BD),
-            ("BACKGROUND", (3, 3), (3, 3), C_OK_BG),
+            # The spot row's monthly figure is the one highlighted — but only
+            # a figure: a null spot tier's dash is not the cheapest anything.
+            *([("BACKGROUND", (3, 3), (3, 3), C_OK_BG)] if c["hourly_spot"] is not None else []),
         ]))
         story.append(cost_table)
         story.append(Paragraph(
@@ -1201,6 +1203,11 @@ class ReportCard:
         # each tier's own source or says "not recorded"; this note points
         # there instead of re-describing it with language a sourced,
         # dated, attributed figure does not deserve.
+        # The table's wording for a tier with no price, explained beside the
+        # rest of the price notes, and only on a card that has one.
+        if any(gpu.get(t) is None for t in ("hyper", "spec", "spot")):
+            notes.append("\"No confirmed hourly price\" marks a tier for which no provider's own page "
+                         "prices this card by the hour.")
         notes.append("GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
                      "specialized, spot/marketplace — see each tier's own source above, or "
                      "\"not recorded\" where it has no confirmed source. Reserved instances "

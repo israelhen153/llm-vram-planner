@@ -1913,7 +1913,7 @@ function renderCost(state, computed) {
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px;color:var(--text-secondary);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Per board/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Total/hr (${state.gpuCount}×)</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Monthly (730h)</td></tr>`;
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuHyperCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlyHyper, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyH, 0)}</td></tr>`;
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpecCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpec, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyS, 0)}</td></tr>`;
-  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpotCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpot, 2)}</td><td style="padding:8px 10px;font-weight:500;color:var(--success)">${usd(monthlySp, 0)}</td></tr>`;
+  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpotCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpot, 2)}</td><td style="padding:8px 10px;font-weight:500${monthlySp == null ? '' : ';color:var(--success)'}">${usd(monthlySp, 0)}</td></tr>`;
   html += '</table></div>';
   html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px">Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand.</div>';
   setHTML('cost-output', html);
@@ -2150,6 +2150,11 @@ function renderNotes(state, computed) {
   // same shape of overclaim the deleted composite sub-labels were. renderCost
   // above already names each tier's source or says "not recorded"; this note
   // only points there rather than re-describing what it found.
+  /* The table's wording for a tier with no price, explained where the notes
+     explain the table's other wording (cold check, round 1: the note named
+     "not recorded" and nothing else). Only on a card that has such a tier. */
+  if ([state.gpuHyperCost, state.gpuSpecCost, state.gpuSpotCost].includes(null))
+    notes += '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour. ';
   notes += 'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier\'s source, or "not recorded" where it has no confirmed source. Reserved typically 30-60% off on-demand. ';
   if (trainingEnabled) notes += 'Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation. ';
   setHTML('notes-output', notes);
