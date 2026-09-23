@@ -2286,7 +2286,11 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
   // so the provenance has to travel with the number in the same text block
   // rather than living only on the page next to it.
   report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'hyper')})\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'spec')})\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'spot')})\n`;
-  const emitted = document.querySelector('#command-output code');
+  /* The command box's own <code>, not the panel's first one: a banner above the box
+     can hold <code> spans of its own (the GGUF one does), and '#command-output code'
+     quoted the first of those, so a GGUF plan's report carried `vllm serve` where
+     the command belonged. The Copy button never had this problem: it reads its own box. */
+  const emitted = document.querySelector('#command-output .code-box code');
   report += `\n## vLLM command\n\`\`\`\n${emitted ? emitted.textContent : ''}\n\`\`\`\n`;
 
   navigator.clipboard.writeText(report).then(() => {

@@ -1339,8 +1339,17 @@ const renderHarness = (inputs = {}) => {
        empty string here left that block empty for every card, so a renderer that
        dropped the command for one of them changed nothing a test could see. */
     querySelector: (sel) => {
+      /* As a browser resolves them: the panel's first <code> wherever it sits, or the
+         one inside the command box. The first is what the report used to quote, and a
+         banner's <code> span precedes the box, so modelling both is what lets a test
+         see the difference. */
+      const panel = out['command-output'] || '';
       if (sel === '#command-output code') {
-        const m = (out['command-output'] || '').match(/<code>([\s\S]*?)<\/code>/);
+        const m = panel.match(/<code>([\s\S]*?)<\/code>/);
+        return m ? { textContent: m[1] } : null;
+      }
+      if (sel === '#command-output .code-box code') {
+        const m = panel.match(/<div class="code-box">[\s\S]*?<code>([\s\S]*?)<\/code>/);
         return m ? { textContent: m[1] } : null;
       }
       return { textContent: '', innerHTML: '', parentElement: null };
@@ -3634,6 +3643,34 @@ test('no document promises a --device flag', () => {
   const py = fs.readFileSync(path.join(ROOT, 'generate_report.py'), 'utf8');
   for (const [name, src] of [['index.html', html], ['generate_report.py', py]]) {
     assert.ok(!/['"`]--device/.test(src), `${name} emits a --device flag`);
+  }
+});
+
+console.log('\nThe copied report quotes the command box');
+/* Every weight option the page offers, read from its own <select>, so an option
+   added tomorrow is covered without anyone listing it here. */
+const WEIGHT_SELECT = html.slice(html.indexOf('<select id="weight-precision"'),
+                                 html.indexOf('</select>', html.indexOf('<select id="weight-precision"')));
+const WEIGHT_OPTIONS = [...WEIGHT_SELECT.matchAll(/<option value="([\d.]+)" data-q="(\w*)"/g)]
+  .map(m => ({ bytesPerParam: Number(m[1]), quantMethod: m[2] }));
+assert.ok(WEIGHT_OPTIONS.filter(o => o.quantMethod === 'gguf').length >= 6
+          && WEIGHT_OPTIONS.some(o => o.quantMethod !== 'gguf'),
+  'the weight options were not found in the page, so the checks below would check nothing');
+const dense8BPlan = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
+test('the copied report quotes the whole command, for every weight option the page offers', () => {
+  /* The report used to quote the panel's first <code>, which for a GGUF plan was a
+     span in the banner above the box: the report said `vllm serve` and nothing else. */
+  for (const opt of WEIGHT_OPTIONS) {
+    const h = renderHarness();
+    const st = asState(GPU_TABLE['h100-80'], 1, { ...dense8BPlan, ...opt });
+    const c = h.computeInference(st);
+    assert.ok(c.fits, `8B at ${opt.bytesPerParam} B/param should fit one H100, or this checks nothing`);
+    h.renderCommand(st, c);
+    const box = (h.out['command-output'] || '').match(/<div class="code-box">[\s\S]*?<code>([\s\S]*?)<\/code>/);
+    assert.ok(box && box[1].startsWith('vllm serve ') && box[1].includes('--max-model-len'),
+      `${opt.bytesPerParam}/${opt.quantMethod}: no command box on the panel`);
+    assert.ok(h.exportSummary(st, c).includes('\n## vLLM command\n```\n' + box[1] + '\n```\n'),
+      `${opt.bytesPerParam}/${opt.quantMethod}: the copied report does not quote the command box`);
   }
 });
 
