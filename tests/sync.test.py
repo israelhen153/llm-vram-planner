@@ -290,6 +290,50 @@ test("a GPU row with no perfKey is refused by both renderers, naming the row and
      check_a_gpu_row_without_perf_key_is_refused)
 
 
+print("\nA price tier with no confirmed price is null, and nothing else may be")
+NULL_TIER_ROW = {"gb": 256, "bw": 6000, "hyper": None, "spec": 3.8, "spot": None,
+                 "tflops": 1307.4, "name": "Null-tier 256 GB", "vendor": "amd", "perfKey": "cdna3",
+                 "devices": 1, "form": "oam", "caps": {"fp8": True}}
+
+
+def check_a_null_tier_round_trips_through_both_languages():
+    """A tier with no confirmed hourly price is null in data/gpus.json and has to
+    arrive in each engine as that language's null — JS null, Python None — not
+    as 0, not as a string, and not dropped from the row."""
+    rows = {"probe-null": NULL_TIER_ROW}
+    assert js_eval(sync_data.render_gpu_js(rows), "GPU_TABLE") == rows, "the JS block did not round-trip"
+    block = sync_data.render_gpu_py(rows)
+    ns = {}
+    exec("\n".join(l for l in block.splitlines() if not l.startswith("#")), ns)
+    assert ns["GPUS"] == rows, "the Python block did not round-trip"
+    assert '"hyper":None' in block and "hyper:null" in sync_data.render_gpu_js(rows), (
+        "a null tier did not render as each language's null literal")
+
+
+test("a null price tier renders as null and None, and round-trips", check_a_null_tier_round_trips_through_both_languages)
+
+
+def check_null_outside_a_price_tier_is_refused():
+    """Only hyper/spec/spot may be null. Anywhere else a null is a value nobody
+    decided to empty — tflops, the name, perfKey, a nested priceSource field —
+    and both renderers refuse it, naming the row and the field."""
+    cases = [dict(NULL_TIER_ROW, tflops=None), dict(NULL_TIER_ROW, perfKey=None),
+             dict(NULL_TIER_ROW, spec=3.8, priceSource={"spec": {"provider": "azure", "sku": None,
+                                                                   "region": "eastus", "date": "2026-09-23",
+                                                                   "price": 3.8}})]
+    for row in cases:
+        for render in (sync_data.render_gpu_js, sync_data.render_gpu_py):
+            try:
+                render({"probe-null": row})
+            except SystemExit as e:
+                assert "'probe-null'" in str(e) or "None" in str(e), f"{render.__name__}: {e}"
+                continue
+            raise AssertionError(f"{render.__name__} rendered a null outside a price tier: {row}")
+
+
+test("a null anywhere but a price tier is refused by both renderers", check_null_outside_a_price_tier_is_refused)
+
+
 def check_marker_text_in_a_value_is_refused():
     """A note discussing this tool by name is ordinary contributor prose.
 

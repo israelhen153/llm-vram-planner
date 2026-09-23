@@ -146,6 +146,12 @@ def interconnect_name(cfg):
 PROVIDER_NAMES = {"azure": "Azure", "aws": "AWS", "lambda": "Lambda",
                    "coreweave": "CoreWeave", "vast": "Vast.ai"}
 
+# What a price tier the catalog records as null says, on every surface: no
+# provider's own page confirmed an hourly price for this card in this tier. One
+# string so every view says the same thing, and never a dollar figure in its
+# place. Mirrored by NO_PRICE in index.html.
+NO_PRICE = "no confirmed hourly price"
+
 
 def price_source_label(gpu, tier):
     """Two states for a cost figure's provenance, and only two: sourced —
@@ -157,6 +163,10 @@ def price_source_label(gpu, tier):
     by priceSourceLabel() in index.html; each engine's own tests check its
     own surfaces independently, since there is no shared render path between
     an HTML page and a PDF to diff against."""
+    # No price, so no source either way: "not recorded" would imply a figure
+    # that exists without provenance.
+    if tier in gpu and gpu[tier] is None:
+        return NO_PRICE
     src = (gpu.get("priceSource") or {}).get(tier)
     if not src:
         return "not recorded"
@@ -529,9 +539,11 @@ def compute(cfg):
         ttft_warm_ms = ttft_for(ctx - eff_prefix) if prefix_caching else ttft_cold_ms
         ttft_ms = ttft_warm_ms
     # Boards, not devices: a dual-GCD module is one line item on the invoice.
-    hourly_hyper = gpu["hyper"] * n_gpu
-    hourly_spec = gpu["spec"] * n_gpu
-    hourly_spot = gpu["spot"] * n_gpu
+    # A tier with no confirmed hourly price is None in the catalog and stays
+    # None here. Mirrors index.html, where null * gpuCount would be 0.
+    hourly_hyper = None if gpu["hyper"] is None else gpu["hyper"] * n_gpu
+    hourly_spec = None if gpu["spec"] is None else gpu["spec"] * n_gpu
+    hourly_spot = None if gpu["spot"] is None else gpu["spot"] * n_gpu
 
     fits = per_total <= device_gb
     comfortable = per_total <= device_gb * 0.9
@@ -1045,20 +1057,29 @@ class ReportCard:
         # same defect the composite sub-labels on the web tool had. Which
         # provider actually did is now price_source_label(), printed below
         # the table rather than crammed into a column this table already has.
+        def usd(v, digits=2):
+            """A dollar figure, or the dash that holds a null tier's place."""
+            if v is None:
+                return "—"
+            return f"${round(v):,}" if digits == 0 else f"${v:.{digits}f}"
+
+        def monthly(hourly):
+            return None if hourly is None else hourly * 730
+
         cost_data = [
             ["Provider tier", "Per board/hr", f"Total/hr ({cfg['n_gpu']}×)", "Monthly (730h)"],
             ["Hyperscaler",
-             f"${gpu['hyper']:.2f}",
-             f"${c['hourly_hyper']:.2f}",
-             f"${round(c['hourly_hyper']*730):,}"],
+             usd(gpu['hyper']),
+             usd(c['hourly_hyper']),
+             usd(monthly(c['hourly_hyper']), 0)],
             ["Specialized",
-             f"${gpu['spec']:.2f}",
-             f"${c['hourly_spec']:.2f}",
-             f"${round(c['hourly_spec']*730):,}"],
+             usd(gpu['spec']),
+             usd(c['hourly_spec']),
+             usd(monthly(c['hourly_spec']), 0)],
             ["Spot / marketplace",
-             f"${gpu['spot']:.2f}",
-             f"${c['hourly_spot']:.2f}",
-             f"${round(c['hourly_spot']*730):,}"],
+             usd(gpu['spot']),
+             usd(c['hourly_spot']),
+             usd(monthly(c['hourly_spot']), 0)],
         ]
         cost_table = Table(cost_data, colWidths=[55*mm, 30*mm, 30*mm, 35*mm])
         cost_table.setStyle(TableStyle([
@@ -1255,10 +1276,16 @@ def interactive_mode():
     print("\nAvailable GPUs (* marks a price with a recorded source; see the cost table after selecting):")
     for i, (k, v) in enumerate(GPUS.items()):
         ps = v.get("priceSource") or {}
-        spot_mark = "*" if "spot" in ps else ""
-        hyper_mark = "*" if "hyper" in ps else ""
-        print(f"  {i+1:2d}. {k:14s} — {v['name']} ({v['bw']} GB/s, "
-             f"${v['spot']}{spot_mark}-${v['hyper']}{hyper_mark}/hr)")
+        if v["spot"] is not None and v["hyper"] is not None:
+            span = (f"${v['spot']}{'*' if 'spot' in ps else ''}"
+                    f"-${v['hyper']}{'*' if 'hyper' in ps else ''}/hr")
+        else:
+            # A card with a null tier: the tiers that do have a price, cheapest
+            # tier first, or the null wording when none do. Never "$None".
+            priced = [(t, v[t]) for t in ("spot", "spec", "hyper") if v[t] is not None]
+            span = ("-".join(f"${p}{'*' if t in ps else ''}" for t, p in priced) + "/hr"
+                    if priced else NO_PRICE)
+        print(f"  {i+1:2d}. {k:14s} — {v['name']} ({v['bw']} GB/s, {span})")
     gpu_choice = int(input("\nSelect GPU number: ").strip()) - 1
     gpu_key = list(GPUS.keys())[gpu_choice]
     gpu = GPUS[gpu_key]

@@ -8,7 +8,7 @@
       "bw": "Memory bandwidth in GB/s, used as the decode roofline's bandwidth term.",
       "hyper": "Hyperscaler on-demand price in $/hr per GPU (AWS/GCP/Azure).",
       "spec": "Specialized-cloud price in $/hr per GPU (Lambda, CoreWeave, RunPod and similar).",
-      "spot": "Spot/marketplace price in $/hr per GPU (Vast.ai and similar).",
+      "spot": "Spot/marketplace price in $/hr per GPU (Vast.ai and similar). Any of hyper/spec/spot may be null — and only those three, which tools/sync_data.py enforces — when no provider's own page confirms an hourly price for the card in that tier: every surface then reads \"no confirmed hourly price\" with no figure, cost ranges span only the priced tiers, a null tier carries no priceSource, and tools/price_check.py never fetches it (its SOURCE_MAP entry must be manual, with the reason).",
       "tflops": "Dense BF16 tensor-core TFLOPS. NVIDIA datasheets headline the 2:4-structured-sparsity number (e.g. H100 SXM '1,979 teraFLOPS* / *With sparsity'); LLM inference does not use structured sparsity, so this is the dense figure — half the headline number.",
       "name": "Display name shown in the GPU dropdown's option label and in generate_report.py's PDF/CLI output, e.g. 'H100 80 GB'.",
       "vendor": "The hardware vendor, 'nvidia' on every row here. Carried onto each engine's state but read by neither engine's arithmetic: it used to select the PERF constants, and that is perfKey's job now, because one vendor spans architectures whose measured constants differ. Kept for vendor-specific deployment guidance, which is a different question from how fast a card is.",

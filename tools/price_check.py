@@ -768,6 +768,22 @@ def _cross_check_disagreement(reading, secondary_readings):
 # and the label stays.
 
 
+# A catalog tier recorded as null has no confirmed hourly price. An automated
+# source cannot introduce one: there is nothing to confirm or move, and a price
+# appearing where the catalog declared none is a decision for a person.
+NULL_TIER_NOTE = ("the catalog records no confirmed hourly price for this tier (null), so an "
+                  "automated source has nothing to confirm or move; a null tier needs a manual "
+                  "SOURCE_MAP entry")
+
+
+def automated_null_tiers(catalog_data, source_map):
+    """Every slug/tier SOURCE_MAP would fetch although the catalog records it as null."""
+    return sorted(f"{slug}/{tier}" for slug, tiers in source_map.items()
+                  for tier, cfg in tiers.items()
+                  if "primary" in cfg and tier in catalog_data.get(slug, {})
+                  and catalog_data[slug][tier] is None)
+
+
 def run(gpus_data, source_map, shared, only=None, slugs=None):
     outcomes = []
     for slug, row in gpus_data.items():
@@ -781,6 +797,11 @@ def run(gpus_data, source_map, shared, only=None, slugs=None):
                 continue
             if "manual" in cfg:
                 outcomes.append(Outcome(slug, tier, "MANUAL", current=row.get(tier), note=cfg["manual"]))
+                continue
+            if row.get(tier) is None:
+                # main() refuses this map before any fetch; this is the same rule
+                # for a caller that hands run() a map directly.
+                outcomes.append(Outcome(slug, tier, "ABORTED", current=None, note=NULL_TIER_NOTE))
                 continue
             primary = cfg["primary"]
             if only is not None and primary["kind"] not in only:
@@ -1012,6 +1033,11 @@ def main(argv=None):
     if missing:
         raise SystemExit(f"SOURCE_MAP names slug(s) {sorted(missing)} that data/gpus.json no longer "
                           "has — the map has drifted from the catalog and needs fixing before this can run")
+
+    on_null = automated_null_tiers(catalog["data"], SOURCE_MAP)
+    if on_null:
+        raise SystemExit(f"SOURCE_MAP automates {on_null}, which data/gpus.json records as null — "
+                         f"{NULL_TIER_NOTE}")
 
     slugs = None
     if args.slug:

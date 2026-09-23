@@ -793,6 +793,83 @@ test("--only excluding a tier's configured kind reports it as manual for this ru
      check_run_only_filter_excludes_a_kind)
 
 
+def check_run_never_fetches_a_null_tier():
+    """A catalog tier recorded as null has no confirmed hourly price, so an
+    automated source has nothing to confirm or move — and a price appearing
+    where the catalog declared none is a person's decision. run() never fetches
+    it, whatever the map says; a manual entry keeps its own reason."""
+    calls = []
+
+    def fetch(spec, shared):
+        calls.append(spec["kind"])
+        return _reading(price=5.0)
+
+    gpus = {"x": {"hyper": None, "spec": None, "spot": 2.0}}
+    source_map = {"x": {"hyper": {"primary": {"kind": "azure"}},
+                        "spec": {"manual": "no specialised cloud lists it"},
+                        "spot": {"primary": {"kind": "vast"}}}}
+    original = pc._fetch_one
+    pc._fetch_one = fetch
+    try:
+        outcomes = {o.tier: o for o in pc.run(gpus, source_map, shared={})}
+    finally:
+        pc._fetch_one = original
+    assert calls == ["vast"], f"fetched {calls}: a null tier was sent to its source"
+    assert outcomes["hyper"].status == "ABORTED" and "null" in outcomes["hyper"].note, outcomes["hyper"]
+    assert outcomes["spec"].status == "MANUAL" and outcomes["spec"].note == "no specialised cloud lists it"
+    assert outcomes["spot"].status != "ABORTED"
+
+test("run() never fetches a tier the catalog records as null", check_run_never_fetches_a_null_tier)
+
+
+def check_main_refuses_to_automate_a_null_tier():
+    """Before any fetch: a SOURCE_MAP that automates a null tier is a
+    configuration error, named, rather than a run that quietly skips it."""
+    catalog = {"_meta": {}, "data": {"x": {"hyper": None, "spec": 1.0, "spot": 1.0}}}
+    assert pc.automated_null_tiers(catalog["data"], {"x": {"hyper": {"primary": {"kind": "azure"}}}}) == ["x/hyper"]
+    assert pc.automated_null_tiers(catalog["data"], {"x": {"hyper": {"manual": "none"}}}) == []
+    assert pc.automated_null_tiers(catalog["data"], {"x": {"spec": {"primary": {"kind": "azure"}}}}) == []
+    saved = pc.load_catalog, pc.SOURCE_MAP
+    pc.load_catalog = lambda: (catalog, "/dev/null")
+    pc.SOURCE_MAP = {"x": {"hyper": {"primary": {"kind": "azure"}}}}
+    try:
+        try:
+            pc.main([])
+        except SystemExit as e:
+            assert "x/hyper" in str(e) and "null" in str(e), f"the refusal does not name the tier: {e}"
+        else:
+            raise AssertionError("main() ran with an automated source on a null tier")
+    finally:
+        pc.load_catalog, pc.SOURCE_MAP = saved
+
+test("main() refuses a SOURCE_MAP that automates a null tier, before fetching",
+     check_main_refuses_to_automate_a_null_tier)
+
+
+def check_every_real_null_tier_is_manual():
+    """The real catalog and the real map, held to the same rule."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    assert pc.automated_null_tiers(rows, pc.SOURCE_MAP) == []
+    bad = [f"{slug}/{tier}" for slug, row in rows.items() for tier in ("hyper", "spec", "spot")
+           if row.get(tier) is None and tier in (row.get("priceSource") or {})]
+    assert not bad, f"a null tier carries a priceSource: {bad}"
+
+test("in the real catalog, no null tier is automated or carries a priceSource",
+     check_every_real_null_tier_is_manual)
+
+
+def check_apply_keeps_a_null_tier_null():
+    """apply_to_text() re-serialises every row. A null tier must come back as
+    JSON null — not 0, not "None", not dropped."""
+    raw = ('{\n  "_meta": {\n    "last_updated": "2026-08-24"\n  },\n  "data": {\n'
+           '    "x": { "hyper": null, "spec": 1.0, "spot": 2.0 }\n  }\n}\n')
+    new_text = pc.apply_to_text(raw, {"x": {"hyper": None, "spec": 1.5, "spot": 2.0}}, ["x"], "2026-09-23")
+    assert '"hyper": null' in new_text and json.loads(new_text)["data"]["x"]["hyper"] is None, new_text
+
+test("apply_to_text() writes a null tier back as null", check_apply_keeps_a_null_tier_null)
+
+
 # ===========================================================================
 # Cross-check disagreement: two live sources for one run, not catalog-vs-live
 # ===========================================================================

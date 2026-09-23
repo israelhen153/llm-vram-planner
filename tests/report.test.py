@@ -1404,6 +1404,90 @@ test("the interactive CLI names an OAM board's fabric when it skips the NVLink q
      check_interactive_names_an_oam_boards_fabric)
 
 
+# ---- a price tier with no confirmed price ---------------------------------
+NO_PRICE = "no confirmed hourly price"
+TIER_ROWS = (("hyper", "Hyperscaler", "hourly_hyper"), ("spec", "Specialized", "hourly_spec"),
+             ("spot", "Spot / marketplace", "hourly_spot"))
+
+
+def check_a_null_tier_stays_none_and_every_pdf_surface_says_so():
+    """A tier the catalog records as null has no confirmed hourly price. compute()
+    keeps it None, the cost table prints a dash in each figure's place, the
+    Source line says why, and nothing in the report reads "None", "nan" or
+    "$0.00" — nor a neighbouring tier's price in the empty row. Every non-empty
+    set of null tiers, one board and three. The card carries h100-80's
+    provenance, so a source attached to a null tier would show."""
+    base = gr.GPUS["h100-80"]
+    checked = 0
+    for mask in range(1, 8):
+        for boards in (1, 3):
+            card = dict(base)
+            nulls = [t for i, (t, _, _) in enumerate(TIER_ROWS) if mask & (1 << i)]
+            for t in nulls:
+                card[t] = None
+            label = f"null {'+'.join(nulls)}, {boards} board{'s' if boards > 1 else ''}"
+            cfg = dict(gr.arch_fields(gr.PRESETS["llama31-8b"]), bpp=2, ctx=8192, conc=16,
+                       n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+                       perfKey=card["perfKey"], hf_model="m", model_name="M")
+            c = gr.compute(cfg)
+            texts = story_strings(cfg)
+            for tier, row_label, field in TIER_ROWS:
+                at = texts.index(row_label)
+                cells = texts[at + 1:at + 4]
+                if tier in nulls:
+                    assert c[field] is None, f"{label}: compute() {field} is {c[field]!r}, not None"
+                    assert cells == ["—", "—", "—"], f"{label}: the {row_label} row reads {cells}"
+                else:
+                    assert c[field] == card[tier] * boards, f"{label}: {field}"
+                    assert cells[0] == f"${card[tier]:.2f}" and cells[1] == f"${card[tier] * boards:.2f}", (
+                        f"{label}: the {row_label} row reads {cells}")
+            source = next(t for t in texts if t.startswith("Source — "))
+            for tier, row_label, _ in TIER_ROWS:
+                name = {"hyper": "Hyperscaler", "spec": "Specialized", "spot": "Spot"}[tier]
+                if tier in nulls:
+                    assert f"{name}: {NO_PRICE}." in source, f"{label}: the Source line reads {source!r}"
+            for bad in ("None", "nan", "$0.00", "$0 "):
+                hit = [t for t in texts if bad in t]
+                assert not hit, f"{label}: the report prints {bad!r}: {hit[0][:160]!r}"
+            if "hyper" in nulls:
+                assert not any(base["priceSource"]["hyper"]["sku"] in t for t in texts), (
+                    f"{label}: a null hyper tier still names its source")
+            checked += 1
+    assert checked == 7 * 2
+
+
+test("a price tier with no confirmed price stays None, and every PDF surface says so",
+     check_a_null_tier_stays_none_and_every_pdf_surface_says_so)
+
+
+def check_the_cli_menu_prints_only_the_prices_a_card_has():
+    """The interactive GPU menu shows each card's spot-to-hyperscaler span. A card
+    with a null tier shows the tiers it does price, cheapest tier first, and a
+    card with none says so — never "$None". Cards priced on both ends keep the
+    line they always had."""
+    base = gr.GPUS["h100-80"]
+    shapes = {"probe-none": (None, None, None), "probe-spec": (None, 3.8, None),
+              "probe-no-hyper": (None, 2.39, 1.11), "probe-all": (6.0, 2.39, 1.11)}
+    extra = {k: dict(base, hyper=h, spec=sp, spot=st, priceSource={}, name=f"{k} 80 GB")
+             for k, (h, sp, st) in shapes.items()}
+    buf = io.StringIO()
+    with unittest.mock.patch.dict(gr.GPUS, extra):
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index("h100-80") + 1),
+                   "1", "3", "n", str(REQ["ctx"]), str(REQ["conc"])]
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(buf):
+            gr.interactive_mode()
+    menu = {line.split(".", 1)[1].split()[0]: line for line in buf.getvalue().splitlines()
+            if re.match(r"^\s+\d+\. ", line)}
+    want = {"probe-none": f"({base['bw']} GB/s, {NO_PRICE})", "probe-spec": f"({base['bw']} GB/s, $3.8/hr)",
+            "probe-no-hyper": f"({base['bw']} GB/s, $1.11-$2.39/hr)", "probe-all": f"({base['bw']} GB/s, $1.11-$6.0/hr)"}
+    for k, tail in want.items():
+        assert menu[k].endswith(tail), f"{k}: the menu line reads {menu[k]!r}, expected it to end {tail!r}"
+    assert not any("None" in line for line in menu.values()), "the menu printed None"
+
+
+test("the CLI menu prints only the prices a card has", check_the_cli_menu_prints_only_the_prices_a_card_has)
+
+
 # ---- the VRAM breakdown row adds up ---------------------------------------
 # A reader adds a breakdown up. Before the weights divisor was corrected this
 # row did add up, because nothing replicated; correcting it broke the relation

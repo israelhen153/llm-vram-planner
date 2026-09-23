@@ -1365,9 +1365,13 @@ function computeInference(state) {
   // Cost
   // Boards, not devices: the catalog prices a board and a dual-GCD module is
   // one line item. Billing per device double-counts it.
-  const hourlyHyper = gpuHyperCost * gpuCount;
-  const hourlySpec = gpuSpecCost * gpuCount;
-  const hourlySpot = gpuSpotCost * gpuCount;
+  /* A tier with no confirmed hourly price is null in the catalog and stays
+     null here. null * gpuCount is 0 in JavaScript, which every cost surface
+     would print as a free cluster. */
+  const tierCost = (perBoard) => (perBoard == null ? null : perBoard * gpuCount);
+  const hourlyHyper = tierCost(gpuHyperCost);
+  const hourlySpec = tierCost(gpuSpecCost);
+  const hourlySpot = tierCost(gpuSpotCost);
 
   return {
     isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
@@ -1837,6 +1841,19 @@ function renderThroughput(state, computed) {
    tier names themselves. */
 const PROVIDER_NAMES = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda', coreweave: 'CoreWeave', vast: 'Vast.ai' };
 
+/* What a price tier the catalog records as null says, on every surface: no
+   provider's own page confirmed an hourly price for this card in this tier.
+   One string so every view says the same thing, and never a dollar figure in
+   its place. Mirrored by NO_PRICE in generate_report.py. */
+const NO_PRICE = 'no confirmed hourly price';
+const TIER_COST_FIELD = { hyper: 'gpuHyperCost', spec: 'gpuSpecCost', spot: 'gpuSpotCost' };
+/* A dollar figure, or the dash that holds a null tier's place in a table:
+   digits 2 for a rate, 0 for a rounded monthly total. */
+function usd(v, digits) {
+  if (v == null) return '—';
+  return digits === 0 ? '$' + Math.round(v).toLocaleString() : '$' + v.toFixed(digits);
+}
+
 /* Two states for a cost figure's provenance, and only two: sourced — name
    the provider, its own SKU string verbatim, the region, and the day it was
    read — or "not recorded", said plainly. This is what replaced the old
@@ -1851,6 +1868,11 @@ const PROVIDER_NAMES = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda', coreweave
    check their own engine's surfaces independently — there is no shared
    render path between an HTML page and a PDF to diff against. */
 function priceSourceLabel(state, tier) {
+  // No price, so no source either way: "not recorded" would imply a figure
+  // that exists without provenance. Explicit null only — what a catalog row
+  // carries — so a state that never held the tier's price is not read as one
+  // that has none.
+  if (state[TIER_COST_FIELD[tier]] === null) return NO_PRICE;
   const src = state.priceSource && state.priceSource[tier];
   if (!src) return 'not recorded';
   const provider = PROVIDER_NAMES[src.provider] || src.provider;
@@ -1858,12 +1880,13 @@ function priceSourceLabel(state, tier) {
 }
 
 function renderCost(state, computed) {
-  const monthlyH = computed.hourlyHyper * 730, monthlyS = computed.hourlySpec * 730, monthlySp = computed.hourlySpot * 730;
+  const monthly = (hourly) => (hourly == null ? null : hourly * 730);
+  const monthlyH = monthly(computed.hourlyHyper), monthlyS = monthly(computed.hourlySpec), monthlySp = monthly(computed.hourlySpot);
   let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">';
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px;color:var(--text-secondary);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Per board/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Total/hr (${state.gpuCount}×)</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Monthly (730h)</td></tr>`;
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuHyperCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlyHyper.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${Math.round(monthlyH).toLocaleString()}</td></tr>`;
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuSpecCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlySpec.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${Math.round(monthlyS).toLocaleString()}</td></tr>`;
-  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuSpotCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlySpot.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500;color:var(--success)">$${Math.round(monthlySp).toLocaleString()}</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuHyperCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlyHyper, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyH, 0)}</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpecCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpec, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyS, 0)}</td></tr>`;
+  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpotCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpot, 2)}</td><td style="padding:8px 10px;font-weight:500;color:var(--success)">${usd(monthlySp, 0)}</td></tr>`;
   html += '</table></div>';
   html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px">Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand.</div>';
   setHTML('cost-output', html);
@@ -2062,8 +2085,12 @@ function renderComparisons() {
        tier ($1.86), and rtx4090-24's spot ($0.54) sits above its specialized
        tier ($0.45). A range has to span whichever tier is actually cheapest
        and priciest, not whichever tier is cheapest and priciest by name. */
-    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot];
-    html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${Math.min(...cmpCosts).toFixed(2)}–$${Math.max(...cmpCosts).toFixed(2)}</span></div>`;
+    // Only the tiers with a price: a null tier has no figure to bound a range.
+    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot].filter(v => v != null);
+    const cmpRange = cmpCosts.length === 0 ? NO_PRICE
+      : cmpCosts.length === 1 ? `$${cmpCosts[0].toFixed(2)}`
+      : `$${Math.min(...cmpCosts).toFixed(2)}–$${Math.max(...cmpCosts).toFixed(2)}`;
+    html += `<div class="row"><span class="label">Cost/hr</span><span class="val">${cmpRange}</span></div>`;
     /* One card can hold a sourced tier beside an unrecorded one (h100-80 today
        has hyper+spec sourced and spot not), so this is per snapshot like the
        two rows above, not a page-level fact. Three short lines rather than
@@ -2183,9 +2210,13 @@ function renderExecutiveSummary(state, computed) {
   // is above its specialized tier). A range has to span whichever tier is
   // actually cheapest and priciest, not whichever tier is cheapest and
   // priciest by name — see the same fix in renderComparisons.
-  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot];
+  // Only the tiers with a price, as in renderComparisons.
+  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot].filter(v => v != null);
   const monthlyCheapest = Math.round(Math.min(...execCosts) * 730);
   const monthlyExpensive = Math.round(Math.max(...execCosts) * 730);
+  const monthlyRange = execCosts.length === 0 ? NO_PRICE
+    : execCosts.length === 1 ? `$${monthlyCheapest.toLocaleString()}/mo`
+    : `$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo`;
 
   let html = `<p class="exec-headline"><svg class="ti-ico" style="color:var(${verdictColor});margin-right:6px" aria-hidden="true" focusable="false"><use href="#${verdictIcon}"></use></svg>${modelName}</p>`;
 
@@ -2222,7 +2253,7 @@ function renderExecutiveSummary(state, computed) {
        another architecture's. */
     html += `<div class="exec-row"><span class="exec-label">Speed and server throughput</span><span class="exec-value">Not modelled <span style="color:var(--warning-text);font-weight:500">· no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer</span></span></div>`;
   }
-  html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">${monthlyRange}</span></div>`;
   // Which tier is cheapest and which is priciest now varies by card (see
   // execCosts above), so a fixed "Spot: ... Hyperscaler: ..." label would
   // sometimes name the wrong two tiers as the ones behind the range, or
@@ -2307,7 +2338,10 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
   // report is the one surface a reader can paste somewhere else entirely,
   // so the provenance has to travel with the number in the same text block
   // rather than living only on the page next to it.
-  report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'hyper')})\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'spec')})\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'spot')})\n`;
+  const costLine = (label, hourly, tier) => hourly == null
+    ? `- ${label}: ${NO_PRICE}\n`
+    : `- ${label}: $${hourly.toFixed(2)}/hr · $${Math.round(hourly * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, tier)})\n`;
+  report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n${costLine('Hyperscaler', computed.hourlyHyper, 'hyper')}${costLine('Specialized', computed.hourlySpec, 'spec')}${costLine('Spot', computed.hourlySpot, 'spot')}`;
   const emitted = document.querySelector('#command-output code');
   report += `\n## vLLM command\n\`\`\`\n${emitted ? emitted.textContent : ''}\n\`\`\`\n`;
 

@@ -69,7 +69,7 @@ S["C3 py: the general 'GPU prices are... estimates' note regains a composite and
                              .replace("hyperscaler, \"\n", "hyperscaler (AWS/GCP/Azure), \"\n"), 1)]
 S["C4 js: renderComparisons' Cost/hr falls back to spot-hyperscaler instead of true min/max"] = [
     (INDEX_HTML, JS_CMP_RANGE,
-     "<span class=\"val\">$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}</span>", 1)]
+     "`$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}`", 1)]
 S["C5 js: renderCost's spot sub-label falls back to the old composite when spot is unsourced"] = [
     (INDEX_HTML, JS_CMP_COST_SOURCE,
      JS_CMP_COST_SOURCE.replace(

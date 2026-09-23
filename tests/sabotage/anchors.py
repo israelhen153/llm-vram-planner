@@ -154,8 +154,8 @@ JS_EXEC_COST_SOURCE = ("Cost source</span><span class=\"exec-value\" style=\"fon
                        "font-weight:400;color:var(--text-muted)\">Hyper: "
                        "${priceSourceLabel(state, 'hyper')} · Spec: ${priceSourceLabel(state, 'spec')} "
                        "· Spot: ${priceSourceLabel(state, 'spot')}</span>")
-JS_CMP_RANGE = ("<span class=\"val\">$${Math.min(...cmpCosts).toFixed(2)}"
-                "–$${Math.max(...cmpCosts).toFixed(2)}</span>")
+JS_CMP_RANGE = ("`$${Math.min(...cmpCosts).toFixed(2)}"
+                "–$${Math.max(...cmpCosts).toFixed(2)}`")
 JS_EXEC_RANGE = "const monthlyCheapest = Math.round(Math.min(...execCosts) * 730);\n"
 PY_PRICE_LABEL_RET = "    return f\"{provider} · {src['sku']} · {src['region']} · read {src['date']}\"\n"
 PY_TIER_HYPERSCALER = "            [\"Hyperscaler\",\n"

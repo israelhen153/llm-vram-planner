@@ -2138,8 +2138,11 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
   assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
   const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
   assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const noPriceDecl = html.match(/^const NO_PRICE = .+;$/m);
+  const tierFieldDecl = html.match(/^const TIER_COST_FIELD = \{.*\};$/m);
+  assert.ok(noPriceDecl && tierFieldDecl, 'NO_PRICE / TIER_COST_FIELD not found in index.html');
   const priceSourceLabel = new Function(
-    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+    `${providerNamesDecl[0]}\n${noPriceDecl[0]}\n${tierFieldDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
 
   const state = { priceSource: { hyper: { provider: 'azure', sku: 'Standard_ND96isr_H100_v5',
                                            region: 'eastus', date: '2026-09-16' } } };
@@ -2164,6 +2167,13 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
   assert.strictEqual(priceSourceLabel({ priceSource: {} }, 'hyper'), 'not recorded');
   assert.strictEqual(priceSourceLabel({ priceSource: { spec: { provider: 'x', sku: 'y', region: 'z', date: 'd' } } }, 'hyper'),
     'not recorded', 'a sourced spec tier must not leak into a hyper lookup');
+  // A tier the catalog records as null has no price, so it has no source to
+  // name either — even with a source attached, which the catalog tests refuse.
+  assert.strictEqual(priceSourceLabel({ gpuHyperCost: null, priceSource: undefined }, 'hyper'),
+    'no confirmed hourly price');
+  assert.strictEqual(priceSourceLabel({ gpuSpotCost: null, priceSource: { spot: state.priceSource.hyper } }, 'spot'),
+    'no confirmed hourly price', 'a null tier rendered the source attached to it');
+  assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.5, priceSource: undefined }, 'spec'), 'not recorded');
 });
 
 test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
@@ -2184,8 +2194,11 @@ test('every cost surface names a source or says "not recorded", discovered not e
   assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
   const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
   assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const noPriceDecl = html.match(/^const NO_PRICE = .+;$/m);
+  const tierFieldDecl = html.match(/^const TIER_COST_FIELD = \{.*\};$/m);
+  assert.ok(noPriceDecl && tierFieldDecl, 'NO_PRICE / TIER_COST_FIELD not found in index.html');
   const priceSourceLabel = new Function(
-    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+    `${providerNamesDecl[0]}\n${noPriceDecl[0]}\n${tierFieldDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
   assert.strictEqual(priceSourceLabel({ priceSource: undefined }, 'hyper'), 'not recorded');
 
   const params = {};
@@ -2413,9 +2426,28 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     const h = renderHarness();
     const st = asState(card, 1, { params: 8, layers: 32 });
     const c = h.computeInference(st);
-    const trueMin = Math.min(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
-    const trueMax = Math.max(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
-    if (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot))
+    /* A row with a tier the catalog records as null prices fewer than three:
+       its range spans the priced tiers, one priced tier prints alone, and none
+       prints the null wording. The test below walks every null pattern on a
+       synthetic card; this holds each real row to the same rule. */
+    const priced = [c.hourlyHyper, c.hourlySpec, c.hourlySpot].filter(v => v !== null);
+    if (priced.length < 2) {
+      h.pushSnapshot(st, c);
+      h.renderComparisons();
+      h.renderExecutiveSummary(st, c);
+      const want = priced.length ? [`$${priced[0].toFixed(2)}`, `$${Math.round(priced[0] * 730).toLocaleString()}/mo`]
+                                 : ['no confirmed hourly price', 'no confirmed hourly price'];
+      assert.ok((h.out['comparison-output'] || '').includes(`Cost/hr</span><span class="val">${want[0]}</span>`),
+        `${slug}: renderComparisons' Cost/hr is not ${want[0]}`);
+      assert.ok((h.out['exec-summary'] || '').includes(`Monthly cost range</span><span class="exec-value">${want[1]}</span>`),
+        `${slug}: the Monthly cost range is not ${want[1]}`);
+      checkedCmp++; checkedExec++;
+      continue;
+    }
+    const trueMin = Math.min(...priced);
+    const trueMax = Math.max(...priced);
+    if (priced.length === 3 &&
+        (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot)))
       inverted++;   // specialized is the true floor or ceiling, not just spot/hyper — the regime that broke
 
     h.pushSnapshot(st, c);
@@ -2426,12 +2458,10 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     checkedCmp++;
     assert.strictEqual(Number(cmpMatch[1]), Number(trueMin.toFixed(2)),
       `${slug}: renderComparisons' Cost/hr floor is ${cmpMatch[1]}, expected the true cheapest ` +
-      `tier ${trueMin.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
-      `spot=${c.hourlySpot.toFixed(2)})`);
+      `tier ${trueMin.toFixed(2)} (hyper=${c.hourlyHyper} spec=${c.hourlySpec} spot=${c.hourlySpot})`);
     assert.strictEqual(Number(cmpMatch[2]), Number(trueMax.toFixed(2)),
       `${slug}: renderComparisons' Cost/hr ceiling is ${cmpMatch[2]}, expected the true priciest ` +
-      `tier ${trueMax.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
-      `spot=${c.hourlySpot.toFixed(2)})`);
+      `tier ${trueMax.toFixed(2)} (hyper=${c.hourlyHyper} spec=${c.hourlySpec} spot=${c.hourlySpot})`);
 
     Object.keys(h.out).forEach(k => delete h.out[k]);
     h.renderExecutiveSummary(st, c);
@@ -2454,6 +2484,7 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     `only ${inverted} catalog row(s) have specialized as the true floor/ceiling instead of spot/hyper — ` +
     'expected at least l40s-48 and rtx4090-24, so this sweep is not actually exercising the broken regime');
 });
+
 
 
 console.log('\nHardware with no measured constants');
@@ -3361,6 +3392,70 @@ test('the state carries the perfKey its constants are chosen by, for every row',
   const oam = readInputStateFor('probe-oam', '1', { ...GPU_TABLE, 'probe-oam': { ...GPU_TABLE['b200-192'], form: 'oam' } });
   assert.strictEqual(oam.gpuForm, 'oam', `a row with form oam reached the state as ${oam.gpuForm}`);
   assert.strictEqual(oam.hasNVLink, false, 'an OAM board was granted NVLink');
+});
+
+console.log('\nA price tier with no confirmed price');
+test('a price tier with no confirmed price stays null, and every cost surface says so', () => {
+  /* A tier the catalog records as null: no provider's own page confirmed an
+     hourly price for this card in this tier. null * gpuCount is 0 in
+     JavaScript, so the failure this guards is a free cluster, printed as
+     $0.00 — or a neighbouring tier's price standing in the empty one's row.
+     Every non-empty set of null tiers, one board and three, read off what the
+     page prints rather than off computeInference() alone. The card carries
+     h100-80's provenance, so a source attached to a null tier would show. */
+  const NO_PRICE = 'no confirmed hourly price';
+  const TIERS = [['hyper', 'Hyperscaler', 'hourlyHyper', 'Hyperscaler'],
+                 ['spec', 'Specialized', 'hourlySpec', 'Specialized'],
+                 ['spot', 'Spot / marketplace', 'hourlySpot', 'Spot']];
+  const base = GPU_TABLE['h100-80'];
+  let checked = 0;
+  for (let mask = 1; mask < 8; mask++)
+    for (const count of [1, 3]) {
+      const card = { ...base };
+      const nulls = TIERS.filter((_, i) => mask & (1 << i)).map(t => t[0]);
+      for (const t of nulls) card[t] = null;
+      const label = `null ${nulls.join('+')}, ${count} board${count > 1 ? 's' : ''}`;
+      const st = asState(card, count, { params: 8, layers: 32 });
+      const c = computeInference(st);
+      const { html: out, written, props } = renderEverything(st, c);
+      const cost = out['cost-output'];
+      const rows = cost.split('</tr>');
+      const priced = [];
+      for (const [tier, rowLabel, field, lineLabel] of TIERS) {
+        const row = rows.find(r => r.includes(`<b>${rowLabel}</b>`));
+        assert.ok(row, `${label}: the cost table has no ${rowLabel} row`);
+        const line = out['(copied report)'].split('\n').find(l => l.startsWith(`- ${lineLabel}: `));
+        assert.ok(line, `${label}: the copied report has no ${lineLabel} line`);
+        if (nulls.includes(tier)) {
+          assert.strictEqual(c[field], null, `${label}: ${field} is ${c[field]}, not null`);
+          assert.ok(row.includes(NO_PRICE), `${label}: the ${rowLabel} row does not say "${NO_PRICE}"`);
+          assert.ok(!row.includes('$'), `${label}: the ${rowLabel} row prints a dollar figure: ${row.slice(-200)}`);
+          assert.strictEqual(line, `- ${lineLabel}: ${NO_PRICE}`, `${label}: the copied report's ${lineLabel} line`);
+        } else {
+          assert.strictEqual(c[field], card[tier] * count, `${label}: ${field}`);
+          assert.ok(row.includes(`$${card[tier].toFixed(2)}`) && row.includes(`$${(card[tier] * count).toFixed(2)}`),
+            `${label}: the ${rowLabel} row does not print its own price`);
+          assert.ok(line.includes(`$${(card[tier] * count).toFixed(2)}/hr`), `${label}: ${line}`);
+          priced.push(card[tier] * count);
+        }
+      }
+      const range = priced.length === 0 ? [NO_PRICE, NO_PRICE]
+        : priced.length === 1 ? [`$${priced[0].toFixed(2)}`, `$${Math.round(priced[0] * 730).toLocaleString()}/mo`]
+        : [`$${Math.min(...priced).toFixed(2)}–$${Math.max(...priced).toFixed(2)}`,
+           `$${Math.round(Math.min(...priced) * 730).toLocaleString()} – $${Math.round(Math.max(...priced) * 730).toLocaleString()}/mo`];
+      assert.ok(out['comparison-output'].includes(`Cost/hr</span><span class="val">${range[0]}</span>`),
+        `${label}: the snapshot's Cost/hr is not ${range[0]}`);
+      assert.ok(out['exec-summary'].includes(`Monthly cost range</span><span class="exec-value">${range[1]}</span>`),
+        `${label}: the Monthly cost range is not ${range[1]}`);
+      const text = [...Object.values(out), ...Object.values(written),
+                    ...Object.values(props).flatMap(p => Object.values(p))].join('\n');
+      for (const bad of ['$0.00', '$0/mo', '$NaN', 'NaN', 'undefined', '$null', 'null/hr'])
+        assert.ok(!text.includes(bad), `${label}: the page prints "${bad}"`);
+      if (nulls.includes('hyper'))
+        assert.ok(!text.includes(base.priceSource.hyper.sku), `${label}: a null hyper tier still names its source`);
+      checked++;
+    }
+  assert.strictEqual(checked, 7 * 2, 'not every null pattern was rendered');
 });
 
 console.log('\nThe interconnect control follows the card');

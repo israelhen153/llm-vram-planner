@@ -218,6 +218,23 @@ CASES = [
      "card": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
               "tflops": 990, "name": "Keyless 80 GB", "vendor": "nvidia", "devices": 1,
               "caps": {"fp8": True}}},
+    # Price tiers the catalog records as null — no confirmed hourly price. Each
+    # engine must keep the tier's cost absent (None, null) rather than turning
+    # it into a number: null * n is 0 in JavaScript and a TypeError in Python,
+    # so the two would disagree by crashing on one side and pricing a free
+    # cluster on the other. With constants, and without them.
+    {"name": "Null price tiers, constants present: hyper and spot absent in both engines",
+     "params": 70, "active": 100, "bpp": 1, "quant": "fp8", "layers": 80, "kv_heads": 8,
+     "h_dim": 128, "ctx": 8192, "conc": 16, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 80, "bw": 3352, "hyper": None, "spec": 3.99, "spot": None,
+              "tflops": 990, "name": "Null-tier 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 1, "caps": {"fp8": True}}},
+    {"name": "Null price tiers, no constants: every tier absent in both engines",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": None, "spec": None, "spot": None,
+              "tflops": 383, "name": "Unpriced 128 GB", "vendor": "amd", "perfKey": "cdna2",
+              "devices": 2, "caps": {"fp8": False}}},
 ]
 
 js_runner = r"""
@@ -534,7 +551,10 @@ for case, js in zip(CASES, js_results):
         except Missing:
             problems.append(f"js returned no {jk} at all")
             continue
-        want_none = absent and pk in PERF_BOUND
+        # A cost whose tier the card records as null is absent too, with or
+        # without constants — the only other field allowed to be None.
+        tier = {"hourly_hyper": "hyper", "hourly_spec": "spec", "hourly_spot": "spot"}.get(pk)
+        want_none = (absent and pk in PERF_BOUND) or (tier is not None and cfg["gpu"].get(tier) is None)
         for engine, v in (("python", py[pk]), ("js", jv)):
             if (v is None) != want_none:
                 problems.append(f"{engine} {pk}={v!r}, expected {'None' if want_none else 'a value'}")
