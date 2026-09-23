@@ -74,14 +74,18 @@ for form in FORMS:
     S[f"A4 py: a borrowed estimate only on form {form!r}"] = leak_into_pdf_explanation(
         f'cfg["gpu"].get("form") == "{form}"')
 for slug, r in AMD.items():
-    # The page's state carries "MI250X 128GB" (getGpuSpec() drops the space);
-    # the catalog, the PDF and a hand-built test state carry "MI250X 128 GB".
-    # Both spellings, because a leak keyed on either one is a real leak.
+    # Each engine's own spelling of the name, because that is the one a leak
+    # keyed on it would ride. The page's state carries "MI250X 128GB":
+    # getGpuSpec() drops the space, and every state the page renders — the
+    # live one, a snapshot, the copied report — comes from it. The first run
+    # found the tests built states in the catalog's spelling instead, so a leak
+    # keyed on the page's went unseen; that is fixed. The catalog's spelling is
+    # not attacked on the page: no state it renders ever carries it, so a leak
+    # keyed on it cannot reach a reader. The PDF prints the catalog's spelling,
+    # and is attacked in it.
     shown = r["name"][:-3] + "GB" if r["name"].endswith(" GB") else r["name"]
     S[f"A5 js: a borrowed estimate only for {shown!r}, the name the page's state carries"] = \
         leak_into_throughput_tile(f"state.gpuName === '{shown}'")
-    S[f"A5 js: a borrowed estimate only for {r['name']!r}, the catalog's spelling"] = \
-        leak_into_throughput_tile(f"state.gpuName === '{r['name']}'")
     S[f"A5 py: a borrowed estimate only for {r['name']!r}"] = leak_into_pdf_explanation(
         f'gpu["name"] == "{r["name"]}"')
 S["A6 js: a borrowed estimate only on a card whose hyperscaler tier is null"] = leak_into_throughput_tile(
