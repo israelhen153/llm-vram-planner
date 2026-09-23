@@ -42,7 +42,7 @@ Checked:
 Run:  python3 tests/report.test.py
 """
 import contextlib
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 import json
 import math
@@ -68,6 +68,8 @@ import generate_report as gr
 # report can carry, so the golden's by-value scrub of it (golden_clocks) can
 # only ever match a clock.
 HELD = datetime(2001, 2, 3, 4, 5)
+HELD_COVER = f"Generated {HELD.strftime('%B %d, %Y at %H:%M')}"
+HELD_DATE = HELD.strftime("%Y-%m-%d")
 
 
 class HeldClock(datetime):
@@ -77,6 +79,15 @@ class HeldClock(datetime):
 
 
 gr.datetime = HeldClock
+
+# The clocks every report this suite builds printed, one entry per build, read
+# where every build passes: story_strings(). One probe config is not enough. A
+# cold check read the clock around the hold only when the weights were FP8,
+# and a single-config check could not see it. The test at the end of this file
+# holds every build to HELD.
+COVER_CLOCK = re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}")
+BARE_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+CLOCKS_SEEN = []
 
 pass_ct = fail_ct = 0
 
@@ -1310,6 +1321,8 @@ def story_strings(cfg, comp=None):
     # And anything it said while building, on either stream.
     for stream in (printed, complained):
         seen.extend(line for line in stream.getvalue().splitlines() if line.strip())
+    CLOCKS_SEEN.append(([m.group(0) for s in seen for m in COVER_CLOCK.finditer(s)],
+                        [s for s in seen if BARE_DATE.fullmatch(s)]))
     return seen
 
 
@@ -1811,8 +1824,8 @@ def check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks():
     """Round-2 cold check: two ways to plant a suite that goes red tomorrow
     with no code change, both invisible on the day they land.
 
-    `golden_clocks()` replaces the footer's generated-at line by its shape, and
-    any string that is EXACTLY today's date by value. Raise the second count —
+    `golden_clocks()` replaces the cover's generated-at line, and any string
+    that is EXACTLY the held date, both by value. Raise the second count —
     render a priceSource read date as its own paragraph and it becomes
     "[today]" too — and the golden records a placeholder where a fixed content
     date belongs; tomorrow that string is a date again and the golden no longer
@@ -1843,26 +1856,6 @@ def check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks():
 
 test("the clock scrubs fire exactly as often as the report has clocks",
      check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks)
-
-
-def check_the_report_reads_the_held_clock():
-    """Every clock the report prints is HELD, so no check in this file depends on
-    when it runs. A clock read that goes around the hold — time.strftime,
-    date.today(), a second import of datetime — prints the machine's date, and
-    fails here the day it lands instead of on whichever run crosses a minute."""
-    _, strings = report_strings(gr.GPUS["h100-80"], 1, bpp=2)
-    covers = [m.group(0) for s in strings
-              for m in re.finditer(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}", s)]
-    held_cover = f"Generated {HELD.strftime('%B %d, %Y at %H:%M')}"
-    assert covers == [held_cover] * CLOCKS_PER_CASE, (
-        f"the cover's clock is not the held instant: {covers!r}, want {held_cover!r}")
-    dates = [s for s in strings if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)]
-    held_date = HELD.strftime("%Y-%m-%d")
-    assert dates == [held_date] * BARE_DATES_PER_CASE, (
-        f"the footer's date is not the held instant: {dates!r}, want {held_date!r}")
-
-test("the report reads the suite's held clock, so no check depends on when it runs",
-     check_the_report_reads_the_held_clock)
 
 
 test("the PDF cost section names a source or says \"not recorded\", for every shape",
@@ -2483,7 +2476,7 @@ print("\nWhat today's cards put in the PDF")
 GOLDEN_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "report.json")
 
 # Two clocks run through the document: the cover's "Generated <date> at <time>"
-# and the footer's own date. Both change with the day, so both are replaced —
+# and the footer's own date. Both read HELD, and both are replaced —
 # and the replacement keeps the shape, so a document that stops dating itself
 # still fails.
 #
@@ -2509,15 +2502,40 @@ GOLDEN_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden
 # right back out — "Generated <date> at <time>" golden as "Generated  at ",
 # both clocks scrubbed to invisible rather than to a readable placeholder.
 #
-# "Today" is HELD's date, not the machine's: the report reads HELD, and keying
-# the scrub on the machine's clock would let a report that reads the real
-# clock again scrub itself clean.
+# Both scrubs key on HELD's value, not on a shape or on the machine's clock.
+# The report reads HELD, so a cover or footer that reads any other clock
+# lands in the golden as a difference instead of scrubbing itself clean. The
+# cover's scrub was a shape until a cold check read the clock around the hold
+# for FP8 reports only, and every golden case still matched.
 def golden_clocks():
-    today = HELD.strftime("%Y-%m-%d")
     return (
-        (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated [date] at [time]"),
-        (re.compile(r"\A" + re.escape(today) + r"\Z"), "[today]"),
+        (re.compile(re.escape(HELD_COVER)), "Generated [date] at [time]"),
+        (re.compile(r"\A" + re.escape(HELD_DATE) + r"\Z"), "[today]"),
     )
+
+
+def check_the_golden_scrubs_only_the_held_clock():
+    """The scrubs hide HELD's two clocks and nothing else. A scrub that matched any
+    clock would hide a report that reads the real one: every golden case would
+    still match, and only the test registered last would notice."""
+    def scrub(text):
+        for rx, placeholder in golden_clocks():
+            text = rx.sub(placeholder, text)
+        return text
+
+    held = [f"{HELD_COVER} — 1x H100 80GB", HELD_DATE]
+    # A minute later is another cover but the same footer date, so the dates
+    # come only from other days.
+    others = ([f"Generated {when.strftime('%B %d, %Y at %H:%M')} — 1x H100 80GB"
+               for when in (HELD + timedelta(minutes=1), HELD + timedelta(days=1), datetime.now())]
+              + [when.strftime("%Y-%m-%d") for when in (HELD + timedelta(days=1), datetime.now())])
+    assert all(scrub(t) != t for t in held), (
+        f"a scrub no longer hides the held clock: {[t for t in held if scrub(t) == t]!r}")
+    assert all(scrub(t) == t for t in others), (
+        f"a scrub hides a clock that is not the held one: {[t for t in others if scrub(t) != t]!r}")
+
+test("the golden's clock scrubs hide the held clock and no other",
+     check_the_golden_scrubs_only_the_held_clock)
 
 
 def golden_cases():
@@ -2680,6 +2698,34 @@ test("the golden records every catalog row, and the shapes that change what the 
 
 test("the report still says exactly what the golden records",
      check_the_report_still_says_what_the_golden_records)
+
+
+def check_every_report_built_here_read_the_held_clock():
+    """Every report this suite built printed HELD, in both of its clocks: every
+    golden case, every absent-constants pair, every packaging probe. So no check
+    here depends on when it runs, and a clock read that goes around the hold
+    (time.strftime, date.today(), a second import of datetime) fails here the
+    day it lands, on whichever config it is gated on, as long as some check
+    builds that config. Registered last so it sees every build.
+
+    HELD must also sit far from any real clock. A hold at the real time, taken
+    once at import, keeps the run consistent, but a clock read around it prints
+    the same minute and passes."""
+    real = datetime.now()
+    assert abs((real - HELD).days) > 365, (
+        f"HELD is {HELD}, within a year of the real clock ({real:%Y-%m-%d}), so a report that "
+        f"reads the real clock prints what the held one would")
+    wrong = [(covers, dates) for covers, dates in CLOCKS_SEEN
+             if covers != [HELD_COVER] * CLOCKS_PER_CASE or dates != [HELD_DATE] * BARE_DATES_PER_CASE]
+    assert not wrong, (
+        f"{len(wrong)} of {len(CLOCKS_SEEN)} reports did not print the held clock "
+        f"({HELD_COVER!r}, {HELD_DATE!r}); the first: {wrong[0]!r}")
+    assert len(CLOCKS_SEEN) >= len(golden_cases()), (
+        f"only {len(CLOCKS_SEEN)} reports were built, fewer than the golden's "
+        f"{len(golden_cases())} cases, so this saw too little")
+
+test("every report this suite built printed the held clock, so no check depends on when it runs",
+     check_every_report_built_here_read_the_held_clock)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
