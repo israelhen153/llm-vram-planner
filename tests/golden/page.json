@@ -5793,7 +5793,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 4090 24GB - Total VRAM: 24 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 24 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 40K - Max concurrent @ 8K: 5 - Single-stream decode: ~41 tok/s - Aggregate @ 5 concurrent: ~165 tok/s - TTFT: ~1765 ms ## Cost (1× RTX 4090 24GB) - Hyperscaler: $0.75/hr · $548/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Checked 2026-09-23. - Specialized: $0.45/hr · $329/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 4090. Checked 2026-09-16. - Spot: $0.54/hr · $394/mo (source: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 4090 24GB - Total VRAM: 24 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 24 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 40K - Max concurrent @ 8K: 5 - Single-stream decode: ~41 tok/s - Aggregate @ 5 concurrent: ~165 tok/s - TTFT: ~1765 ms ## Cost (1× RTX 4090 24GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer for it. Checked 2026-09-23. - Specialized: $0.45/hr · $329/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 4090. Checked 2026-09-16. - Spot: $0.54/hr · $394/mo (source: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22) ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5821,7 +5821,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 4090 24GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~41 / 165 tok/s Cost/hr $0.45–$0.75 Cost source Hyper: not recorded Spec: not recorded Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22"
+    "text": "8B model GPU 1× RTX 4090 24GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 24 Max ctx (1u) 40K Max users @8K 5 Per-user / aggregate ~41 / 165 tok/s Cost/hr $0.45–$0.54 Cost source Hyper: no confirmed hourly price Spec: not recorded Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22"
    },
    "cost-output": {
     "attrs": [
@@ -5853,7 +5853,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Checked 2026-09-23. $0.75 $0.75 $548 Specialized not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 4090. Checked 2026-09-16. $0.45 $0.45 $329 Spot / marketplace Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 $0.54 $0.54 $394 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer for it. Checked 2026-09-23. — — — Specialized not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 4090. Checked 2026-09-16. $0.45 $0.45 $329 Spot / marketplace Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 $0.54 $0.54 $394 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5876,7 +5876,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× RTX 4090 24GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~41 tokens/sec Total server throughput ~165 tokens/sec Monthly cost range $329 – $548/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× RTX 4090 24GB VRAM used 32.6 GiB / 24 GiB per device (136%) Max concurrent users (8K context) 5 Speed per user ~41 tokens/sec Total server throughput ~165 tokens/sec Monthly cost range $329 – $394/mo Cost source Hyper: no confirmed hourly price · Spec: not recorded · Spot: Vast.ai · RTX 4090 (median of 43 verified offers) · global · read 2026-09-22 Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -5922,7 +5922,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -6016,7 +6016,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 5090 32GB - Total VRAM: 32 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 32 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 98K - Max concurrent @ 8K: 12 - Single-stream decode: ~73 tok/s - Aggregate @ 12 concurrent: ~521 tok/s - TTFT: ~695 ms ## Cost (1× RTX 5090 32GB) - Hyperscaler: $0.89/hr · $650/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Checked 2026-09-23. - Specialized: $0.65/hr · $475/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 5090. Checked 2026-09-16. - Spot: $0.45/hr · $329/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 5090 hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 5090 32GB - Total VRAM: 32 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 32 GiB (DOES NOT FIT) ## Capacity - Max context (1 user): 98K - Max concurrent @ 8K: 12 - Single-stream decode: ~73 tok/s - Aggregate @ 12 concurrent: ~521 tok/s - TTFT: ~695 ms ## Cost (1× RTX 5090 32GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer for it. Checked 2026-09-23. - Specialized: $0.65/hr · $475/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 5090. Checked 2026-09-16. - Spot: $0.45/hr · $329/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 5090 hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` # Does not fit — increase GPUs, lower precision, or reduce context ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -6044,7 +6044,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 5090 32GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 32 Max ctx (1u) 98K Max users @8K 12 Per-user / aggregate ~73 / 521 tok/s Cost/hr $0.45–$0.89 Cost source Hyper: not recorded Spec: not recorded Spot: not recorded"
+    "text": "8B model GPU 1× RTX 5090 32GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 32 Max ctx (1u) 98K Max users @8K 12 Per-user / aggregate ~73 / 521 tok/s Cost/hr $0.45–$0.65 Cost source Hyper: no confirmed hourly price Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -6077,7 +6077,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Checked 2026-09-23. $0.89 $0.89 $650 Specialized not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 5090. Checked 2026-09-16. $0.65 $0.65 $475 Spot / marketplace not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 5090 hasn't been confirmed against a live query yet. Checked 2026-09-23. $0.45 $0.45 $329 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer for it. Checked 2026-09-23. — — — Specialized not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda and CoreWeave, the specialized clouds the weekly check reads, don't list the RTX 5090. Checked 2026-09-16. $0.65 $0.65 $475 Spot / marketplace not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 5090 hasn't been confirmed against a live query yet. Checked 2026-09-23. $0.45 $0.45 $329 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -6100,7 +6100,7 @@
      "style=font-size:16px",
      "style=margin-right:4px"
     ],
-    "text": "8B model DOES NOT FIT Hardware 1× RTX 5090 32GB VRAM used 32.6 GiB / 32 GiB per device (102%) Max concurrent users (8K context) 12 Speed per user ~73 tokens/sec Total server throughput ~521 tokens/sec Monthly cost range $329 – $650/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
+    "text": "8B model DOES NOT FIT Hardware 1× RTX 5090 32GB VRAM used 32.6 GiB / 32 GiB per device (102%) Max concurrent users (8K context) 12 Speed per user ~73 tokens/sec Total server throughput ~521 tokens/sec Monthly cost range $329 – $475/mo Cost source Hyper: no confirmed hourly price · Spec: not recorded · Spot: not recorded Precision BF16 (full precision) Action needed: Smallest fit: 2 boards — larger counts can split worse. Or lower precision. Current configuration cannot serve this model."
    },
    "gpu-cards": {
     "attrs": [
@@ -6146,7 +6146,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -6240,7 +6240,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 6000 Ada 48GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~39 tok/s - Aggregate @ 16 concurrent: ~324 tok/s - TTFT: ~800 ms ## Cost (1× RTX 6000 Ada 48GB) - Hyperscaler: $1.50/hr · $1,095/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Checked 2026-09-23. - Specialized: $0.90/hr · $657/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda's and CoreWeave's A6000 is the older Ampere RTX A6000, not this card. Checked 2026-09-16. - Spot: $0.60/hr · $438/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 6000 Ada hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX 6000 Ada 48GB - Total VRAM: 48 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 48 GiB (FITS) ## Capacity - Max context (1 user): 213K - Max concurrent @ 8K: 26 - Single-stream decode: ~39 tok/s - Aggregate @ 16 concurrent: ~324 tok/s - TTFT: ~800 ms ## Cost (1× RTX 6000 Ada 48GB) - Hyperscaler: no confirmed hourly price - No hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer for it. Checked 2026-09-23. - Specialized: $0.90/hr · $657/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda's and CoreWeave's A6000 is the older Ampere RTX A6000, not this card. Checked 2026-09-16. - Spot: $0.60/hr · $438/mo (source: not recorded) - In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 6000 Ada hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -6268,7 +6268,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX 6000 Ada 48GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~39 / 324 tok/s Cost/hr $0.60–$1.50 Cost source Hyper: not recorded Spec: not recorded Spot: not recorded"
+    "text": "8B model GPU 1× RTX 6000 Ada 48GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 48 Max ctx (1u) 213K Max users @8K 26 Per-user / aggregate ~39 / 324 tok/s Cost/hr $0.60–$0.90 Cost source Hyper: no confirmed hourly price Spec: not recorded Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -6301,7 +6301,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Checked 2026-09-23. $1.50 $1.50 $1,095 Specialized not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda's and CoreWeave's A6000 is the older Ampere RTX A6000, not this card. Checked 2026-09-16. $0.90 $0.90 $657 Spot / marketplace not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 6000 Ada hasn't been confirmed against a live query yet. Checked 2026-09-23. $0.60 $0.60 $438 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price No hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer for it. Checked 2026-09-23. — — — Specialized not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. Lambda's and CoreWeave's A6000 is the older Ampere RTX A6000, not this card. Checked 2026-09-16. $0.90 $0.90 $657 Spot / marketplace not recorded In the catalog since 2026-07-27 as a mid-2026 list price, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 6000 Ada hasn't been confirmed against a live query yet. Checked 2026-09-23. $0.60 $0.60 $438 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -6319,7 +6319,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× RTX 6000 Ada 48GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~39 tokens/sec Total server throughput ~324 tokens/sec Monthly cost range $438 – $1,095/mo Cost source Hyper: not recorded · Spec: not recorded · Spot: not recorded Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× RTX 6000 Ada 48GB VRAM used 32.6 GiB / 48 GiB per device (68%) Max concurrent users (8K context) 26 Speed per user ~39 tokens/sec Total server throughput ~324 tokens/sec Monthly cost range $438 – $657/mo Cost source Hyper: no confirmed hourly price · Spec: not recorded · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [
@@ -6366,7 +6366,7 @@
      "focusable=false",
      "href=#ico-info-circle"
     ],
-    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. \"No confirmed hourly price\" marks a tier for which no provider's own page prices this card by the hour. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
    },
    "strategy-badges": {
     "attrs": [
@@ -6456,7 +6456,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX PRO 6000 96GB - Total VRAM: 96 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 96 GiB (FITS) ## Capacity - Max context (1 user): 559K - Max concurrent @ 8K: 69 - Single-stream decode: ~73 tok/s - Aggregate @ 16 concurrent: ~605 tok/s - TTFT: ~578 ms ## Cost (1× RTX PRO 6000 96GB) - Hyperscaler: $5.00/hr · $3,650/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Checked 2026-09-23. - Specialized: $2.50/hr · $1,825/mo (source: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22) - Spot: $2.00/hr · $1,460/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX PRO 6000 hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× RTX PRO 6000 96GB - Total VRAM: 96 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 96 GiB (FITS) ## Capacity - Max context (1 user): 559K - Max concurrent @ 8K: 69 - Single-stream decode: ~73 tok/s - Aggregate @ 16 concurrent: ~605 tok/s - TTFT: ~578 ms ## Cost (1× RTX PRO 6000 96GB) - Hyperscaler: $3.36/hr · $2,453/mo (source: AWS · g7e.2xlarge · US East (N. Virginia) · read 2026-09-23) - Specialized: $2.50/hr · $1,825/mo (source: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22) - Spot: $2.00/hr · $1,460/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX PRO 6000 hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -6484,7 +6484,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× RTX PRO 6000 96GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 96 Max ctx (1u) 559K Max users @8K 69 Per-user / aggregate ~73 / 605 tok/s Cost/hr $2.00–$5.00 Cost source Hyper: not recorded Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 Spot: not recorded"
+    "text": "8B model GPU 1× RTX PRO 6000 96GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 96 Max ctx (1u) 559K Max users @8K 69 Per-user / aggregate ~73 / 605 tok/s Cost/hr $2.00–$3.36 Cost source Hyper: AWS · g7e.2xlarge · US East (N. Virginia) · read 2026-09-23 Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 Spot: not recorded"
    },
    "cost-output": {
     "attrs": [
@@ -6493,7 +6493,6 @@
      "style=border-bottom:.5px solid var(--border)",
      "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
      "style=color:var(--success);font-weight:500;padding:8px 10px",
-     "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
      "style=color:var(--text-muted);font-size:11px",
@@ -6516,7 +6515,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Checked 2026-09-23. $5.00 $5.00 $3,650 Specialized CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 $2.50 $2.50 $1,825 Spot / marketplace not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX PRO 6000 hasn't been confirmed against a live query yet. Checked 2026-09-23. $2.00 $2.00 $1,460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler AWS · g7e.2xlarge · US East (N. Virginia) · read 2026-09-23 $3.36 $3.36 $2,453 Specialized CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 $2.50 $2.50 $1,825 Spot / marketplace not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the RTX PRO 6000 hasn't been confirmed against a live query yet. Checked 2026-09-23. $2.00 $2.00 $1,460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -6534,7 +6533,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× RTX PRO 6000 96GB VRAM used 32.6 GiB / 96 GiB per device (34%) Max concurrent users (8K context) 69 Speed per user ~73 tokens/sec Total server throughput ~605 tokens/sec Monthly cost range $1,460 – $3,650/mo Cost source Hyper: not recorded · Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× RTX PRO 6000 96GB VRAM used 32.6 GiB / 96 GiB per device (34%) Max concurrent users (8K context) 69 Speed per user ~73 tokens/sec Total server throughput ~605 tokens/sec Monthly cost range $1,460 – $2,453/mo Cost source Hyper: AWS · g7e.2xlarge · US East (N. Virginia) · read 2026-09-23 · Spec: CoreWeave · NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory) · global · read 2026-09-22 · Spot: not recorded Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [

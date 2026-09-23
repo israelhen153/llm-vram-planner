@@ -1955,6 +1955,9 @@ test("price_source_label formats provider, SKU, region and date — a fixed expe
      check_price_source_label_format_is_a_fixed_expectation)
 
 
+# On a card with a null tier, the one sentence that explains the table's wording for it.
+NULL_TIER_SENTENCE = ("\"No confirmed hourly price\" marks a tier for which no provider's own page "
+                      "prices this card by the hour.")
 NOTES_PRICE_SENTENCE = (
     "GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
     "specialized, spot/marketplace — see each tier's own source above, or "
@@ -2041,9 +2044,14 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         # regexes do not match (" and " joined, lowercase). One sentence in the
         # notes mentions price and what it may say is a contract, so it is a
         # literal.
-        for sentence in re.split(r"(?<=\.)\s+", whole_blob):
+        # Every string but the cost section's own Source line, which is the
+        # provenance this sweep checks tier by tier above, and says "no confirmed
+        # hourly price" for a null tier by design. The page's rule reads its notes
+        # panel only; this one still reads the whole PDF except that line.
+        outside = "\n".join(s for s in whole_blob.split("\n") if not s.startswith("Source — "))
+        for sentence in re.split(r"(?<=\.)\s+", outside):
             if re.search(r"\bprices?\b", sentence, re.I) and "$" not in sentence:
-                assert sentence.strip().lstrip("\u2022 ").startswith(NOTES_PRICE_SENTENCE), (
+                assert sentence.strip().lstrip("\u2022 ").startswith((NOTES_PRICE_SENTENCE, NULL_TIER_SENTENCE)), (
                     f"{label}: the PDF says something about price outside the cost table that is "
                     f"not the one sentence it may say — {sentence.strip()[:200]!r}")
         assert "per-board/hr estimates" not in whole_blob, (

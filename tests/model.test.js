@@ -2295,7 +2295,9 @@ test('every cost surface names a source or says "not recorded", discovered not e
                           /\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,\/]\s*(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}/];
   const NOTES_PRICE_SENTENCES = [
     'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for ' +
-    "each tier's source, or \"not recorded\" where it has no confirmed source."];
+    "each tier's source, or \"not recorded\" where it has no confirmed source.",
+    // On a card with a null tier, the one sentence that explains the table's wording for it.
+    '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour.'];
   const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
   // Cold-check finding: renderExecutiveSummary's "Monthly cost range" rounds
   // to whole dollars ("$657", never "$657.00"), so a cents-only pattern
@@ -2591,9 +2593,11 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     }
     const trueMin = Math.min(...priced);
     const trueMax = Math.max(...priced);
-    if (priced.length === 3 &&
-        (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot)))
-      inverted++;   // specialized is the true floor or ceiling, not just spot/hyper — the regime that broke
+    /* The regime that broke: a range whose floor is not spot, or whose ceiling is
+       not hyperscaler, so a renderer that hardcodes spot-to-hyperscaler prints the
+       wrong figures. A card with no hyperscaler price is in it too: the hardcoded
+       range has no ceiling to print there. */
+    if (trueMin !== c.hourlySpot || trueMax !== c.hourlyHyper) inverted++;
 
     h.pushSnapshot(st, c);
     h.renderComparisons();
@@ -2626,8 +2630,8 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
   assert.strictEqual(checkedCmp, Object.keys(GPU_TABLE).length);
   assert.strictEqual(checkedExec, Object.keys(GPU_TABLE).length);
   assert.ok(inverted >= 2,
-    `only ${inverted} catalog row(s) have specialized as the true floor/ceiling instead of spot/hyper — ` +
-    'expected at least l40s-48 and rtx4090-24, so this sweep is not actually exercising the broken regime');
+    `only ${inverted} catalog row(s) have a range other than spot-to-hyperscaler — expected at least ` +
+    'l40s-48 and the cards with no hyperscaler price, so this sweep is not actually exercising the broken regime');
 });
 
 
