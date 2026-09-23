@@ -1,142 +1,111 @@
-# AMD GPU Cloud Pricing Research
+# AMD GPU Cloud Pricing
 
-**Date:** 2026-07-31  
-**Purpose:** 3-tier cost data for v1.1.0 AMD support  
-**Status:** On-demand pricing snapshot across hyperscaler, specialized, and marketplace tiers
+**Read:** 2026-09-23. Supersedes the 2026-07-31 snapshot this file used to hold (see "Drift"
+below).
 
----
+**Purpose:** the prices `data/gpus.json` carries for its five AMD rows, why each tier holds
+what it holds, and every lead that was considered and not used.
 
-## Pricing Summary Table
+## What counts as a price
 
-| GPU | Tier | Provider | USD/GPU/hr | Instance Name | Source URL | Date Seen |
-|-----|------|----------|-----------|---------------|-----------|-----------|
-| MI300X | Marketplace | Spot (Various) | $0.95 | Spot/Interruptible | https://www.spheron.network/blog/amd-mi300x-mi355x-pricing-2026/ | 2026-07-31 |
-| MI300X | Specialized | TensorWave | $1.71 | Standard on-demand | https://www.thundercompute.com/blog/amd-mi300x-pricing | 2026-07-31 |
-| MI300X | Specialized | Vultr | $1.85 | 8x MI300X cluster (÷8 per GPU) | https://www.thundercompute.com/blog/amd-mi300x-pricing | 2026-07-31 |
-| MI300X | Specialized | DigitalOcean | $1.99 | gpu-mi300x1-192gb | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Specialized | Hot Aisle | $2.99 | 1x MI300X | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Specialized | RunPod | $2.19–$2.39 | Secure Cloud MI300X | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Specialized | Crusoe Cloud | $3.45 | mi300x-192gb-ib.8x (÷8) | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Specialized | Cirrascale | $3.85 | MI300X cluster | https://www.thundercompute.com/blog/amd-mi300x-pricing | 2026-07-31 |
-| MI300X | Hyperscaler | Oracle Cloud | $6.00 | BM.GPU.MI300X.8 bare-metal (÷8) | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Hyperscaler | Azure | $6.00 | Standard_ND96isr_MI300X_v5 (÷8) | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Hyperscaler | Azure | $7.86 | Standard_ND96isr_MI300X_v5 (East US, ÷8) | https://getdeploying.com/gpus/amd-mi300x | 2026-07-31 |
-| MI300X | Hyperscaler | CoreWeave | $6.31 | 8x MI300X node (÷8, SXM variant) | https://www.thundercompute.com/blog/amd-mi300x-pricing | 2026-07-31 |
-| MI325X | Specialized | TensorWave | $2.25 | Standard on-demand (lowest tracked) | https://getdeploying.com/gpus/amd-mi325x | 2026-07-31 |
-| MI325X | Specialized | Bentaus | $2.25 | 8x MI325X on-demand (÷8) | https://getdeploying.com/gpus/amd-mi325x | 2026-07-31 |
-| MI325X | Marketplace | Vultr | $2.00 | 8x MI325X spot (÷8, out of stock) | https://getdeploying.com/gpus/amd-mi325x | 2026-07-31 |
-| MI325X | Specialized | Cyfuture AI | $3.21–$3.31 | 1x MI325X on-demand | https://getdeploying.com/gpus/amd-mi325x | 2026-07-31 |
-| MI325X | Specialized | DigitalOcean | $2.88 | 1x MI325X (12-month reserved) | https://getdeploying.com/gpus/amd-mi325x | 2026-07-31 |
-| MI325X | Specialized | Cyfuture AI | $1.57–$1.67 | 8x MI325X (12-month reserved, ÷8) | https://getdeploying.com/gpus/amd-mi325x | 2026-07-31 |
-| MI250X | Specialized | Runcrate | $1.35 | Standard on-demand | https://www.runcrate.ai/pricing/gpu/mi250x | 2026-07-31 |
-| MI250X | Specialized | Runcrate | $1.20–$1.50 | Regional variance | https://www.runcrate.ai/pricing/gpu/mi250x | 2026-07-31 |
-| MI250X | Specialized | Cirrascale | $1.28–$1.60 | Cloud rental | https://www.thundercompute.com/blog/amd-mi300x-pricing | 2026-07-31 |
-| MI250X | Specialized | Runcrate | $0.94 | Reserved (30% discount) | https://www.runcrate.ai/pricing/gpu/mi250x | 2026-07-31 |
-| MI210 | Specialized | Runcrate | $0.70–$0.82 | Standard rental | https://www.runcrate.ai/pricing/gpu/mi210 | 2026-07-31 |
-| RX 7900 XTX | Marketplace | Vast.ai | Dynamic | Marketplace (consumer GPU) | https://vast.ai/pricing/gpu/RX-7900-XTX | 2026-07-31 |
+- **One named SKU's hourly price, read on the provider's own pricing page or official pricing
+  API.** Comparison sites (getdeploying, thundercompute, spheron, computeprices, gpus.io …)
+  are leads for finding pages, never sources.
+- **Per GPU.** A per-instance price is divided by the GPUs in the instance.
+- **The tier's own price.** Hyperscaler and specialized tiers take the on-demand price; the
+  spot tier takes a spot or preemptible price.
+- **Excluded:** "starting at" figures, reserved, committed or contract prices, and plans that no
+  region currently offers.
+- **Where more than one provider qualifies,** the tier takes the lowest confirmed price and names
+  that one provider. A tier never carries one number for several providers.
+- **Where none qualifies,** the tier is `null`, which every surface shows as "no confirmed hourly
+  price". Its `SOURCE_MAP` entry in `tools/price_check.py` records why.
 
----
+## The catalog's prices
 
-## Notes
+| Row | Tier | $/GPU/hr | Provider | SKU as the provider names it | Region | Recorded as | Page |
+|---|---|---|---|---|---|---|---|
+| `mi300x-192` | hyper | 6.00 | Azure | `Standard_ND96isr_MI300X_v5`, meter `ND96isrMI300Xv5`, $48.00/hr for 8 GPUs | eastus2 | `priceSource`, re-read weekly by `tools/price_check.py` | Azure Retail Prices API |
+| `mi300x-192` | spec | 2.39 | RunPod | MI300X (Secure Cloud), on demand | global | `priceRecord`, recorded by hand | https://www.runpod.io/gpu-models/mi300x |
+| `mi300x-192` | spot | 1.11 | Azure | `Standard_ND96isr_MI300X_v5` spot, meter `ND96isrMI300Xv5 Spot`, $8.8704/hr for 8 GPUs | eastus2 | `priceSource`, re-read weekly | Azure Retail Prices API |
+| `mi325x-256` | spec | 3.80 | DigitalOcean | AMD Instinct MI325X GPU Droplet, on demand, 1 or 8 GPUs | global | `priceRecord`, recorded by hand | https://www.digitalocean.com/pricing/gpu-droplets |
 
-### Availability Summary
+Every other AMD tier is null.
 
-| GPU | Availability | Rarity Notes | Cloud Coverage |
-|-----|--------------|--------------|-----------------|
-| MI300X | Widely available | Common; available at 10+ providers | Hyperscalers + neoclouds + marketplace |
-| MI325X | Limited | Newer; offered by 5 providers; no AWS/GCP/Azure hyperscaler SKUs | Specialized + neocloud only |
-| MI250X | Rare | Offered by Cirrascale, Runcrate; older generation; declining availability | Specialist providers only |
-| MI210 | Rare | Minimal cloud presence; only found on Runcrate; effectively obsolete for cloud rental | Single provider only |
-| RX 7900 XTX | Marketplace only | Consumer GPU; available on peer-to-peer platforms; pricing highly volatile | Vast.ai listed; pricing dynamic |
+One qualification on the MI325X figure. DigitalOcean's pricing page lists $3.80/GPU/hour as the
+"On-Demand Price", but its Droplet documentation says the MI325X sizes (`gpu-mi325x1-256gb-contracted`,
+`gpu-mi325x8-2048gb-contracted`) are not in the self-service list and are provisioned through a
+sales agreement. It is a published hourly rate, not a quote, so it qualifies. The hand record
+names the page it was read from.
 
-### Key Findings
+The Azure query is
+`https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=armSkuName eq 'Standard_ND96isr_MI300X_v5' and armRegionName eq 'eastus2'`.
+It returns one Linux Consumption row per meter: $48.00 for `ND96isrMI300Xv5` and $8.8704 for
+`ND96isrMI300Xv5 Spot`. The Windows, DevTest, Low Priority and Reservation rows sit beside them.
+The repo's fetcher ignores them because it selects by exact meter name, the `Consumption` type
+and a non-Windows product name. The same SKU is listed in 17 Azure
+regions. eastus2 and westus3 are the cheapest, at $48.00.
 
-1. **Pricing Per-GPU vs. Per-Instance:** Most sources quote per-instance rates for multi-GPU clusters (e.g., 8×MI300X at $48/hr = $6/GPU/hr). The table normalizes to per-GPU-per-hour for comparability. Verify provider quotes whether you're billed per-instance or per-GPU.
+## Tiers with no confirmed price
 
-2. **Tier Structure:**
-   - **Hyperscaler (AWS/GCP/Azure/Oracle):** $6.00–$7.86/GPU/hr for MI300X. AWS and GCP do not yet offer dedicated AMD GPU instances. Azure offers ND MI300X v5 series; Oracle offers BM.GPU bare-metal.
-   - **Specialized (CoreWeave/TensorWave/DigitalOcean/Lambda/Crusoe):** $1.71–$3.85/GPU/hr for MI300X, with TensorWave and Vultr at the low end ($1.71–$1.85).
-   - **Marketplace/Spot (Vast.ai/RunPod spot):** $0.95–$2.39/GPU/hr for MI300X; Vast.ai offers consumer GPUs (RX 7900 XTX) with dynamic pricing.
+| Row | Tier | Why it is null |
+|---|---|---|
+| `mi325x-256` | hyper | No hyperscaler offers it. The Azure Retail Prices API returns 0 items for any SKU containing MI325, MI355, MI250 or MI210. Oracle's price list has MI300X and MI355X only, and neither AWS nor GCP lists an Instinct instance. |
+| `mi325x-256` | spot | Vultr lists a preemptible price for `vbm-256c-3072gb-8-mi325x-gpu`: $16.00/hr for 8 GPUs, $2.00 per GPU. The plan's `locations` is empty, so no region offers it. |
+| `mi250x-128` | all | Cirrascale lists "4X AMD Instinct MI250", not the MI250X, and only monthly. Runcrate's MI250X page shows an average and a range ("$1.20–$1.50"), generated from a catalog that also claims an AWS price for a GPU AWS does not sell. No single list price can be confirmed. |
+| `mi210-64` | all | Runcrate only, with the same problem. |
+| `rx7900xtx-24` | all | Vast.ai: "No current offers". HOSTKEY rents a 4× RX 7900 XTX server monthly, as a pre-order, with no hourly price. |
 
-3. **Reserved vs. On-Demand:**
-   - Reserved instances (12-month commitments) typically offer 25–35% savings.
-   - Spot pricing on Azure and Vultr reaches $1.45–$1.85/GPU/hr (81–82% discounts off on-demand).
-   - Vast.ai and RunPod marketplace pricing is lowest but interruptible.
+## Other confirmed prices, not the catalog's choice
 
-4. **MI210 and MI250X Rarity:**
-   - **MI210:** Essentially not rentable on mainstream cloud; only Runcrate lists it at $0.70–$0.82/hr. These are end-of-life GPUs from AMD's perspective; cloud providers have moved to MI300X/MI325X.
-   - **MI250X:** Found on Cirrascale (monthly commitment) and Runcrate. Pricing ranges $1.28–$1.60/hr. Availability declining as MI300X matures. Still 30–40% cheaper than H100.
+All read 2026-09-23 on the provider's own page or API. MI300X unless noted.
 
-5. **MI325X vs. MI300X:**
-   - MI325X (256GB VRAM, newer) ranges from $1.57/hr (reserved) to $3.31/hr (on-demand), averaging $2.30/hr.
-   - MI300X (192GB VRAM, established) ranges from $0.95/hr (spot) to $7.86/hr (hyperscaler), averaging $2.79/hr.
-   - MI325X demand is high but supply-constrained; no major hyperscaler (AWS/GCP/Azure) has launched dedicated MI325X SKUs yet.
+- **DigitalOcean**, `gpu-mi300x1-192gb`: $2.59/GPU/hr on demand (ATL1). The 12-month reserved
+  price is $1.91; for MI325X it is $2.88.
+- **Hot Aisle**, 1×/2×/4× MI300X VMs: $2.99/GPU/hr, billed per minute (Michigan).
+- **Crusoe**, `mi300x-192gb-ib.8x`: $3.45/GPU/hr (us-east1-a).
+- **Oracle**, `BM.GPU.MI300X.8`: $6.00/GPU/hr, pay as you go. This matches Azure's $6.00, a
+  cross-check the weekly job cannot make, because it has no Oracle reader.
+- **Vultr**, `vbm-256c-2048gb-8-mi300x-gpu`: $31.92/hr standard, $14.80/hr preemptible, for 8 GPUs
+  ($3.99 and $1.85 per GPU). The plan is marked not deployable on demand and lists no locations.
+- **Azure Low Priority**, `ND96isrMI300Xv5 Low Priority`: $9.60/hr for 8 GPUs in eastus2.
 
-6. **RX 7900 XTX:**
-   - Consumer-grade GPU; listed on Vast.ai only. Pricing is dynamic (marketplace-based); no fixed hourly rate published. Expect $0.10–$0.50/hr on spot markets but highly volatile.
+## Leads, unconfirmed
 
-7. **Hidden Costs & Caveats:**
-   - Egress/bandwidth charges not listed here; can be significant for large inference workloads.
-   - Cirrascale requires multi-month commitments ($22,499 minimum); no hourly billing.
-   - CoreWeave negotiates custom pricing per customer; published rates unavailable for AMD GPUs.
-   - Spot/interruptible instances (Azure low-priority, Vast.ai, RunPod) can be reclaimed with no notice.
-   - TensorWave and Hot Aisle are neocloud specialists; SLA/uptime terms differ from hyperscalers.
+- **TensorWave:** "Starting at $1.71/GPU HR" (MI300X) and "$2.25" (MI325X). Terms not stated;
+  `tensorwave.com/pricing` returns 404.
+- **Runcrate:** MI210 and MI250X. See the table above.
+- **Bentaus:** MI325X at $2.25. Found on a comparison site only; no provider page.
+- **Cirrascale:** MI300X and MI325X by monthly commitment or on request only.
 
-8. **Data Currency:**
-   - All prices current as of 2026-07-31.
-   - GPU market is volatile; hyperscaler discounts (3-year reserved) and spot pricing fluctuate weekly.
-   - Specialist/neocloud pricing more stable but tied to individual provider contract terms.
+## Drift from the 2026-07-31 snapshot
 
----
+- **DigitalOcean MI300X:** $1.99 then, $2.59 now.
+- **Vultr's "$1.85" for MI300X** was the preemptible price of a plan no region offers.
+- **Vultr's "$2.00 marketplace" for MI325X:** still a preemptible price, and still no region
+  offers the plan.
+- **Runcrate's MI210 and MI250X figures** cannot be confirmed as list prices.
+- **Azure and Oracle MI300X, $6.00/GPU:** unchanged.
+- **Sources:** the July table's figures came mostly from comparison-site blogs. None is used as
+  a source now.
 
-## Provider Coverage by GPU Model
+## Newer cards, out of scope
 
-```
-Provider         | MI210 | MI250X | MI300X | MI325X | RX 7900 XTX
------------------|-------|--------|--------|--------|------------
-Azure            | ✗     | ✗      | ✓      | ✗      | ✗
-AWS              | ✗     | ✗      | ✗      | ✗      | ✗
-GCP              | ✗     | ✗      | ✗      | ✗      | ✗
-Oracle Cloud     | ✗     | ✗      | ✓      | ✗      | ✗
-CoreWeave        | ✗     | ?      | ✓      | ✗      | ✗
-Lambda Labs      | ✗     | ✗      | ✓*     | ✗      | ✗
-TensorWave       | ✗     | ✗      | ✓      | ✓      | ✗
-DigitalOcean     | ✗     | ✗      | ✓      | ✓      | ✗
-Vultr            | ✗     | ✗      | ✓      | ✓      | ✗
-RunPod           | ✗     | ✗      | ✓      | ✗      | ✗
-Crusoe Cloud     | ✗     | ✗      | ✓      | ✗      | ✗
-Cirrascale       | ✗     | ✓      | ✓      | ✗      | ✗
-Hot Aisle        | ✗     | ✗      | ✓      | ✗      | ✗
-Runcrate         | ✓     | ✓      | ✗      | ✗      | ✗
-Vast.ai          | ✗     | ✗      | ✗      | ✗      | ✓
-Seeweb           | ✗     | ✗      | ✓      | ✗      | ✗
-Bentaus          | ✗     | ✗      | ✗      | ✓      | ✗
-Cyfuture AI      | ✗     | ✗      | ✗      | ✓      | ✗
+- **MI355X:** Oracle `BM.GPU.MI355X.8` at $8.60/GPU/hr (Oracle price list), and Vultr.
+- **MI350X:** DigitalOcean spot at $3.00/GPU/hr, RunPod at $5.49, CloudRift at $3.65.
 
-Legend: ✓ = Available | ✗ = Not offered | ? = Unclear/rumored | * = SXM variant only
-```
+Both are candidates for a later catalog release.
 
----
+## Who read what
 
-## Recommendations for v1.1.0 AMD Support
+A research pass read every price above on 2026-09-23. A second reader re-read these on the
+same day:
+- the Azure API rows for both MI300X tiers;
+- DigitalOcean's MI300X and MI325X on-demand prices;
+- RunPod's MI300X price;
+- Vultr's plan list, including the empty `locations`;
+- the Azure API's empty result for MI325, MI355, MI250 and MI210;
+- Vast's "No current offers" for the RX 7900 XTX.
 
-1. **For Prod Workloads:** Quote Azure/Oracle on-demand ($6/GPU/hr) as ceiling; target DigitalOcean/TensorWave ($1.99–$1.71) for cost-sensitive deployments.
-2. **For Reserved/Committed:** Cyfuture AI MI325X at $1.57/hr (12mo) or Azure spot at $1.45/hr (risk of preemption).
-3. **For Development/Testing:** RunPod spot ($1.49/hr) or Vast.ai marketplace (highly variable).
-4. **Avoid:** MI210 and MI250X for new deployments; recommend MI300X or MI325X instead due to better availability and pricing.
-5. **Reserved Capacity:** Clarify in tool whether user wants on-demand only or is willing to commit; 30% savings available via annual/monthly contracts.
-
----
-
-## Sources Cited
-
-- [AMD MI300X Pricing (July 2026) — Thunder Compute](https://www.thundercompute.com/blog/amd-mi300x-pricing)
-- [MI300X Cloud Pricing: Compare 10+ Providers (2026) — GetDeploying](https://getdeploying.com/gpus/amd-mi300x)
-- [MI325X Cloud Pricing: Compare 5+ Providers (2026) — GetDeploying](https://getdeploying.com/gpus/amd-mi325x)
-- [AMD MI300X and MI355X Pricing 2026 — Spheron Blog](https://www.spheron.network/blog/amd-mi300x-mi355x-pricing-2026/)
-- [AMD MI250X Pricing — Runcrate](https://www.runcrate.ai/pricing/gpu/mi250x)
-- [AMD MI210 Pricing — Runcrate](https://www.runcrate.ai/pricing/gpu/mi210)
-- [AMD GPUs Cloud Pricing — Compute Prices](https://computeprices.com/gpus/category/amd)
-- [Vast.ai RX 7900 XTX Pricing](https://vast.ai/pricing/gpu/RX-7900-XTX)
-- [RunPod vs Vast.ai GPU Pricing Comparison (2026) — GPUs.io](https://gpus.io/en/providers/compare/runpod-vs-vast-ai)
-- [DigitalOcean GPU Cloud Pricing Guide — DeployBase](https://deploybase.ai/articles/digitalocean-gpu-cloud-pricing-complete-guide-vs-hr-for)
+The release's cold check re-reads at least one automated price and one hand-recorded price
+independently.
