@@ -52,8 +52,8 @@ regions. eastus2 and westus3 are the cheapest, at $48.00.
 |---|---|---|
 | `mi325x-256` | hyper | No hyperscaler offers it. The Azure Retail Prices API returns 0 items for any SKU containing MI325, MI355, MI250 or MI210. Oracle's price list has MI300X and MI355X only, and neither AWS nor GCP lists an Instinct instance. |
 | `mi325x-256` | spot | Vultr lists a preemptible price for `vbm-256c-3072gb-8-mi325x-gpu`: $16.00/hr for 8 GPUs, $2.00 per GPU. The plan's `locations` is empty, so no region offers it. |
-| `mi250x-128` | all | Cirrascale lists "4X AMD Instinct MI250", not the MI250X, and only monthly. Runcrate's MI250X page advertises "$1.35 /hr" but see the MI210 row. |
-| `mi210-64` | all | Runcrate's MI210 page advertises "$0.82/hr On-demand · per-second billing", "$0.70–$0.95/hr range" and "Available now · 4 regions". Runcrate's own pricing page lists 20 GPU SKUs and no AMD GPU. The per-card pages misstate AMD's own figures: "47.9 TFLOPS FP16" for the MI210, where AMD says 181.0, and 95.7 for the MI250X, where AMD says 383.0. The offer cannot be confirmed without an account, so the tier stays null, and `SOURCE_MAP` records why. The cold check read the same pages and put the question to the owner; see "Open question". |
+| `mi250x-128` | all | Cirrascale lists "4X AMD Instinct MI250", not the MI250X, and only monthly. Runcrate's MI250X page (https://www.runcrate.ai/pricing/gpu/mi250x) advertises "$1.35 /hr" but see the MI210 row. |
+| `mi210-64` | all | Runcrate's MI210 page (https://www.runcrate.ai/pricing/gpu/mi210) advertises "$0.82/hr On-demand · per-second billing", "$0.70–$0.95/hr range" and "Available now · 4 regions". Runcrate's own pricing page (https://www.runcrate.ai/pricing) lists 20 GPU SKUs and no AMD GPU. The per-card pages misstate AMD's own figures: "47.9 TFLOPS FP16" for the MI210, where AMD says 181.0, and 95.7 for the MI250X, where AMD says 383.0. The offer cannot be confirmed without an account, so the tier stays null, and `SOURCE_MAP` records why. The cold check read the same pages and put the question to the owner; see "Open question". |
 | `rx7900xtx-24` | all | Vast.ai: "No current offers". HOSTKEY rents a 4× RX 7900 XTX server monthly, as a pre-order, with no hourly price. |
 
 The RunPod figure is also confirmed by RunPod's own GraphQL API (`api.runpod.io/graphql`, `gpuTypes`,
@@ -62,9 +62,13 @@ The RunPod figure is also confirmed by RunPod's own GraphQL API (`api.runpod.io/
 
 ## Open question for the owner
 
-Does a reseller's per-card marketing page count as "a provider's own page"? If it does, the MI210 and
-MI250X specialized tiers would carry Runcrate's figures as hand records. If it does not, which is how
-the catalog stands today, nothing changes.
+Does a provider's per-card marketing page count as "a provider's own page" when the provider's own
+pricing page does not list that card? If it does, the MI210 and MI250X specialized tiers would carry
+Runcrate's figures as hand records. If it does not, which is how the catalog stands today, nothing
+changes.
+
+Earlier notes called Runcrate a reseller. That was an inference: its home page calls it an
+"Open-Access AI Cloud" and does not say where its GPUs come from.
 
 ## Other confirmed prices, not the catalog's choice
 
@@ -84,7 +88,12 @@ All read 2026-09-23 on the provider's own page or API. MI300X unless noted.
 
 - **TensorWave:** "Starting at $1.71/GPU HR" (MI300X) and "$2.25" (MI325X). Terms not stated;
   `tensorwave.com/pricing` returns 404.
-- **Runcrate:** MI210 and MI250X. See the table above.
+- **Runcrate:** MI210 and MI250X. See the table above. Its MI300X page
+  (https://www.runcrate.ai/pricing/gpu/mi300x) quotes other providers' prices, so it can be checked.
+  On 2026-09-23 it listed Runcrate at $2.50/hr as "Cheapest", against RunPod
+  at $3.49, Oracle at $4.30, AWS at $4.95 and Azure at $5.20. The same day, RunPod's own API gave
+  $2.39, Oracle's and Azure's price lists gave $6.00 per GPU, and AWS listed no Instinct instance.
+  Its RX 7900 XTX page returned a server error each time it was read.
 - **Bentaus:** MI325X at $2.25. Found on a comparison site only; no provider page.
 - **Cirrascale:** MI300X and MI325X by monthly commitment or on request only.
 
