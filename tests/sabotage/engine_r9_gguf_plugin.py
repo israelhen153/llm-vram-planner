@@ -56,6 +56,16 @@ S["G10 py: the PDF prints the guidance with no sources"] = [
     (REPORT_PY, PY_GGUF_PDF_SOURCE, "                                       + \"\",\n", 1)]
 S["G11 py: the PDF prints the guidance under a command it does not print"] = [
     (REPORT_PY, PY_GGUF_PDF_IF, "        if cfg.get(\"quant\") == \"gguf\":\n", 1)]
+# The cold check's one survivor (Sonnet 5, against b9fbcae): the GGUF block left
+# untouched, and a copy of its body added under an AWQ gate, so every AWQ plan (the
+# page's default precision) showed the GGUF banner. It passed every behavioural test,
+# because the tests' option scraper skipped the AWQ <option>, whose `selected` sits
+# between value and data-q.
+S["G12 js: the GGUF banner copied under an AWQ gate, the GGUF block itself untouched"] = [
+    (INDEX_HTML, JS_GGUF_BANNER_IF,
+     "    if (state.quantMethod === 'awq') {\n"
+     "      warning += `<div class=\"verdict\">${GGUF_GUIDANCE.map(([text]) => text).join(' ')}</div>`;\n"
+     "    }\n" + JS_GGUF_BANNER_IF, 1)]
 
 # ---- B: both tables edited alike, so parity holds and only the literals can catch it ----
 S["B1 both: the plugin sentence deleted from both tables"] = [

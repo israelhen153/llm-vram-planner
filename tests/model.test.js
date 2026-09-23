@@ -3651,10 +3651,22 @@ console.log('\nThe copied report quotes the command box');
    added tomorrow is covered without anyone listing it here. */
 const WEIGHT_SELECT = html.slice(html.indexOf('<select id="weight-precision"'),
                                  html.indexOf('</select>', html.indexOf('<select id="weight-precision"')));
-const WEIGHT_OPTIONS = [...WEIGHT_SELECT.matchAll(/<option value="([\d.]+)" data-q="(\w*)"/g)]
-  .map(m => ({ bytesPerParam: Number(m[1]), quantMethod: m[2] }));
+/* Each <option>'s own attributes, read in any order. The first version matched
+   value and data-q only when they sat side by side, so the AWQ option, the page's
+   default, which carries `selected` between them, was silently left out. A GGUF
+   banner shown for every AWQ plan then passed every check here (cold check,
+   fix/gguf-plugin). Hence the count below: the options read must be all the
+   options there are. */
+const WEIGHT_OPTION_TAGS = [...WEIGHT_SELECT.matchAll(/<option\b([^>]*)>/g)].map(m => m[1]);
+const WEIGHT_OPTIONS = WEIGHT_OPTION_TAGS.map(attrs => ({
+  bytesPerParam: Number((attrs.match(/\bvalue="([\d.]+)"/) || [])[1]),
+  quantMethod: (attrs.match(/\bdata-q="(\w*)"/) || [])[1],
+}));
+assert.ok(WEIGHT_OPTIONS.length === (WEIGHT_SELECT.match(/<option\b/g) || []).length
+          && WEIGHT_OPTIONS.every(o => Number.isFinite(o.bytesPerParam) && typeof o.quantMethod === 'string'),
+  `read ${WEIGHT_OPTIONS.length} weight options, not every <option> the select holds, or one without a value and data-q`);
 assert.ok(WEIGHT_OPTIONS.filter(o => o.quantMethod === 'gguf').length >= 6
-          && WEIGHT_OPTIONS.some(o => o.quantMethod !== 'gguf'),
+          && ['', 'fp8', 'awq', 'gptq'].every(q => WEIGHT_OPTIONS.some(o => o.quantMethod === q)),
   'the weight options were not found in the page, so the checks below would check nothing');
 const dense8BPlan = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
 test('the copied report quotes the whole command, for every weight option the page offers', () => {
@@ -3910,6 +3922,8 @@ const goldenCases = () => {
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
      asState(h, 1, { ...dense8B, contextLength: 32768, concurrency: 4,
                      sharedPrefix: 8192, prefixCaching: true })],
+    ['h100-80 x1 — AWQ weights, the page\'s default precision',
+     asState(h, 1, { ...dense8B, bytesPerParam: 0.5, quantMethod: 'awq' })],
     ['h100-80 x1 — GGUF weights, which renderCommand branches on',
      asState(h, 1, { ...dense8B, bytesPerParam: 0.63, quantMethod: 'gguf' })],
     ['h100-80 x1 — a model imported by id rather than named by a preset',
@@ -4000,6 +4014,7 @@ test('the golden records every catalog row, and the shapes that change what the 
     'fp8 weights on silicon without them': sts =>
       sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
+    'AWQ weights, the default': sts => sts.some(st => st.quantMethod === 'awq'),
     'a shared prefix': sts => sts.some(st => st.sharedPrefix > 0),
     'a batch the KV cache cannot hold': sts =>
       sts.some(st => computeInference(st).batchLimitedByKV),

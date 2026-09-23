@@ -2565,6 +2565,7 @@ def golden_cases():
          cfg(t4, 1, bpp=1, quant="fp8")),
         ("h100-80 x1 — GGUF weights, so the plugin guidance under the command",
          cfg(h, 1, bpp=0.63, quant="gguf")),
+        ("h100-80 x1 — AWQ weights, the CLI's default precision", cfg(h, 1, bpp=0.5, quant="awq")),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
         ("h100-80 x1 — a model imported by id rather than named by a preset",
          cfg(h, 1, hf_model="org/imported-8b", model_name="imported-8b", preset=None)),
@@ -2686,6 +2687,7 @@ def check_the_golden_records_the_shapes_that_matter():
         # The one quantization the report prints guidance for under the command,
         # as the page golden records it under its command panel.
         "GGUF weights": lambda cs: any(c.get("quant") == "gguf" and comp(c)["fits"] for c in cs),
+        "AWQ weights, the default": lambda cs: any(c.get("quant") == "awq" for c in cs),
     }
     gone = [name for name, hits in shapes.items() if not hits(cfgs)]
     assert not gone, "the golden no longer records: " + ", ".join(gone)
