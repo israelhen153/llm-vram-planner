@@ -773,6 +773,9 @@ ROCM = {'vllm': 'v0.30.0',
            'aiterOff': ["AITER, AMD's kernel library, is enabled only on CDNA3 and newer, so this card runs "
                         'without it.',
                         'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/_aiter_ops.py#L138-L160'],
+           'fp8Weights': ["vLLM v0.30.0's FP8 weight kernels need CDNA3 or newer, or RDNA4, so FP8 weights "
+                          'are not offered on this card.',
+                          'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/kernels/linear/scaled_mm/rocm.py#L89-L90'],
            'awqDocs': ["vLLM's quantization table marks AWQ and GPTQ as unsupported on AMD GPUs.",
                        'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/README.md#L69-L70'],
            'awqSource': ["v0.30.0's ROCm platform accepts both; this tool has not run either.",
@@ -794,12 +797,17 @@ def rocm_guidance(cfg):
     gpu = cfg.get("gpu") or {}
     if gpu.get("vendor") != "amd":
         return []
+    # No lines under a command that isn't printed: FP8 refused on this target.
+    if (cfg.get("quant") == "fp8" or cfg.get("bpp") == 1) and fp8_weights_blocked(gpu):
+        return []
     arch = ROCM["arch"].get(gpu.get("gfx"), {})
     lines = ROCM["lines"]
     out = [lines["image"], lines["wheels"], lines["hip"], lines["hipBoth"]]
     if gpu.get("devices", 1) > 1:
         out.append(lines["gcd"])
     out += [lines["aiterOn"], lines["aiterDefault"]] if arch.get("aiter") else [lines["aiterOff"]]
+    if not arch.get("fp8Weights"):
+        out.append(lines["fp8Weights"])
     if cfg.get("quant") in ("awq", "gptq"):
         out += [lines["awqDocs"], lines["awqSource"]]
     if cfg.get("quant") == "gguf":
@@ -810,9 +818,45 @@ def rocm_guidance(cfg):
     return out
 
 
+class PlanRefused(ValueError):
+    """A plan vLLM can't run as asked, with the reason. The CLI prints it and exits 2."""
+
+
+def fp8_weights_blocked(gpu):
+    """Why vLLM can't load FP8 weights on this card, or "" where it can: on AMD, by
+    the ROCm table, since v0.30.0's FP8 weight kernels need CDNA3 or newer, or
+    RDNA4. A target the table doesn't know is refused too. Mirrors
+    fp8WeightsBlocked() in index.html."""
+    gpu = gpu or {}
+    if gpu.get("vendor") != "amd" or ROCM["arch"].get(gpu.get("gfx"), {}).get("fp8Weights"):
+        return ""
+    name = gpu.get("name") or "this card"
+    if gpu.get("gfx") in ROCM["arch"]:
+        return (f"vLLM {ROCM['vllm']} has no FP8 weight kernel for {name} ({gpu['gfx']}): its FP8 matrix "
+                f"kernels need CDNA3 or newer, or RDNA4.")
+    return (f"vLLM {ROCM['vllm']} loads FP8 weights only on CDNA3 or newer, or RDNA4, and {name}'s LLVM "
+            f"target is not one this planner knows.")
+
+
+def refuse_fp8_where_vllm_cannot(cfg):
+    """Stop a plan asking for FP8 weights on a card vLLM can't run them on, the same
+    test compute() uses for FP8: quant says fp8, or the bytes per parameter are 1."""
+    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:
+        reason = fp8_weights_blocked(cfg.get("gpu"))
+        if reason:
+            raise PlanRefused(f"{reason} Choose --prec bf16, awq or gptq.")
+    return cfg
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
+    # FP8 weights on a card vLLM can't run them on: no command, whatever path brought
+    # the config here. The CLI and JSON paths refuse it earlier; this is the last line.
+    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:
+        reason = fp8_weights_blocked(cfg.get("gpu"))
+        if reason:
+            return f"# {reason} Choose BF16, AWQ or GPTQ."
     # hf_model and quant can both originate from a user's own JSON now (the
     # whole point of default-allow is that cfg carries whatever they wrote),
     # and this command is meant to be copied straight into a terminal.
@@ -1480,9 +1524,15 @@ def interactive_mode():
 
     print("\nPrecision options:")
     prec_opts = [(2.0, "BF16"), (1.0, "FP8"), (0.5, "INT4/AWQ"), (0.63, "Q4_K_M"), (0.82, "Q6_K")]
+    # No FP8 on a card vLLM has no FP8 weight kernel for, and why; INT4/AWQ stays the default.
+    blocked = fp8_weights_blocked(gpu)
+    if blocked:
+        prec_opts = [o for o in prec_opts if o[1] != "FP8"]
+        print(f"FP8 is not offered: {blocked}")
+    default_prec = next(i for i, (_, l) in enumerate(prec_opts, 1) if l == "INT4/AWQ")
     for i, (v, l) in enumerate(prec_opts):
         print(f"  {i+1}. {l} ({v} B/param)")
-    prec_choice = int(input("Select [3]: ").strip() or "3") - 1
+    prec_choice = int(input(f"Select [{default_prec}]: ").strip() or str(default_prec)) - 1
     bpp = prec_opts[prec_choice][0]
 
     kv_bpp = 1 if input("FP8 KV cache? [y/n, default n]: ").strip().lower() == "y" else 2
@@ -1580,7 +1630,9 @@ def validate_arch(cfg):
     if isinstance(n_gpu, (int, float)) and not isinstance(n_gpu, bool) and n_gpu != int(n_gpu):
         raise TypeError(f"cfg['n_gpu'] must be a whole number, got {n_gpu!r}")
 
-    return cfg
+    # FP8 weights, by quant or by one byte per parameter, on a card vLLM has no FP8
+    # weight kernel for: refused, not planned.
+    return refuse_fp8_where_vllm_cannot(cfg)
 
 
 def from_json(path):
@@ -1661,7 +1713,8 @@ def from_cli_args(args):
             "kv_bpp": 1 if args.fp8_kv else 2,
             "hf_model": preset["hf"], "model_name": preset["name"],
         })
-        return cfg
+        # --prec fp8 on a card vLLM has no FP8 weight kernel for is refused, not planned.
+        return refuse_fp8_where_vllm_cannot(cfg)
     else:
         raise ValueError(f"Unknown preset: {args.preset}. Available: {', '.join(PRESETS.keys())}")
 
@@ -1680,12 +1733,19 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output", default="llm-vram-report.pdf", help="Output PDF path")
     args = parser.parse_args()
 
-    if args.json:
-        cfg = from_json(args.json)
-    elif args.preset:
-        cfg = from_cli_args(args)
-    else:
-        cfg = interactive_mode()
+    # A plan vLLM can't run as asked is refused on every path, with the reason and
+    # exit status 2, and no PDF is written for it.
+    try:
+        if args.json:
+            cfg = from_json(args.json)
+        elif args.preset:
+            cfg = from_cli_args(args)
+        else:
+            cfg = interactive_mode()
+        refuse_fp8_where_vllm_cannot(cfg)
+    except PlanRefused as refused:
+        print(f"error: {refused}", file=sys.stderr)
+        sys.exit(2)
 
     output = args.output
     report = ReportCard(cfg, output)

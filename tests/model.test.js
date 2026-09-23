@@ -4261,6 +4261,13 @@ test("an AMD card's command is vLLM's ROCm image with the same serve arguments; 
         const cmd = h.buildVllmCommand(st, c, model);
         const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}, ${model}`;
         if (!c.fits) { assert.ok(cmd.startsWith('# Does not fit'), `${where}: no fit, and a command`); continue; }
+        /* FP8 weights on a target vLLM has no FP8 weight kernel for: no command, the
+           reason in its place. Written out here, from the table's literals above. */
+        if (card.vendor === 'amd' && !ROCM_ARCH[card.gfx].fp8Weights && (opt.quantMethod === 'fp8' || opt.bytesPerParam === 1)) {
+          assert.strictEqual(cmd, `# vLLM v0.30.0 has no FP8 weight kernel for ${st.gpuName} (${card.gfx}): its FP8 matrix kernels need CDNA3 or newer, or RDNA4. Choose BF16, AWQ or GPTQ.`,
+            `${where}: FP8 weights on a card vLLM can't run them on`);
+          continue;
+        }
         const serve = h.buildVllmCommand({ ...st, vendor: 'nvidia' }, c, model);
         const head = `vllm serve ${model} \\\n`;
         assert.ok(serve.startsWith(head), `${where}: the vllm serve form lost its head`);
@@ -4283,6 +4290,78 @@ test("an AMD card's command is vLLM's ROCm image with the same serve arguments; 
   assert.ok(amd >= 200 && nvidia >= 400, `checked ${amd} AMD and ${nvidia} NVIDIA commands`);
 });
 
+test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, falls back to BF16, and gives FP8 back', () => {
+  /* syncPrecision() itself, on a stub of the page's own <select>: the options are the
+     page's, read above, and the cards are the catalog's. A reader on FP8 who picks a
+     card vLLM can't run FP8 weights on gets BF16 and a disabled, relabelled FP8
+     option. Back on a card that runs it, FP8 is given back. A choice the reader made
+     is never turned into FP8. */
+  const decl = (re) => { const m = html.match(re); assert.ok(m, `${re} not found in index.html`); return m[0]; };
+  const src = [decl(/^const ROCM = \{[\s\S]*?\n\};$/m), decl(/^function fp8WeightsBlocked\(gpu\) \{[\s\S]*?\n\}$/m),
+               decl(/^let precisionForcedFromFp8 = false;$/m), decl(/^function syncPrecision\(\) \{[\s\S]*?\n\}$/m)].join('\n');
+  const page = () => {
+    const options = PAGE_WEIGHT_OPTIONS.map(o => ({ value: String(o.bytesPerParam), dataset: { q: o.quantMethod },
+                                                     disabled: false, textContent: '' }));
+    /* A single-select, as a browser runs one: selecting an option deselects the rest.
+       A plain property would let two options be selected at once, which no page can. */
+    const chosen = new Set();
+    for (const o of options)
+      Object.defineProperty(o, 'selected', {
+        get: () => chosen.has(o),
+        set: (v) => { if (v) { chosen.clear(); chosen.add(o); } else chosen.delete(o); },
+      });
+    const els = { 'gpu-model': { value: 'h100-80' }, 'weight-precision': { options } };
+    const api = new Function('document', 'GPU_TABLE', `${src}; return { syncPrecision };`)(
+      { getElementById: (id) => els[id] }, GPU_TABLE);
+    const fp8 = options.find(o => o.dataset.q === 'fp8');
+    return {
+      pick: (q) => { options.find(x => x.dataset.q === q).selected = true; },
+      picked: () => options.find(o => o.selected).dataset.q,
+      card: (slug) => { els['gpu-model'].value = slug; api.syncPrecision(); },
+      fp8,
+    };
+  };
+  const gated = Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd' && !ROCM_ARCH[g.gfx].fp8Weights).map(([k]) => k);
+  assert.deepStrictEqual(gated.sort(), ['mi210-64', 'mi250x-128', 'rx7900xtx-24']);
+  for (const slug of Object.keys(GPU_TABLE)) {
+    const blocked = gated.includes(slug);
+    // FP8 chosen on a card that runs it, then this card, then back.
+    const p = page();
+    p.pick('fp8'); p.card('h100-80');
+    p.card(slug);
+    assert.strictEqual(p.fp8.disabled, blocked, `${slug}: FP8 ${blocked ? 'still offered' : 'withheld'}`);
+    assert.strictEqual(p.fp8.textContent, blocked ? 'FP8 — no vLLM FP8 weight kernel for this card' : 'FP8 (1.0 B/param)', `${slug}: the FP8 option's label`);
+    assert.strictEqual(p.picked(), blocked ? '' : 'fp8', `${slug}: the precision after the switch`);
+    p.card('h100-80');
+    assert.strictEqual(p.picked(), 'fp8', `${slug}: FP8 was not given back on a card that runs it`);
+    assert.ok(!p.fp8.disabled, `${slug}: FP8 still disabled on a card that runs it`);
+    // BF16 chosen by the reader is left alone, both ways.
+    const q = page();
+    q.pick(''); q.card('h100-80'); q.card(slug); q.card('h100-80');
+    assert.strictEqual(q.picked(), '', `${slug}: the reader's own BF16 was turned into FP8`);
+    // Forced to BF16, then the reader picks AWQ there: AWQ stays when FP8 would come back.
+    if (blocked) {
+      const r = page();
+      r.pick('fp8'); r.card('h100-80'); r.card(slug); r.pick('awq'); r.card('h100-80');
+      assert.strictEqual(r.picked(), 'awq', `${slug}: a choice the reader made after the fallback was overridden`);
+    }
+  }
+});
+
+test('recalculate() syncs the interconnect and the precision controls before it reads the state', () => {
+  /* The two gates above are tested by calling them. What makes them reach the page is
+     the call in recalculate(), before readInputState(), so the state it reads, and
+     every figure and command built from it, already reflects the gate. A gate with no
+     call site passes its own tests and gates nothing. */
+  const start = html.indexOf('function recalculate() {');
+  const body = html.slice(start, html.indexOf('\n}\n', start));
+  const read = body.indexOf('readInputState()');
+  for (const call of ['syncInterconnect();', 'syncPrecision();']) {
+    const at = body.indexOf(call);
+    assert.ok(at > 0 && read > at, `recalculate() does not call ${call} before it reads the state`);
+  }
+});
+
 test('the ROCm lines under the command are the ones that apply, each with its source, and only on AMD', () => {
   /* Which lines apply is re-derived here from the plan, not taken from the page:
      always the image, the wheels, choosing GPUs and the both-set failure; the GCD
@@ -4295,6 +4374,7 @@ test('the ROCm lines under the command are the ones that apply, each with its so
     const arch = ROCM_ARCH[card.gfx];
     return [L.image, L.wheels, L.hip, L.hipBoth, ...(card.devices > 1 ? [L.gcd] : []),
             ...(arch.aiter ? [L.aiterOn, L.aiterDefault] : [L.aiterOff]),
+            ...(arch.fp8Weights ? [] : [L.fp8Weights]),
             ...(['awq', 'gptq'].includes(st.quantMethod) ? [L.awqDocs, L.awqSource] : []),
             ...(st.quantMethod === 'gguf' ? [L.gguf] : []),
             ...(st.kvBytesPerValue < 2 && arch.fp8KvUnverified ? [L.kvUnverified] : []), L.more];
@@ -4309,7 +4389,9 @@ test('the ROCm lines under the command are the ones that apply, each with its so
       h.renderCommand(st, c);
       const panel = h.out['command-output'] || '';
       const report = h.exportSummary(st, c);
-      const want = c.fits ? expected(card, st) : [];
+      // No lines under a command that isn't printed: no fit, or FP8 refused.
+      const refused = card.vendor === 'amd' && !ROCM_ARCH[card.gfx].fp8Weights && (opt.quantMethod === 'fp8' || opt.bytesPerParam === 1);
+      const want = c.fits && !refused ? expected(card, st) : [];
       const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}`;
       for (const line of Object.values(L)) {
         const on = want.includes(line);
@@ -4516,6 +4598,8 @@ const goldenCases = () => {
     // ROCm: vLLM's own image, and the lines that apply to the plan.
     ['mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines',
      asState(GPU_TABLE['mi300x-192'], 1, { ...dense8B, bytesPerParam: 0.5, quantMethod: 'awq', hasNVLink: false })],
+    ['mi210-64 x1 — FP8 weights asked for, refused: vLLM has no FP8 weight kernel for gfx90a',
+     asState(GPU_TABLE['mi210-64'], 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
     ['mi250x-128 x2 — four GCDs on two boards',
      asState(GPU_TABLE['mi250x-128'], 2, { ...dense8B, hasNVLink: false })],
     ['rx7900xtx-24 x1 — an FP8 KV cache on RDNA3, the unverified path, 4 users so it fits',
@@ -4623,6 +4707,8 @@ test('the golden records every catalog row, and the shapes that change what the 
       sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
     'a ROCm command with AITER on': sts => sts.some(st => st.vendor === 'amd' && st.gfx === 'gfx942'),
+    'FP8 weights refused on a card vLLM has no FP8 kernel for': sts =>
+      sts.some(st => st.quantMethod === 'fp8' && st.vendor === 'amd' && st.gfx !== 'gfx942'),
     'a ROCm command on more than one dual-GCD board': sts =>
       sts.some(st => st.vendor === 'amd' && st.gpuDevices > 1 && st.gpuCount > 1),
     // Printed only under a command, so only a plan that fits records it.

@@ -2053,6 +2053,10 @@ const ROCM = {
       "AITER, AMD's kernel library, is enabled only on CDNA3 and newer, so this card runs without it.",
       "https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/_aiter_ops.py#L138-L160"
     ],
+    "fp8Weights": [
+      "vLLM v0.30.0's FP8 weight kernels need CDNA3 or newer, or RDNA4, so FP8 weights are not offered on this card.",
+      "https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/kernels/linear/scaled_mm/rocm.py#L89-L90"
+    ],
     "awqDocs": [
       "vLLM's quantization table marks AWQ and GPTQ as unsupported on AMD GPUs.",
       "https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/README.md#L69-L70"
@@ -2080,11 +2084,15 @@ const ROCM = {
    on an NVIDIA card. Mirrored by rocm_guidance() in generate_report.py. */
 function rocmGuidance(state) {
   if (state.vendor !== 'amd') return [];
+  // No lines under a command that isn't printed: FP8 refused on this target.
+  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1)
+      && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })) return [];
   const arch = ROCM.arch[state.gfx] || {};
   const L = ROCM.lines;
   const out = [L.image, L.wheels, L.hip, L.hipBoth];
   if ((state.gpuDevices || 1) > 1) out.push(L.gcd);
   out.push(...(arch.aiter ? [L.aiterOn, L.aiterDefault] : [L.aiterOff]));
+  if (!arch.fp8Weights) out.push(L.fp8Weights);
   if (state.quantMethod === 'awq' || state.quantMethod === 'gptq') out.push(L.awqDocs, L.awqSource);
   if (state.quantMethod === 'gguf') out.push(L.gguf);
   if (state.kvBytesPerValue < 2 && arch.fp8KvUnverified) out.push(L.kvUnverified);
@@ -2092,8 +2100,24 @@ function rocmGuidance(state) {
   return out;
 }
 
+/* Why vLLM can't load FP8 weights on this card, or '' where it can: on AMD, by the
+   ROCm table, since v0.30.0's FP8 weight kernels need CDNA3 or newer, or RDNA4. A
+   target the table doesn't know is refused too. Mirrored by fp8_weights_blocked()
+   in generate_report.py. */
+function fp8WeightsBlocked(gpu) {
+  if (!gpu || gpu.vendor !== 'amd' || (ROCM.arch[gpu.gfx] || {}).fp8Weights) return '';
+  const name = gpu.name || 'this card';
+  return Object.hasOwn(ROCM.arch, gpu.gfx || '')
+    ? `vLLM ${ROCM.vllm} has no FP8 weight kernel for ${name} (${gpu.gfx}): its FP8 matrix kernels need CDNA3 or newer, or RDNA4.`
+    : `vLLM ${ROCM.vllm} loads FP8 weights only on CDNA3 or newer, or RDNA4, and ${name}'s LLVM target is not one this planner knows.`;
+}
+
 function buildVllmCommand(state, computed, modelPath) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
+  /* FP8 weights on a card vLLM can't run them on: no command, whatever path brought
+     the state here (the control offers no FP8 there, but a link or a snapshot can). */
+  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))
+    return `# ${fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })} Choose BF16, AWQ or GPTQ.`;
   // The split computeInference() sharded against, not a second derivation of
   // it: the figures above this command and the command itself are now the same
   // number by construction rather than by two call sites agreeing.
@@ -2376,8 +2400,36 @@ function syncInterconnect() {
   }
 }
 
+/* Whether the gate below is the reason the precision control says BF16: same shape
+   as interconnectForcedToPCIe, so it only ever gives back what it took. */
+let precisionForcedFromFp8 = false;
+
+/* Keeps the precision control honest about the card: FP8 weights on an AMD card
+   vLLM has no FP8 weight kernel for are disabled and relabelled, and a selected FP8
+   falls back to BF16. On a card that runs FP8 the option is offered again, and a
+   fallback this made is given back. Called from recalculate(), like
+   syncInterconnect(), because the card can also change from a link or a snapshot. */
+function syncPrecision() {
+  const gpu = GPU_TABLE[document.getElementById('gpu-model').value];
+  const sel = document.getElementById('weight-precision');
+  const fp8 = [...sel.options].find(o => o.dataset.q === 'fp8');
+  const bf16 = [...sel.options].find(o => o.dataset.q === '');
+  if (!fp8 || !bf16) return;
+  const blocked = !!fp8WeightsBlocked(gpu);
+  fp8.disabled = blocked;
+  fp8.textContent = blocked ? 'FP8 — no vLLM FP8 weight kernel for this card' : 'FP8 (1.0 B/param)';
+  if (blocked && fp8.selected) {
+    precisionForcedFromFp8 = true;
+    bf16.selected = true;
+  } else if (!blocked && precisionForcedFromFp8) {
+    if (bf16.selected) fp8.selected = true;
+    precisionForcedFromFp8 = false;
+  }
+}
+
 function recalculate() {
   syncInterconnect();
+  syncPrecision();
   renderRestoreNotice();
   const state = readInputState();
   const computed = computeInference(state);

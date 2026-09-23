@@ -2298,6 +2298,12 @@ def check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need():
                 for ngpu in (1, 2):
                     args = cli_args_for("llama31-8b")
                     args.gpu, args.prec, args.fp8_kv, args.ngpu = slug, token, fp8_kv, ngpu
+                    if card["vendor"] == "amd" and card["gfx"] != "gfx942" and quant == "fp8":
+                        try:
+                            gr.from_cli_args(args)
+                        except gr.PlanRefused:
+                            continue
+                        raise AssertionError(f"{slug} --prec {token}: FP8 weights on {card['gfx']} were planned, not refused")
                     cfg = gr.from_cli_args(args)
                     c = gr.compute(cfg)
                     strings = story_strings(cfg)
@@ -2311,6 +2317,7 @@ def check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need():
                     want = [L["image"], L["wheels"], L["hip"], L["hipBoth"]]
                     want += [L["gcd"]] if card["devices"] > 1 else []
                     want += [L["aiterOn"], L["aiterDefault"]] if aiter else [L["aiterOff"]]
+                    want += [] if card["gfx"] == "gfx942" else [L["fp8Weights"]]
                     want += [L["awqDocs"], L["awqSource"]] if quant in ("awq", "gptq") else []
                     want += [L["gguf"]] if quant == "gguf" else []
                     want += [L["kvUnverified"]] if fp8_kv and kv_unverified else []
@@ -2337,6 +2344,91 @@ def check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need():
 
 test("an AMD card's PDF runs vLLM's own ROCm image and says what else it needs, each line with its source",
      check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need)
+
+
+# The cards vLLM v0.30.0 has no FP8 weight kernel for, read off the catalog: AMD rows
+# whose LLVM target is not CDNA3's. Written out rather than taken from the engine's
+# table, so a change to the table shows up here as a disagreement.
+FP8_GATED = {slug for slug, row in gr.GPUS.items() if row["vendor"] == "amd" and row["gfx"] != "gfx942"}
+
+
+def fp8_reason(row):
+    return (f"vLLM v0.30.0 has no FP8 weight kernel for {row['name']} ({row['gfx']}): its FP8 matrix kernels "
+            f"need CDNA3 or newer, or RDNA4.")
+
+
+def check_fp8_weights_are_refused_where_vllm_cannot_run_them():
+    """Every entry path, every catalog card. On a gated card, `--prec fp8` and a JSON
+    config asking for FP8 (by quant, or by one byte per parameter) are refused with
+    the reason. A config that reaches the command builder anyway gets the reason
+    where a command would be. On every other card nothing is refused."""
+    assert FP8_GATED == {"mi210-64", "mi250x-128", "rx7900xtx-24"}, FP8_GATED
+    for slug, row in gr.GPUS.items():
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.prec = slug, "fp8"
+        gated = slug in FP8_GATED
+        try:
+            cfg = gr.from_cli_args(args)
+            assert not gated, f"{slug}: --prec fp8 was planned on a card vLLM can't run FP8 weights on"
+        except gr.PlanRefused as refused:
+            assert gated, f"{slug}: --prec fp8 was refused on a card that runs it"
+            assert str(refused) == fp8_reason(row) + " Choose --prec bf16, awq or gptq.", str(refused)
+        for raw in ({"preset": "llama31-8b", "gpu": slug, "quant": "fp8", "bpp": 1},
+                    {"preset": "llama31-8b", "gpu": slug, "bpp": 1}):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(raw, f)
+            try:
+                gr.from_json(f.name)
+                assert not gated, f"{slug}: JSON {raw} was planned on a card vLLM can't run FP8 weights on"
+            except gr.PlanRefused as refused:
+                assert gated and fp8_reason(row) in str(refused), f"{slug}: JSON {raw} refused: {refused}"
+            finally:
+                os.unlink(f.name)
+        # The builder's own line, for a config that got past both.
+        if gated:
+            cmd = gr.build_vllm_cmd({"gpu": row, "quant": "fp8", "bpp": 1, "hf_model": "m", "ctx": 8192},
+                                    {"fits": True, "tp": 1, "dp": 1, "is_moe": False, "max_ctx_1": 8192})
+            assert cmd == f"# {fp8_reason(row)} Choose BF16, AWQ or GPTQ.", cmd
+
+test("FP8 weights are refused, with the reason, on every card vLLM has no FP8 weight kernel for, and nowhere else",
+     check_fp8_weights_are_refused_where_vllm_cannot_run_them)
+
+
+def check_the_cli_exits_2_with_the_reason():
+    """The command line itself: the reason on stderr, exit status 2, and no PDF."""
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "r.pdf")
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--preset", "llama31-8b",
+                              "--gpu", "mi210-64", "--prec", "fp8", "-o", out], capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert fp8_reason(gr.GPUS["mi210-64"]) in run.stderr, run.stderr[-300:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses --prec fp8 on a gated card with the reason and exit status 2, and writes no PDF",
+     check_the_cli_exits_2_with_the_reason)
+
+
+def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
+    """After a gated card is chosen, the precision menu leaves FP8 out and says why,
+    and its default is still INT4/AWQ. On every other card, FP8 is offered and the
+    default is the same."""
+    for slug, row in gr.GPUS.items():
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index(slug) + 1), "1",
+                   "", "n", "8192", "1"]
+        out = io.StringIO()
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(out):
+            cfg = gr.interactive_mode()
+        menu = out.getvalue().split("Precision options:")[1]
+        gated = slug in FP8_GATED
+        assert ("FP8 (1.0 B/param)" in menu) == (not gated), f"{slug}: FP8 {'offered' if gated else 'missing'}"
+        if gated:
+            assert f"FP8 is not offered: {fp8_reason(row)}" in out.getvalue(), f"{slug}: the reason is missing"
+        else:
+            assert "FP8 is not offered" not in out.getvalue(), f"{slug}: FP8 said to be withheld on a card that runs it"
+        assert cfg["bpp"] == 0.5, f"{slug}: the default precision is {cfg['bpp']}, not INT4/AWQ"
+
+test("the interactive menu offers no FP8 on a gated card, says why, and keeps INT4/AWQ as its default",
+     check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it)
 
 
 test("the PDF cost table's tier names carry no provider parenthetical",
@@ -3062,6 +3154,8 @@ def golden_cases():
         # ROCm: vLLM's own image, and the lines that apply to the plan.
         ("mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines",
          cfg(gr.GPUS["mi300x-192"], 1, bpp=0.5, quant="awq", nvlink=False)),
+        ("mi210-64 x1 — FP8 weights asked for, refused: vLLM has no FP8 weight kernel for gfx90a",
+         cfg(gr.GPUS["mi210-64"], 1, bpp=1, quant="fp8", nvlink=False)),
         ("mi250x-128 x2 — four GCDs on two boards", cfg(gr.GPUS["mi250x-128"], 2, nvlink=False)),
         ("rx7900xtx-24 x1 — an FP8 KV cache on RDNA3, the unverified path, 4 users so it fits",
          cfg(gr.GPUS["rx7900xtx-24"], 1, kv_bpp=1, conc=4, nvlink=False)),
@@ -3191,6 +3285,9 @@ def check_the_golden_records_the_shapes_that_matter():
             lambda cs: any(comp(c)["batch_limited"] for c in cs),
         "a model imported by id": lambda cs: any(c.get("hf_model") for c in cs),
         "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),
+        "FP8 weights refused on a card vLLM has no FP8 kernel for":
+            lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["vendor"] == "amd" and c["gpu"].get("gfx") != "gfx942"
+                           for c in cs),
         "a ROCm command on more than one dual-GCD board":
             lambda cs: any(c["gpu"]["vendor"] == "amd" and c["gpu"]["devices"] > 1 and c["n_gpu"] > 1 for c in cs),
         # Printed only under a command, so only a plan that fits records it.

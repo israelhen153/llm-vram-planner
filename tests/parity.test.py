@@ -40,7 +40,7 @@ wanted = {"GIB", "GPUS", "PERF", "ROCM"}
 # compute() now calls split_parallelism(device_count_for(cfg)) for the TP/DP
 # split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
-              "device_count_for", "interconnect_name", "rocm_guidance"}
+              "device_count_for", "interconnect_name", "rocm_guidance", "fp8_weights_blocked"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -1163,7 +1163,7 @@ function extract(sig) {
 }
 const rocm = html.match(/^const ROCM = \{[\s\S]*?\n\};$/m);
 if (!rocm) throw new Error('ROCM not found in index.html');
-const src = rocm[0] + '\n' + extract('function splitParallelism(gpuCount) {')
+const src = rocm[0] + '\n' + extract('function fp8WeightsBlocked(gpu) {') + extract('function splitParallelism(gpuCount) {')
           + extract('function parallelismFor(state) {')
           + extract('function buildVllmCommand(state, computed, modelPath) {');
 const api = new Function(`${src}; return {buildVllmCommand, parallelismFor};`)();
@@ -1219,8 +1219,9 @@ js_rocm = json.loads(subprocess.run(
 const h=require('fs').readFileSync(process.argv[1],'utf8');
 const m=h.match(/^const ROCM = \\{[\\s\\S]*?\\n\\};$/m);
 const f=h.match(/^function rocmGuidance\\(state\\) \\{[\\s\\S]*?\\n\\}$/m);
-if(!m||!f) throw new Error('ROCM or rocmGuidance() not found in index.html');
-const api=new Function(`${m[0]}\\n${f[0]}; return {ROCM, rocmGuidance};`)();
+const b=h.match(/^function fp8WeightsBlocked\\(gpu\\) \\{[\\s\\S]*?\\n\\}$/m);
+if(!m||!f||!b) throw new Error('ROCM, rocmGuidance() or fp8WeightsBlocked() not found in index.html');
+const api=new Function(`${m[0]}\\n${b[0]}\\n${f[0]}; return {ROCM, rocmGuidance};`)();
 const plans=JSON.parse(process.argv[2]);
 console.log(JSON.stringify({table: api.ROCM, lines: plans.map(p => api.rocmGuidance(p))}));""",
      os.path.join(ROOT, "index.html"),
