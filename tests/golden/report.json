@@ -3074,7 +3074,7 @@
   "—",
   "—",
   "Prices per board/hr as of mid-2026. Vary by region, commitment, and availability. Reserved instances typically 30-60% off hyperscaler on-demand. Spot can be interrupted.",
-  "Source — Hyperscaler: no confirmed hourly price. Specialized: DigitalOcean · AMD Instinct MI325X GPU Droplet · global · recorded by hand 2026-09-23, not re-checked weekly. Spot: no confirmed hourly price.",
+  "Source — Hyperscaler: no confirmed hourly price. Specialized: DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly. Spot: no confirmed hourly price.",
   "vLLM deployment command",
   "vllm serve '' \\",
   "--host 0.0.0.0 --port 8000 \\",

@@ -5550,7 +5550,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI325X 256GB - Total VRAM: 256 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 256 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 213 - Throughput and TTFT: not modelled. No measured utilisation is published for MI325X 256GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI325X 256GB) - Hyperscaler: no confirmed hourly price - Specialized: $3.80/hr · $2,774/mo (source: DigitalOcean · AMD Instinct MI325X GPU Droplet · global · recorded by hand 2026-09-23, not re-checked weekly) - Spot: no confirmed hourly price ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 2 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× MI325X 256GB - Total VRAM: 256 GiB ## VRAM breakdown - Weights: 14.9 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 32.6 GiB / 256 GiB (FITS) ## Capacity - Max context (1 user): 1024K - Max concurrent @ 8K: 213 - Throughput and TTFT: not modelled. No measured utilisation is published for MI325X 256GB, and estimating either would mean borrowing another architecture's constants, which do not transfer. ## Cost (1× MI325X 256GB) - Hyperscaler: no confirmed hourly price - Specialized: $3.80/hr · $2,774/mo (source: DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly) - Spot: no confirmed hourly price ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -5579,7 +5579,7 @@
      "style=grid-template-columns:repeat(1,1fr)",
      "title=Remove"
     ],
-    "text": "8B model GPU 1× MI325X 256GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 256 Max ctx (1u) 1024K Max users @8K 213 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $3.80 Cost source Hyper: no confirmed hourly price Spec: DigitalOcean · AMD Instinct MI325X GPU Droplet · global · recorded by hand 2026-09-23, not re-checked weekly Spot: no confirmed hourly price"
+    "text": "8B model GPU 1× MI325X 256GB Precision 2 B/param KV dtype BF16 Weights 14.9 GiB Per-device 32.6 GiB / 256 Max ctx (1u) 1024K Max users @8K 213 Per-user / aggregate not modelled no measured utilisation for this hardware — borrowed constants do not transfer Cost/hr $3.80 Cost source Hyper: no confirmed hourly price Spec: DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly Spot: no confirmed hourly price"
    },
    "cost-output": {
     "attrs": [
@@ -5609,7 +5609,7 @@
      "style=padding:8px 10px",
      "style=padding:8px 10px"
     ],
-    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price — — — Specialized DigitalOcean · AMD Instinct MI325X GPU Droplet · global · recorded by hand 2026-09-23, not re-checked weekly $3.80 $3.80 $2,774 Spot / marketplace no confirmed hourly price — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler no confirmed hourly price — — — Specialized DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly $3.80 $3.80 $2,774 Spot / marketplace no confirmed hourly price — — — Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
    },
    "exec-summary": {
     "attrs": [
@@ -5628,7 +5628,7 @@
      "style=font-size:11px",
      "style=font-size:16px"
     ],
-    "text": "8B model READY TO DEPLOY Hardware 1× MI325X 256GB VRAM used 32.6 GiB / 256 GiB per device (13%) Max concurrent users (8K context) 213 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $2,774/mo Cost source Hyper: no confirmed hourly price · Spec: DigitalOcean · AMD Instinct MI325X GPU Droplet · global · recorded by hand 2026-09-23, not re-checked weekly · Spot: no confirmed hourly price Precision BF16 (full precision)"
+    "text": "8B model READY TO DEPLOY Hardware 1× MI325X 256GB VRAM used 32.6 GiB / 256 GiB per device (13%) Max concurrent users (8K context) 213 Speed and server throughput Not modelled · no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer Monthly cost range $2,774/mo Cost source Hyper: no confirmed hourly price · Spec: DigitalOcean · AMD Instinct™ MI325X · global · recorded by hand 2026-09-23, not re-checked weekly · Spot: no confirmed hourly price Precision BF16 (full precision)"
    },
    "gpu-cards": {
     "attrs": [

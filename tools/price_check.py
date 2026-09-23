@@ -631,15 +631,19 @@ SOURCE_MAP = {
     "mi210-64": {
         "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
                             "AWS or GCP (checked 2026-09-23)"},
-        "spec": {"manual": "Runcrate shows only an average and a range from a generated page, no list "
-                           "price (checked 2026-09-23)"},
+        "spec": {"manual": "Runcrate's MI210 page advertises $0.82/hr on demand, 'available now', but "
+                           "Runcrate's own pricing page lists no AMD GPU among its 20 SKUs and the MI210 page "
+                           "misstates AMD's figures (47.9 TFLOPS FP16 against AMD's 181.0), so the offer could not "
+                           "be confirmed (checked 2026-09-23)"},
         "spot": {"manual": "no spot or marketplace offer found (checked 2026-09-23)"},
     },
     "mi250x-128": {
         "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
                             "AWS or GCP (checked 2026-09-23)"},
-        "spec": {"manual": "Cirrascale lists the MI250, not the MI250X, and only monthly; Runcrate shows only "
-                           "an average and a range (checked 2026-09-23)"},
+        "spec": {"manual": "Cirrascale lists the MI250, not the MI250X, and only monthly. Runcrate's MI250X page "
+                           "advertises $1.35/hr, but Runcrate's own pricing page lists no AMD GPU and the page "
+                           "misstates AMD's figures (95.7 TFLOPS against AMD's 383.0), so the offer could not be "
+                           "confirmed (checked 2026-09-23)"},
         "spot": {"manual": "no spot or marketplace offer found (checked 2026-09-23)"},
     },
     "mi300x-192": {

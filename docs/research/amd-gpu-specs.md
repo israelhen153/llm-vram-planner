@@ -50,6 +50,11 @@ device with 192 GB.
 (footnote MI325-001A: "6 TB/s GPU peak theoretical memory bandwidth"; AMD prints no finer figure),
 and footnote MI325-002: "1307.4 TFLOPS peak theoretical half precision (FP16), 1307.4 TFLOPS … (BF16)"
 and "2614.9 TFLOPS peak theoretical 8-bit precision (FP8)". ROCm GPU specs: "MI325X | CDNA3 | gfx942".
+One device per board: AMD Accelerator Cloud's partitioning guide says "AMD Instinct MI325X and MI355X
+GPUs support multiple compute partitioning modes" and "SPX (Single Partition eXtended) - Default mode -
+Each physical GPU appears as 1 logical GPU"
+(https://aac.amd.com/help/bare-metal/gpu-partitioning/). The cold check found no MI325X-specific source
+for this default until that page.
 
 **Radeon RX 7900 XTX.** Product page: "Max Memory Size 24 GB … Memory Type GDDR6", "Memory
 Bandwidth Up to 960 GB/s" (not the "Effective Memory Bandwidth Up to 3500 GB/s" line, which counts
@@ -133,6 +138,7 @@ MI350X and MI355X (CDNA4) are now rentable: Oracle announced MI355X general avai
 - ROCm precision support: https://rocm.docs.amd.com/en/latest/reference/precision-support.html
 - MI300X partitioning (SPX default): https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/gpu-partitioning/mi300x/overview.html
 - GPUOpen, WMMA on RDNA3: https://gpuopen.com/learn/wmma_on_rdna3/
+- AMD Accelerator Cloud, GPU partitioning: https://aac.amd.com/help/bare-metal/gpu-partitioning/
 
 **Who read what.** A research pass read every figure above from these pages. Before any of it
 entered the catalog, a second reader re-read the two that decide the disputed questions: ROCm's

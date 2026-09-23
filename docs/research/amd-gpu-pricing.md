@@ -28,7 +28,7 @@ what it holds, and every lead that was considered and not used.
 | `mi300x-192` | hyper | 6.00 | Azure | `Standard_ND96isr_MI300X_v5`, meter `ND96isrMI300Xv5`, $48.00/hr for 8 GPUs | eastus2 | `priceSource`, re-read weekly by `tools/price_check.py` | Azure Retail Prices API |
 | `mi300x-192` | spec | 2.39 | RunPod | MI300X (Secure Cloud), on demand | global | `priceRecord`, recorded by hand | https://www.runpod.io/gpu-models/mi300x |
 | `mi300x-192` | spot | 1.11 | Azure | `Standard_ND96isr_MI300X_v5` spot, meter `ND96isrMI300Xv5 Spot`, $8.8704/hr for 8 GPUs | eastus2 | `priceSource`, re-read weekly | Azure Retail Prices API |
-| `mi325x-256` | spec | 3.80 | DigitalOcean | AMD Instinct MI325X GPU Droplet, on demand, 1 or 8 GPUs | global | `priceRecord`, recorded by hand | https://www.digitalocean.com/pricing/gpu-droplets |
+| `mi325x-256` | spec | 3.80 | DigitalOcean | "AMD Instinct™ MI325X" GPU Droplet, on demand, 1 or 8 GPUs | global | `priceRecord`, recorded by hand | https://www.digitalocean.com/pricing/gpu-droplets |
 
 Every other AMD tier is null.
 
@@ -52,9 +52,19 @@ regions. eastus2 and westus3 are the cheapest, at $48.00.
 |---|---|---|
 | `mi325x-256` | hyper | No hyperscaler offers it. The Azure Retail Prices API returns 0 items for any SKU containing MI325, MI355, MI250 or MI210. Oracle's price list has MI300X and MI355X only, and neither AWS nor GCP lists an Instinct instance. |
 | `mi325x-256` | spot | Vultr lists a preemptible price for `vbm-256c-3072gb-8-mi325x-gpu`: $16.00/hr for 8 GPUs, $2.00 per GPU. The plan's `locations` is empty, so no region offers it. |
-| `mi250x-128` | all | Cirrascale lists "4X AMD Instinct MI250", not the MI250X, and only monthly. Runcrate's MI250X page shows an average and a range ("$1.20–$1.50"), generated from a catalog that also claims an AWS price for a GPU AWS does not sell. No single list price can be confirmed. |
-| `mi210-64` | all | Runcrate only, with the same problem. |
+| `mi250x-128` | all | Cirrascale lists "4X AMD Instinct MI250", not the MI250X, and only monthly. Runcrate's MI250X page advertises "$1.35 /hr" but see the MI210 row. |
+| `mi210-64` | all | Runcrate's MI210 page advertises "$0.82/hr On-demand · per-second billing", "$0.70–$0.95/hr range" and "Available now · 4 regions". Runcrate's own pricing page lists 20 GPU SKUs and no AMD GPU. The per-card pages misstate AMD's own figures: "47.9 TFLOPS FP16" for the MI210, where AMD says 181.0, and 95.7 for the MI250X, where AMD says 383.0. The offer cannot be confirmed without an account, so the tier stays null, and `SOURCE_MAP` records why. The cold check read the same pages and put the question to the owner; see "Open question". |
 | `rx7900xtx-24` | all | Vast.ai: "No current offers". HOSTKEY rents a 4× RX 7900 XTX server monthly, as a pre-order, with no hourly price. |
+
+The RunPod figure is also confirmed by RunPod's own GraphQL API (`api.runpod.io/graphql`, `gpuTypes`,
+`securePrice: 2.39` for "AMD Instinct MI300X OAM"). RunPod's general pricing page, updated September 13,
+2026, does not list the MI300X, so a reader re-checking by hand should use the card's page or the API.
+
+## Open question for the owner
+
+Does a reseller's per-card marketing page count as "a provider's own page"? If it does, the MI210 and
+MI250X specialized tiers would carry Runcrate's figures as hand records. If it does not, which is how
+the catalog stands today, nothing changes.
 
 ## Other confirmed prices, not the catalog's choice
 
