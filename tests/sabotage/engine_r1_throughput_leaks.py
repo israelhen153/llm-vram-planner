@@ -135,7 +135,7 @@ S["E21 py: PDF — throughput section omitted entirely for the unknown card"] = 
     (REPORT_PY, "            story.append(Paragraph(\"Throughput\", self.styles[\"SectionHead\"]))\n            story.append(self._make_kv_table([\n                [\"Throughput and TTFT\", \"Not modelled\"],\n                max_batch_row,\n            ]))\n" + PY_EXPLAIN, "            pass\n", 1)]
 
 # ---- F. suppress a constants-independent figure as well ----
-S["F1 js: weightsGB null without constants"] = [(INDEX_HTML, JS_RET_VRAM, "    isMoE, weightsGB: throughputModelled ? weightsGB : null, kvCacheGB, activationsGB, totalOverhead, totalGB,\n", 1)]
+S["F1 js: weightsGB null without constants"] = [(INDEX_HTML, JS_RET_VRAM, "    isMoE, weightsGB: throughputModelled ? weightsGB : null, kvCacheGB, activationsGB, totalOverhead, peerBufferGB, totalGB,\n", 1)]
 S["F2 js: maxBatchByKV null without constants"] = [(INDEX_HTML, JS_RET_BATCH, "    maxBatchByKV: throughputModelled ? maxBatchByKV : null, batchLimitedByKV, computeBound, ttftMs, ttftColdMs, ttftWarmMs,\n", 1)]
 S["F3 js: tp/dp null without constants"] = [(INDEX_HTML, JS_RET_TP, "    tp: throughputModelled ? tp : null, dp: throughputModelled ? dp : null,\n    freeForKVCache,", 1)]
 S["F4 js: hourlyHyper null without constants"] = [(INDEX_HTML, JS_RET_COST, "    hourlyHyper: throughputModelled ? hourlyHyper : null, hourlySpec, hourlySpot,\n", 1)]

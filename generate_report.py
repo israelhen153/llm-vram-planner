@@ -396,7 +396,13 @@ def compute(cfg):
     total_active_p = active_p + shared_p
     act_gb = max((total_active_p * 1e9 * 2 * 0.01) / GIB, 0.1)
     oh_per_gpu = 1.5
-    nccl_oh = (0.3 if nvlink else 0.2) * (device_count - 1) if device_count > 1 else 0
+    # The communication library's buffers per extra device: 0.3 GB over NVLink, 0.2
+    # otherwise, and 0 with no extra device, where nothing is charged for them.
+    # Returned, with the context allowance, so the notes that describe
+    # these charges print the figures used: until 2026-09-23 the note said 0.3 on
+    # every link. Mirrors peerBufferGB in index.html's computeInference().
+    peer_buffer_gb = (0.3 if nvlink else 0.2) if device_count > 1 else 0
+    nccl_oh = peer_buffer_gb * (device_count - 1) if device_count > 1 else 0
     total_oh = oh_per_gpu * device_count + nccl_oh
 
     # The divisor for the quantities a data-parallel replica holds a whole copy
@@ -590,7 +596,8 @@ def compute(cfg):
 
     return {
         "weights_gb": weights_gb, "kv_gb": kv_gb, "act_gb": act_gb,
-        "total_oh": total_oh, "total_gb": total_gb,
+        "total_oh": total_oh, "context_gb_per_device": oh_per_gpu, "peer_buffer_gb": peer_buffer_gb,
+        "total_gb": total_gb,
         "per_w": per_w, "per_kv": per_kv, "per_a": per_a, "per_oh": per_oh,
         "per_total": per_total, "total_vram": total_vram,
         "free_kv": free_kv, "kv_per_tok_gb": kv_per_tok_gb,
@@ -1181,7 +1188,12 @@ class ReportCard:
         notes = []
         notes.append(f"KV cache uses {'FP8 (1 byte/value)' if cfg.get('kv_bpp', 2) < 2 else 'BF16 (2 bytes/value)'} "
                       f"{'— enabled via --kv-cache-dtype fp8' if cfg.get('kv_bpp', 2) < 2 else '— default vLLM behavior'}.")
-        notes.append("VRAM estimates include ~1.5 GB CUDA context overhead per device.")
+        if cfg["gpu"].get("vendor") == "amd":
+            # The same allowance, which was set for CUDA; nothing here measured ROCm's.
+            notes.append(f"VRAM estimates include ~{c['context_gb_per_device']} GB per device for the runtime "
+                         f"context: an allowance set for CUDA, not measured on ROCm.")
+        else:
+            notes.append(f"VRAM estimates include ~{c['context_gb_per_device']} GB CUDA context overhead per device.")
         if device_count_for(cfg) > 1:
             link = interconnect_name(cfg)
             # No bandwidth figure for Infinity Fabric: nothing here measures it,
@@ -1193,7 +1205,8 @@ class ReportCard:
                      # the throughput figures it prices.
                      "PCIe": 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.' if c['throughput_modelled'] else 'PCIe provides 64-128 GB/s.'}[link]
             notes.append(f"{link} interconnect assumed." + (f" {speed}" if speed else ""))
-            notes.append(f"NCCL buffers add ~0.3 GB per device peer connection.")
+            library = "RCCL" if cfg["gpu"].get("vendor") == "amd" else "NCCL"
+            notes.append(f"{library} buffers add ~{c['peer_buffer_gb']} GB per device peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
         # FP8 asked for on silicon with no FP8 tensor cores. The weights really

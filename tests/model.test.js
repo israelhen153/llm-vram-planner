@@ -2639,6 +2639,40 @@ test('each lead sits under its own tier, after the note, and only where the tier
     'a lead on a priced tier is shown');
 });
 
+test("the notes print the peer-buffer figure the math charges, in the card's own library's name", () => {
+  /* Until 2026-09-23 the note said "NCCL buffers ~0.3 GB/peer" on every link while
+     computeInference() charged 0.2 without NVLink, so every PCIe plan, and every AMD
+     plan, described a charge it wasn't making, in NVIDIA's library's name on AMD's
+     cards. The figure the note must print is read back from the engine's own total
+     (1.5 GB of runtime context per device, and the rest per extra device), not from
+     its source: every catalog card, at one, two and three boards, over each link the
+     card can have. */
+  let checked = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE)) {
+    for (const nvlink of supportsNVLink(card) ? [true, false] : [false]) {
+      for (const boards of [1, 2, 3]) {
+        const h = renderHarness();
+        const st = asState(card, boards, { params: 8, layers: 32, hasNVLink: nvlink });
+        const c = h.computeInference(st);
+        h.renderNotes(st, c);
+        const notes = (h.out['notes-output'] || '').replace(/<[^>]*>/g, ' ');
+        const lib = card.vendor === 'amd' ? 'RCCL' : 'NCCL', other = lib === 'RCCL' ? 'NCCL' : 'RCCL';
+        const where = `${key} x${boards}, ${nvlink ? 'NVLink' : 'no NVLink'}`;
+        assert.ok(!notes.includes(other), `${where}: the notes name ${other} on a card that uses ${lib}`);
+        if (c.deviceCount > 1) {
+          const charged = Math.round(((c.totalOverhead - 1.5 * c.deviceCount) / (c.deviceCount - 1)) * 10) / 10;
+          assert.ok(notes.includes(`${lib} buffers ~${charged} GB/peer.`),
+            `${where}: the math charges ${charged} GB per extra device, the notes say ${JSON.stringify((notes.match(/\w+ buffers ~[\d.]+ GB\/peer/) || ['nothing'])[0])}`);
+          checked++;
+        } else {
+          assert.ok(!/buffers ~/.test(notes), `${where}: one device, and the notes still describe peer buffers`);
+        }
+      }
+    }
+  }
+  assert.ok(checked >= 30, `only ${checked} multi-device plans were checked`);
+});
+
 test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
   /* Cold-check finding: renderComparisons' "Cost/hr" and renderExecutiveSummary's
      "Monthly cost range" both hardcoded spot as the floor and hyperscaler as
@@ -2893,7 +2927,7 @@ test('the probe grid renders the shapes the tool ships', () => {
    decides which side of this list it is on. */
 const WITHOUT_CONSTANTS_SURVIVE = [
   // VRAM, capacity and the fit they decide
-  'isMoE', 'weightsGB', 'kvCacheGB', 'activationsGB', 'totalOverhead', 'totalGB', 'perGPU',
+  'isMoE', 'weightsGB', 'kvCacheGB', 'activationsGB', 'totalOverhead', 'peerBufferGB', 'totalGB', 'perGPU',
   'totalVRAM', 'deviceCount', 'deviceGB', 'deviceBandwidth', 'freeForKVCache', 'kvPerTokenGB',
   'kvBytesPerToken', 'kvSavedByPrefixGB', 'effectivePrefix', 'totalTokens', 'fits', 'comfortable',
   'maxContextSingleUser', 'maxConcurrentAt8K', 'maxConcurrentAt4K',
@@ -4106,7 +4140,7 @@ test('the constants README quotes are the constants the model uses', () => {
   // The overhead trio, read out of index.html rather than restated here.
   const actPct = Number(html.match(/const activationsGB = Math\.max\(\(totalActiveParams \* 1e9 \* 2 \* ([\d.]+)\)/)[1]) * 100;
   const ctxGiB = Number(html.match(/const overheadPerGPU = ([\d.]+);/)[1]);
-  const [hi, lo] = html.match(/hasNVLink \? ([\d.]+) : ([\d.]+)\) \* \(deviceCount - 1\)/).slice(1).map(Number);
+  const [hi, lo] = html.match(/const peerBufferGB = deviceCount > 1 \? \(hasNVLink \? ([\d.]+) : ([\d.]+)\) : 0;/).slice(1).map(Number);
   assert.deepStrictEqual(
     quoted(/\((\d+)% of active params, ([\d.]+) GiB\/GPU, ([\d.]+)–([\d.]+) GiB per extra GPU\)/, 'the overhead heuristics'),
     [actPct, ctxGiB, lo, hi]);

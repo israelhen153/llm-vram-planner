@@ -352,6 +352,9 @@ FIELDS = [
     # The engines reach this by different routes — device GB x devices here,
     # board GB x boards there — and nothing compared the results.
     ("total_vram", "totalVRAM", 0.001),
+    # The per-extra-device peer-buffer charge both engines' notes print. Compared so
+    # the two can't charge, or describe, different figures for the same link.
+    ("peer_buffer_gb", "peerBufferGB", 0.001),
     # The constants as executed, not as extracted — this is what stops the two
     # engines quietly disagreeing about a value no case happens to exercise.
     ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),

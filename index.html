@@ -1140,7 +1140,12 @@ function computeInference(state) {
 
   // Overhead: CUDA context + NCCL buffers
   const overheadPerGPU = 1.5;
-  const ncclOverhead = deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) * (deviceCount - 1) : 0;
+  /* The communication library's buffers per extra device: 0.3 GB over NVLink, 0.2
+     otherwise, and 0 with no extra device, where nothing is charged for them.
+     Returned, so the note describing this charge prints the figure it used: until
+     2026-09-23 the note said 0.3 on every link. */
+  const peerBufferGB = deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) : 0;
+  const ncclOverhead = deviceCount > 1 ? peerBufferGB * (deviceCount - 1) : 0;
   const totalOverhead = overheadPerGPU * deviceCount + ncclOverhead;
 
   /* The divisor for the quantities a data-parallel replica holds a whole copy
@@ -1406,7 +1411,7 @@ function computeInference(state) {
   const hourlySpot = tierCost(gpuSpotCost);
 
   return {
-    isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
+    isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, peerBufferGB, totalGB,
     perGPU, totalVRAM: deviceGB * deviceCount, deviceCount, deviceGB, deviceBandwidth,
     // The divisor the replicated figures above were computed with, returned so
     // every caption that names one reads the number that was used instead of
@@ -2188,7 +2193,10 @@ function renderNotes(state, computed) {
   if (state.sharedExperts > 0) notes += `Shared experts (${state.sharedExperts}) always active, included in activation memory. `;
   // The PCIe decode loss is the interconnect curve's, withheld with the
   // throughput figures it prices — see renderStrategyBadges.
-  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric between devices. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ') + 'NCCL buffers ~0.3 GB/peer. ';
+  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric between devices. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ')
+    // The library by its own name: RCCL is ROCm's. The allowance is the same
+    // heuristic either way, and was set for NCCL.
+    + `${state.vendor === 'amd' ? 'RCCL' : 'NCCL'} buffers ~${computed.peerBufferGB} GB/peer. `;
   notes += 'Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. ';
   // Never "estimates": a sourced tier's price is a dated, attributed figure,
   // not a guess, and this note used to call every tier one regardless — the

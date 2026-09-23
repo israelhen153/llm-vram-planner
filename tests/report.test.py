@@ -2231,6 +2231,45 @@ test("a lead changes no figure in the PDF: every row with one reports identicall
      check_a_lead_changes_no_figure_in_the_pdf)
 
 
+def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
+    """The PDF's two overhead notes, held to the figures compute() charges and to
+    the card's own runtime. The context allowance is "CUDA context" on NVIDIA,
+    and on AMD an allowance set for CUDA and not measured on ROCm. The peer
+    buffers are NCCL's or RCCL's, at the figure compute() charged per extra
+    device, read back from its total, not from source. Every catalog card, at
+    one, two and three boards, over each link it can have."""
+    checked = 0
+    for slug, card in gr.GPUS.items():
+        for nvlink in ((True, False) if gr.supports_nvlink(card) else (False,)):
+            for boards in (1, 2, 3):
+                cfg, _ = report_strings(card, boards, bpp=2)
+                cfg = dict(cfg, nvlink=nvlink)
+                strings = story_strings(cfg)
+                blob = "\n".join(strings)
+                c = gr.compute(cfg)
+                dc = gr.device_count_for(cfg)
+                amd = card["vendor"] == "amd"
+                where = f"{slug} x{boards}, {'NVLink' if nvlink else 'no NVLink'}"
+                cuda = "VRAM estimates include ~1.5 GB CUDA context overhead per device."
+                rocm = ("VRAM estimates include ~1.5 GB per device for the runtime context: an allowance set "
+                        "for CUDA, not measured on ROCm.")
+                assert (rocm in blob, cuda in blob) == ((True, False) if amd else (False, True)), (
+                    f"{where}: the context note is not the {'ROCm' if amd else 'CUDA'} one")
+                lib, other = ("RCCL", "NCCL") if amd else ("NCCL", "RCCL")
+                assert other not in blob, f"{where}: the PDF names {other} on a card that uses {lib}"
+                if dc > 1:
+                    charged = round((c["total_oh"] - 1.5 * dc) / (dc - 1), 1)
+                    want = f"{lib} buffers add ~{charged} GB per device peer connection."
+                    assert want in blob, f"{where}: the math charges {charged} GB per extra device; wanted {want!r}"
+                    checked += 1
+                else:
+                    assert "buffers add" not in blob, f"{where}: one device, and the PDF describes peer buffers"
+    assert checked >= 30, f"only {checked} multi-device reports were checked"
+
+test("the PDF prints the overhead compute() charges, in the words of the card's own runtime",
+     check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words)
+
+
 test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
 
@@ -2309,6 +2348,8 @@ print("\nHardware with no measured constants")
 SURVIVE_WITHOUT_CONSTANTS = {
     # VRAM, capacity and the fit they decide
     "weights_gb", "kv_gb", "act_gb", "total_oh", "total_gb", "per_w", "per_kv", "per_a",
+    # the two overhead allowances the notes print, which read no PERF constant
+    "context_gb_per_device", "peer_buffer_gb",
     "per_oh", "per_total", "total_vram", "free_kv", "kv_per_tok_gb", "kv_bytes_per_tok",
     "max_ctx_1", "max_conc_8k", "max_conc_4k", "kv_saved_by_prefix_gb", "eff_prefix",
     "is_moe", "total_tokens", "device_count", "device_gb", "device_bw", "fits", "comfortable",

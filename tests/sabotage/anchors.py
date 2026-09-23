@@ -74,7 +74,7 @@ JS_QUEUE = "${computed.throughputModelled ? ' — aggregate throughput above ref
 JS_CMP_GATE = "    html += c.throughputModelled\n      ? `<div class=\"row\"><span class=\"label\">Per-user / aggregate</span>"
 JS_EXEC_GATE = "  if (computed.throughputModelled) {\n    html += `<div class=\"exec-row\"><span class=\"exec-label\">Speed per user</span>"
 JS_MD_GATE = "  report += computed.throughputModelled\n    ? `- Single-stream decode:"
-JS_RET_VRAM = "    isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,\n"
+JS_RET_VRAM = "    isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, peerBufferGB, totalGB,\n"
 JS_RET_BATCH = "    maxBatchByKV, batchLimitedByKV, computeBound, ttftMs, ttftColdMs, ttftWarmMs,\n"
 JS_RET_TP = "    tp, dp,\n    freeForKVCache,"
 JS_RET_COST = "    hourlyHyper, hourlySpec, hourlySpot,\n"
