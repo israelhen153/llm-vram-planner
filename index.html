@@ -676,13 +676,22 @@ function getGpuSpec() {
    a catalog that forgot the flag working instead of rendering an empty
    dropdown. */
 const DEFAULT_GPU_KEY = Object.keys(GPU_TABLE).find(k => GPU_TABLE[k].default) || Object.keys(GPU_TABLE)[0];
+/* Section headings for the GPU dropdown, by the catalog's vendor id. An id with
+   no entry here shows as itself rather than disappearing. */
+const VENDOR_NAMES = { nvidia: 'NVIDIA', amd: 'AMD' };
 function renderGpuOptions() {
   const sel = document.getElementById('gpu-model');
-  let html = '';
-  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
-    html += `<option value="${key}"${key === DEFAULT_GPU_KEY ? ' selected' : ''}>${gpu.name}</option>`;
-  }
-  sel.innerHTML = html;
+  const rows = Object.entries(GPU_TABLE);
+  const option = ([key, gpu]) => `<option value="${key}"${key === DEFAULT_GPU_KEY ? ' selected' : ''}>${gpu.name}</option>`;
+  /* One vendor needs no headings, so a one-vendor catalog renders the flat
+     list it always did. More than one gets a group each, in the order the
+     catalog first lists them, with each group's cards in catalog order: the
+     catalog's own order still decides everything, and a card is never listed
+     twice or dropped. */
+  const vendors = [...new Set(rows.map(([, gpu]) => gpu.vendor))];
+  sel.innerHTML = vendors.length < 2 ? rows.map(option).join('')
+    : vendors.map(v => `<optgroup label="${VENDOR_NAMES[v] || v}">` +
+        rows.filter(([, gpu]) => gpu.vendor === v).map(option).join('') + '</optgroup>').join('');
 }
 
 /* =============================================================================

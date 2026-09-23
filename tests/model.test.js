@@ -3567,6 +3567,54 @@ test('a deliberate PCIe choice on an SXM card is not overridden', () => {
   assert.strictEqual(sel.options[0].disabled, false);
 });
 
+console.log('\nThe GPU dropdown groups by vendor');
+test('the GPU dropdown groups cards by vendor once the catalog has more than one', () => {
+  /* ROADMAP promises the dropdown an AMD section. One vendor keeps the flat
+     list the page always had; several get a section each. Run against a probe
+     catalog whose vendors are interleaved, so "group by vendor" cannot pass by
+     the rows happening to arrive already grouped, and with an id VENDOR_NAMES
+     does not know. */
+  const decl = (re, what) => { const m = html.match(re); assert.ok(m, `${what} not found in index.html`); return m[0]; };
+  const src = [decl(/^const VENDOR_NAMES = .+;$/m, 'VENDOR_NAMES'),
+               decl(/^const DEFAULT_GPU_KEY = .+;$/m, 'DEFAULT_GPU_KEY'),
+               decl(/^function renderGpuOptions\(\) \{[\s\S]*?\n\}$/m, 'renderGpuOptions()')].join('\n');
+  const render = (table) => {
+    const sel = { innerHTML: '' };
+    new Function('document', 'GPU_TABLE', `${src}; renderGpuOptions();`)({ getElementById: () => sel }, table);
+    return sel.innerHTML;
+  };
+  const keysIn = (h) => [...h.matchAll(/<option value="([^"]+)"/g)].map(m => m[1]);
+
+  const real = render(GPU_TABLE);
+  assert.deepStrictEqual(keysIn(real).sort(), Object.keys(GPU_TABLE).sort(), 'the real catalog lost or repeated a card');
+  if (new Set(Object.values(GPU_TABLE).map(g => g.vendor)).size === 1) {
+    assert.ok(!real.includes('<optgroup'), 'a one-vendor catalog was given section headings');
+    assert.deepStrictEqual(keysIn(real), Object.keys(GPU_TABLE), 'a one-vendor catalog was reordered');
+  }
+
+  const entries = Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'nvidia');
+  const probe = Object.fromEntries([
+    ...entries.slice(0, 3),
+    ['probe-amd-a', { ...GPU_TABLE['h100-80'], vendor: 'amd', name: 'Probe A 80 GB', default: undefined }],
+    ...entries.slice(3, 6),
+    ['probe-acme', { ...GPU_TABLE['h100-80'], vendor: 'acme', name: 'Probe C 80 GB', default: undefined }],
+    ['probe-amd-b', { ...GPU_TABLE['h100-80'], vendor: 'amd', name: 'Probe B 80 GB', default: undefined }],
+    ...entries.slice(6),
+  ]);
+  const grouped = render(probe);
+  const groups = [...grouped.matchAll(/<optgroup label="([^"]+)">([\s\S]*?)<\/optgroup>/g)]
+    .map(m => [m[1], keysIn(m[2])]);
+  assert.deepStrictEqual(groups.map(g => g[0]), ['NVIDIA', 'AMD', 'acme'],
+    'sections are not one per vendor in first-listed order, under their names');
+  for (const [label, keys] of groups) {
+    const vendor = { NVIDIA: 'nvidia', AMD: 'amd', acme: 'acme' }[label];
+    assert.deepStrictEqual(keys, Object.keys(probe).filter(k => probe[k].vendor === vendor),
+      `the ${label} section does not hold exactly its cards in catalog order`);
+  }
+  assert.deepStrictEqual(keysIn(grouped).sort(), Object.keys(probe).sort(), 'a card was lost or listed twice');
+  assert.strictEqual((grouped.match(/ selected/g) || []).length, 1, 'the default card is not selected exactly once');
+});
+
 console.log('\nThe catalog names its own default card');
 test('exactly one row carries default:true, and DEFAULT_GPU_KEY is derived from it', () => {
   const flagged = Object.keys(GPU_TABLE).filter(k => GPU_TABLE[k].default);
