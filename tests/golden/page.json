@@ -1683,7 +1683,7 @@
    }
   },
   "shows": {
-   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 0.63 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 4.69 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 22.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 525K - Max concurrent @ 8K: 65 - Single-stream decode: ~384 tok/s - Aggregate @ 16 concurrent: ~1.7K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization gguf \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "(copied report)": "# LLM VRAM Plan — 8B model ## Model - Parameters: 8B (dense) - Precision: 0.63 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80 GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 4.69 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 22.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 525K - Max concurrent @ 8K: 65 - Single-stream decode: ~384 tok/s - Aggregate @ 16 concurrent: ~1.7K tok/s - TTFT: ~294 ms ## Cost (1× H100 80 GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) ## vLLM command ``` vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization gguf \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ``` ## GGUF on vLLM - GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin. (source: https://github.com/vllm-project/vllm/releases/tag/v0.24.0) - Install `vllm-gguf-plugin` before serving a GGUF model. Point the command at a GGUF checkpoint, either a Hugging Face repo as `repo_id:quant_type` (for example `unsloth/Qwen3-0.6B-GGUF:Q4_K_M`) or a local `.gguf` file, and pass the base model's tokenizer with `--tokenizer`. (source: https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html) - vLLM calls its GGUF support \"highly experimental and under-optimized\". (source: https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html) - For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM.",
    "capacity-output": {
     "attrs": [
      "style=margin-top:0"
@@ -1698,11 +1698,20 @@
      "focusable=false",
      "href=#ico-alert-triangle",
      "href=#ico-copy",
+     "href=https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html",
+     "href=https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html",
+     "href=https://github.com/vllm-project/vllm/releases/tag/v0.24.0",
      "onclick=copyCommand(this)",
      "style=background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px",
-     "style=font-size:13px"
+     "style=color:var(--accent-text)",
+     "style=color:var(--accent-text)",
+     "style=color:var(--accent-text)",
+     "style=font-size:13px",
+     "target=_blank",
+     "target=_blank",
+     "target=_blank"
     ],
-    "text": "GGUF support in vLLM is experimental and slower than its native formats — point vllm serve at a single .gguf file, not a repo. For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM. Copy vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization gguf \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192"
+    "text": "GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin. ( source ) Install vllm-gguf-plugin before serving a GGUF model. Point the command at a GGUF checkpoint, either a Hugging Face repo as repo_id:quant_type (for example unsloth/Qwen3-0.6B-GGUF:Q4_K_M ) or a local .gguf file, and pass the base model's tokenizer with --tokenizer . ( source ) vLLM calls its GGUF support \"highly experimental and under-optimized\". ( source ) For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM. Copy vllm serve /opt/models/YourModel \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization gguf \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192"
    },
    "comparison-output": {
     "attrs": [

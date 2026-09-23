@@ -3674,6 +3674,57 @@ test('the copied report quotes the whole command, for every weight option the pa
   }
 });
 
+console.log('\nGGUF guidance says what vLLM needs today');
+/* The sentences are a contract, so they are literals here rather than read back
+   from GGUF_GUIDANCE: a test that took its expectation from the page would follow
+   any edit to it, including the one that put the retired single-file claim back. */
+const GGUF_LINES = [
+  ["GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin.",
+   'https://github.com/vllm-project/vllm/releases/tag/v0.24.0'],
+  ["Install `vllm-gguf-plugin` before serving a GGUF model. Point the command at a GGUF checkpoint, either a Hugging Face repo as `repo_id:quant_type` (for example `unsloth/Qwen3-0.6B-GGUF:Q4_K_M`) or a local `.gguf` file, and pass the base model's tokenizer with `--tokenizer`.",
+   'https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html'],
+  ['vLLM calls its GGUF support "highly experimental and under-optimized".',
+   'https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html'],
+  ['For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM.',
+   null],
+];
+const stripTags = (s) => s.replace(/<[^>]+>/g, '');
+const ggufSurfaces = (card, extra) => {
+  const h = renderHarness();
+  const st = asState(card, 1, extra);
+  const c = h.computeInference(st);
+  h.renderCommand(st, c);
+  const panel = h.out['command-output'] || '';
+  return { c, panel, text: stripTags(panel), report: h.exportSummary(st, c) };
+};
+test('every GGUF level names the plugin, with its sources, on the command panel and in the copied report', () => {
+  for (const opt of WEIGHT_OPTIONS) {
+    const { c, panel, text, report } = ggufSurfaces(GPU_TABLE['h100-80'], { ...dense8BPlan, ...opt });
+    assert.ok(c.fits, `8B at ${opt.bytesPerParam} B/param should fit one H100, or this checks nothing`);
+    const gguf = opt.quantMethod === 'gguf';
+    const where = `${opt.bytesPerParam} B/param, --quantization ${opt.quantMethod || '(none)'}`;
+    for (const [line, source] of GGUF_LINES) {
+      assert.strictEqual(text.includes(line.replace(/`/g, '')), gguf,
+        `${where}: the command panel ${gguf ? 'lacks' : 'shows'} "${line}"`);
+      assert.strictEqual(report.includes(`- ${line}${source ? ` (source: ${source})` : ''}\n`), gguf,
+        `${where}: the copied report ${gguf ? 'lacks' : 'shows'} "${line}" with its source`);
+      if (source) assert.strictEqual(panel.includes(`href="${source}"`), gguf,
+        `${where}: the command panel ${gguf ? 'does not link' : 'links'} ${source}`);
+    }
+    assert.ok(!/not a repo|single \.?gguf file/i.test(text + report),
+      `${where}: the retired single-file claim is back`);
+  }
+});
+test('a GGUF plan that does not fit prints no GGUF guidance, because it prints no command', () => {
+  const { c, text, report } = ggufSurfaces(GPU_TABLE['t4-16'],
+    { params: 70, layers: 80, bytesPerParam: 0.63, quantMethod: 'gguf' });
+  assert.ok(!c.fits, '70B at Q4_K_M should not fit one T4, or this checks nothing');
+  for (const [line] of GGUF_LINES) {
+    assert.ok(!text.includes(line.replace(/`/g, '')) && !report.includes(line),
+      `guidance for a command the page does not print: "${line}"`);
+  }
+});
+
 console.log('\nShared links resolve to the card they named');
 const legacyDecl = html.match(/^function legacyGpuKeyFromPipeString\(raw\) \{[\s\S]*?\n\}$/m);
 assert.ok(legacyDecl, 'legacyGpuKeyFromPipeString() not found in index.html');
