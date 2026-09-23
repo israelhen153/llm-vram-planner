@@ -121,6 +121,23 @@ def supports_nvlink(gpu):
     return gpu.get("form") == "sxm"
 
 
+def interconnect_name(cfg):
+    """The link a multi-device configuration's devices actually talk over, named
+    as the vendor names it: NVLink where the board has it and it is selected,
+    Infinity Fabric on an OAM board — AMD's link is part of that platform rather
+    than an option on it — and PCIe otherwise. Every surface that names the
+    interconnect reads this; branching on cfg["nvlink"] alone printed "PCIe" for
+    OAM boards whose devices never talk over PCIe. compute() still reads
+    cfg["nvlink"], so Infinity Fabric is priced like any other non-NVLink link:
+    no measurement gives it a speed of its own, and no OAM row carries
+    throughput constants for one to apply to. Mirrored by interconnectName() in
+    index.html; the parity suite compares the two form by form.
+    """
+    if cfg.get("nvlink"):
+        return "NVLink"
+    return "Infinity Fabric" if cfg["gpu"].get("form") == "oam" else "PCIe"
+
+
 # Display names for the providers tools/price_check.py's SOURCE_MAP fetches
 # from. The catalog stores the lowercase source id ('azure', 'aws', ...);
 # this is only for the label a reader sees. Mirrored by PROVIDER_NAMES in
@@ -155,7 +172,8 @@ def nvlink_for(gpu, requested):
     finished report.
     """
     if requested and not supports_nvlink(gpu):
-        print(f"Note: {gpu['name']} has no NVLink — using PCIe interconnect instead.")
+        fallback = "Infinity Fabric" if gpu.get("form") == "oam" else "PCIe interconnect"
+        print(f"Note: {gpu['name']} has no NVLink — using {fallback} instead.")
         return False
     return bool(requested)
 
@@ -876,8 +894,7 @@ class ReportCard:
         story.append(Paragraph(
             f"Generated {datetime.now().strftime('%B %d, %Y at %H:%M')} — "
             f"{cfg['n_gpu']}x {gpu['name']}"
-            f"{' (NVLink)' if cfg.get('nvlink') and device_count_for(cfg) > 1 else ''}"
-            f"{' (PCIe)' if not cfg.get('nvlink') and device_count_for(cfg) > 1 else ''}",
+            f"{' (' + interconnect_name(cfg) + ')' if device_count_for(cfg) > 1 else ''}",
             self.styles["ReportSub"]
         ))
 
@@ -938,7 +955,7 @@ class ReportCard:
              + (f" ({device_count_for(cfg)} devices)"
                 if device_count_for(cfg) != cfg["n_gpu"] else "")],
             ["Total VRAM", f"{c['total_vram']} GB"],
-            ["Interconnect", "NVLink" if cfg.get("nvlink") else "PCIe"],
+            ["Interconnect", interconnect_name(cfg)],
             ["Memory bandwidth", f"{c['device_bw']:g} GB/s per device"],
             ["Parallelism", parallelism_label],
         ]
@@ -1092,10 +1109,16 @@ class ReportCard:
                       f"{'— enabled via --kv-cache-dtype fp8' if cfg.get('kv_bpp', 2) < 2 else '— default vLLM behavior'}.")
         notes.append("VRAM estimates include ~1.5 GB CUDA context overhead per device.")
         if device_count_for(cfg) > 1:
-            notes.append(f"{'NVLink' if cfg.get('nvlink') else 'PCIe'} interconnect assumed. "
-                         # The PCIe loss is the interconnect curve's, withheld with
-                         # the throughput figures it prices.
-                         f"{'NVLink provides 600-900 GB/s bidirectional.' if cfg.get('nvlink') else 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.' if c['throughput_modelled'] else 'PCIe provides 64-128 GB/s.'}")
+            link = interconnect_name(cfg)
+            # No bandwidth figure for Infinity Fabric: nothing here measures it,
+            # and the NVLink and PCIe figures are the published link rates the
+            # interconnect curve was tuned against.
+            speed = {"NVLink": 'NVLink provides 600-900 GB/s bidirectional.',
+                     "Infinity Fabric": "",
+                     # The PCIe loss is the interconnect curve's, withheld with
+                     # the throughput figures it prices.
+                     "PCIe": 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.' if c['throughput_modelled'] else 'PCIe provides 64-128 GB/s.'}[link]
+            notes.append(f"{link} interconnect assumed." + (f" {speed}" if speed else ""))
             notes.append(f"NCCL buffers add ~0.3 GB per device peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
@@ -1132,7 +1155,8 @@ class ReportCard:
                              f"command performs, with a full copy of the model in each of the {dp} data-parallel "
                              f"groups. KV cache is divided by all {device_count_for(cfg)} devices, because data "
                              f"parallelism partitions the request stream rather than replicating the cache.")
-            notes.append(f"TP={tp} x DP={dp} is a starting point, not an answer. Above one NVLink domain both the "
+            domain = "Infinity Fabric" if interconnect_name(cfg) == "Infinity Fabric" else "NVLink"
+            notes.append(f"TP={tp} x DP={dp} is a starting point, not an answer. Above one {domain} domain both the "
                          f"split and the interconnect factor priced against it are heuristics; nothing here is "
                          f"measured above 2 devices"
                          + (", so the throughput and TTFT figures inherit that uncertainty."
@@ -1245,7 +1269,8 @@ def interactive_mode():
     else:
         nvlink = False
         if n_gpu * (gpu.get("devices", 1) or 1) > 1:
-            print(f"{gpu['name']} has no NVLink — assuming PCIe.")
+            print(f"{gpu['name']} has no NVLink — "
+                  + ("its devices use Infinity Fabric." if gpu.get("form") == "oam" else "assuming PCIe."))
 
     print("\nPrecision options:")
     prec_opts = [(2.0, "BF16"), (1.0, "FP8"), (0.5, "INT4/AWQ"), (0.63, "Q4_K_M"), (0.82, "Q6_K")]

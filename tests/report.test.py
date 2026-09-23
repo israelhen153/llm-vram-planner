@@ -1329,6 +1329,81 @@ test("the parallelism row says single device exactly when the command asks for n
      check_parallelism_row_agrees_with_the_command)
 
 
+# ---- the interconnect, named on every form ---------------------------------
+# Every value the catalog's `form` may take. The contract tests/model.test.js
+# checks every row against; tests/parity.test.py carries the same four.
+FORMS = ("sxm", "pcie", "consumer", "oam")
+
+
+def check_every_pdf_surface_names_the_link_the_devices_use():
+    """What the PDF prints, not what interconnect_name() returns: the title, the
+    GPU configuration row and the notes each name the link, and on an OAM board
+    none of them may say PCIe or NVLink under any wording — the downgrade note
+    included. Every form, NVLink asked for and not, one domain and past it, with
+    constants and without."""
+    base = gr.GPUS["b200-192"]
+    seen, checked = set(), 0
+    for form in FORMS:
+        for boards in (2, 16):
+            for asked in (True, False):
+                for perf_key in ("nvidia", "no-such-key"):
+                    card = dict(base, form=form, perfKey=perf_key, name=f"probe {form} 192 GB")
+                    with contextlib.redirect_stdout(io.StringIO()) as said:
+                        nvlink = gr.nvlink_for(card, asked)
+                    want = "NVLink" if nvlink else "Infinity Fabric" if form == "oam" else "PCIe"
+                    cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
+                               n_gpu=boards, gpu=card, nvlink=nvlink, kv_bpp=2, vendor=card["vendor"],
+                               perfKey=perf_key, hf_model="m", model_name="M")
+                    texts = story_strings(cfg)
+                    label = (f"{form} x{boards}, NVLink {'asked for' if asked else 'not asked for'}, "
+                             f"perfKey {perf_key}")
+                    assert want in texts, f"{label}: no GPU configuration cell reads {want!r}"
+                    assert any(f"({want})" in t for t in texts), f"{label}: the title does not name {want}"
+                    # Notes are bulleted ("• …"), so the sentence is found, not anchored.
+                    assert any(f"{want} interconnect assumed." in t for t in texts), (
+                        f"{label}: the notes do not name {want}")
+                    if form == "oam":
+                        for other in ("PCIe", "NVLink"):
+                            hit = [t for t in texts + [said.getvalue()] if other in t
+                                   and not t.startswith("Note: ")]
+                            assert not hit, f"{label}: an OAM board's PDF mentions {other}: {hit[0][:160]!r}"
+                        if asked:
+                            assert "using Infinity Fabric instead" in said.getvalue(), (
+                                f"{label}: the downgrade note reads {said.getvalue()!r}")
+                    else:
+                        hit = [t for t in texts + [said.getvalue()] if "Infinity Fabric" in t]
+                        assert not hit, f"{label}: a {form} board's PDF mentions Infinity Fabric: {hit[0][:160]!r}"
+                    seen.add(want)
+                    checked += 1
+    assert seen == {"NVLink", "Infinity Fabric", "PCIe"}, f"the grid reached only {sorted(seen)}"
+    assert checked == len(FORMS) * 2 * 2 * 2
+
+
+test("every PDF surface names the link the devices actually talk over, on every form",
+     check_every_pdf_surface_names_the_link_the_devices_use)
+
+
+def check_interactive_names_an_oam_boards_fabric():
+    """The interactive CLI skips the NVLink question on a board without it and
+    says what it assumes instead — which, on an OAM board, is its fabric."""
+    card = dict(gr.GPUS["b200-192"], form="oam", name="probe oam 192 GB")
+    buf = io.StringIO()
+    with unittest.mock.patch.dict(gr.GPUS, {"probe-oam": card}):
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1),
+                   str(list(gr.GPUS).index("probe-oam") + 1), "2",
+                   "3", "n", str(REQ["ctx"]), str(REQ["conc"])]
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(buf):
+            cfg = gr.interactive_mode()
+    out = buf.getvalue()
+    assert cfg["nvlink"] is False, f"an OAM board came out of the CLI with nvlink={cfg['nvlink']!r}"
+    assert "probe oam 192 GB has no NVLink — its devices use Infinity Fabric." in out, out[-400:]
+    assert "assuming PCIe" not in out, "the CLI told an OAM board's reader it would assume PCIe"
+
+
+test("the interactive CLI names an OAM board's fabric when it skips the NVLink question",
+     check_interactive_names_an_oam_boards_fabric)
+
+
 # ---- the VRAM breakdown row adds up ---------------------------------------
 # A reader adds a breakdown up. Before the weights divisor was corrected this
 # row did add up, because nothing replicated; correcting it broke the relation
@@ -2247,6 +2322,9 @@ REASON = [
 SHORTENED = [
     "Above one NVLink domain both the split and the interconnect factor priced against it are "
     "heuristics; nothing here is measured above 2 devices.",
+    # The same sentence on an OAM board, whose domain is its Infinity Fabric.
+    "Above one Infinity Fabric domain both the split and the interconnect factor priced against it "
+    "are heuristics; nothing here is measured above 2 devices.",
 ]
 
 

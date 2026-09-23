@@ -342,7 +342,7 @@ body.exec-mode .exec-summary { display: block; }
       </select>
     </div>
     <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights shard across the tensor-parallel group, and above 8 devices the split adds data-parallel replicas — a dense model is copied into each, while a mixture-of-experts model spreads its routed experts across every device instead. KV cache always spreads across every device. Pipeline parallelism is never used." data-tip="How many GPUs. Weights shard across the tensor-parallel group, and above 8 devices the split adds data-parallel replicas — a dense model is copied into each, while a mixture-of-experts model spreads its routed experts across every device instead. KV cache always spreads across every device. Pipeline parallelism is never used."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
-    <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
+    <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism, as Infinity Fabric does on AMD OAM boards. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism, as Infinity Fabric does on AMD OAM boards. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="interconnect" onchange="recalculate()"><option value="1">NVLink / NVSwitch</option><option value="0">PCIe only</option></select>
     </div>
   </div>
@@ -622,6 +622,20 @@ function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math
    Mirrored by supports_nvlink() in generate_report.py; the parity suite compares
    the two answers card by card. */
 function supportsNVLink(gpu) { return gpu.form === 'sxm'; }
+
+/* The link a multi-device configuration's devices actually talk over, named as
+   the vendor names it: NVLink where the board has it and it is selected,
+   Infinity Fabric on an OAM board — AMD's link is part of that platform rather
+   than an option on it — and PCIe otherwise. Every surface that names the
+   interconnect reads this; branching on hasNVLink alone printed "PCIe" for OAM
+   boards whose devices never talk over PCIe. The arithmetic still reads
+   hasNVLink, so Infinity Fabric is priced like any other non-NVLink link: no
+   measurement gives it a speed of its own, and no OAM row carries throughput
+   constants for one to apply to. Mirrored by interconnect_name() in
+   generate_report.py; the parity suite compares the two form by form. */
+function interconnectName(state) {
+  return state.hasNVLink ? 'NVLink' : state.gpuForm === 'oam' ? 'Infinity Fabric' : 'PCIe';
+}
 
 function getGpuSpec() {
   const el = document.getElementById('gpu-model');
@@ -931,6 +945,10 @@ function readInputState() {
     // here; a multi-GCD board like the MI250X is one row with devices: 2,
     // because that is how it is bought, priced and racked.
     gpuDevices: gpu.devices,
+    // The board's form factor, which names the link its devices share — see
+    // interconnectName(). hasNVLink below is the NVLink gate; this is what the
+    // interconnect is called when that gate is closed.
+    gpuForm: gpu.form,
     // The catalog slug, carried through so nothing downstream has to reverse
     // the display name back into one.
     gpuKey: gpu.key,
@@ -1472,7 +1490,7 @@ function renderStrategyBadges(state, computed) {
   /* The percentage comes from the interconnect curve the throughput figures
      are priced with — a speed claim like them, so a card with no constants gets
      the fact without the number. */
-  if (computed.deviceCount > 1 && !state.hasNVLink) html += `<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${computed.throughputModelled ? 'PCIe — 45-60% perf loss, worse with more devices' : 'PCIe — no NVLink; the speed cost is not modelled for this hardware'}</span>`;
+  if (computed.deviceCount > 1 && interconnectName(state) === 'PCIe') html += `<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${computed.throughputModelled ? 'PCIe — 45-60% perf loss, worse with more devices' : 'PCIe — no NVLink; the speed cost is not modelled for this hardware'}</span>`;
   if (computed.isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
   if (state.kvBytesPerValue < 2) html += '<span class="badge" style="background:var(--success-bg);color:var(--success-text)">FP8 KV cache</span>';
   html += '</div>';
@@ -1485,6 +1503,9 @@ function renderGPUCards(state, computed) {
   // below, because the NVLink/PCIe sharding line at the bottom of this
   // function applies to every gpuCount > 1, individual cards included.
   const { tp, dp } = computed;
+  // The link the badges and the sharding line name — one reading, so the
+  // three places that say it cannot disagree about which fabric this is.
+  const fabric = interconnectName(state);
   const maxBarValue = Math.max(perGPU.total, computed.deviceGB) * 1.05;
   const weightsPct = Math.max(perGPU.weights / maxBarValue * 100, 0.5);
   const kvPct = Math.max(perGPU.kvCache / maxBarValue * 100, 0.5);
@@ -1515,7 +1536,7 @@ function renderGPUCards(state, computed) {
       const layerEnd = Math.floor(state.layers / computed.deviceCount * (i + 1)) - 1;
       html += '<div class="gpu-card">';
       html += `<p class="gpu-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-device-desktop"></use></svg>Device ${i}`;
-      if (computed.deviceCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
+      if (computed.deviceCount > 1 && fabric !== 'PCIe') html += `<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${fabric}</span>`;
       html += '</p>';
       html += buildBar(14);
       html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)${computed.deviceCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
@@ -1527,7 +1548,7 @@ function renderGPUCards(state, computed) {
 
     html += '<div class="gpu-card" style="margin:10px 0">';
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
-    if (state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
+    if (fabric !== 'PCIe') html += `<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${fabric}</span>`;
     html += '</p>';
     html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each device — ${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)</div>`;
     html += buildBar(10);
@@ -1583,8 +1604,8 @@ function renderGPUCards(state, computed) {
          optimistic") is gone because the figures above are now computed the
          way the command below shards. */
       const note = computed.isMoE
-        ? `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Per-device weights here is divided by all ${computed.deviceCount} devices: under --enable-expert-parallel the routed experts do spread that way, but attention, embeddings and the dense layers shard only ${tp} ways, so for an MoE this figure is optimistic by an amount that depends on the expert fraction. Dense models on this page divide by ${tp}.`
-        : `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by ${tp}, the sharding the command performs; KV cache is divided by all ${computed.deviceCount}, because data parallelism partitions the request stream rather than replicating the cache.`;
+        ? `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node ${interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric' : 'NVLink'} vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Per-device weights here is divided by all ${computed.deviceCount} devices: under --enable-expert-parallel the routed experts do spread that way, but attention, embeddings and the dense layers shard only ${tp} ways, so for an MoE this figure is optimistic by an amount that depends on the expert fraction. Dense models on this page divide by ${tp}.`
+        : `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node ${interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric' : 'NVLink'} vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by ${tp}, the sharding the command performs; KV cache is divided by all ${computed.deviceCount}, because data parallelism partitions the request stream rather than replicating the cache.`;
       html += `<div style="font-size:11px;color:var(--warning-text);background:var(--warning-bg);border-radius:var(--radius);padding:6px 10px;margin:6px 0"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>${note}</div>`;
     }
     html += '</div>';
@@ -1597,8 +1618,8 @@ function renderGPUCards(state, computed) {
   // this sentence names both groups rather than saying "across devices".
   // Below 9 GPUs (dp === 1) there is one group and nothing here changes.
   if (computed.deviceCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
-    ? (state.hasNVLink ? 'NVLink — all-reduce inside each ' + tp + '-device TP group, ' + dp + ' replicas across the fabric' : 'PCIe — 5-12x slower all-reduce')
-    : (state.hasNVLink ? 'NVLink — sharded ' + computed.deviceCount + '-way, each device holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
+    ? (fabric !== 'PCIe' ? fabric + ' — all-reduce inside each ' + tp + '-device TP group, ' + dp + ' replicas across the fabric' : 'PCIe — 5-12x slower all-reduce')
+    : (fabric !== 'PCIe' ? fabric + ' — sharded ' + computed.deviceCount + '-way, each device holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
   setHTML('gpu-cards', html);
 }
 
@@ -2068,7 +2089,7 @@ function renderNotes(state, computed) {
   if (state.sharedExperts > 0) notes += `Shared experts (${state.sharedExperts}) always active, included in activation memory. `;
   // The PCIe decode loss is the interconnect curve's, withheld with the
   // throughput figures it prices — see renderStrategyBadges.
-  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ') + 'NCCL buffers ~0.3 GB/peer. ';
+  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric between devices. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ') + 'NCCL buffers ~0.3 GB/peer. ';
   notes += 'Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. ';
   // Never "estimates": a sourced tier's price is a dated, attributed figure,
   // not a guess, and this note used to call every tier one regardless — the
@@ -2100,6 +2121,7 @@ function syncInterconnect() {
   const supported = !gpu || supportsNVLink(gpu);
   sel.options[0].disabled = !supported;
   sel.options[0].textContent = supported ? 'NVLink / NVSwitch' : 'NVLink — not on this card';
+  sel.options[1].textContent = gpu && gpu.form === 'oam' ? 'Infinity Fabric' : 'PCIe only';
   if (!supported) {
     if (sel.value !== '0') interconnectForcedToPCIe = true;
     sel.value = '0';
@@ -2255,7 +2277,7 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
   report += `- Precision: ${state.bytesPerParam} bytes/param\n- KV cache: ${state.kvBytesPerValue < 2 ? 'FP8' : 'BF16'}\n`;
   report += `- Layers: ${state.layers}, KV heads: ${state.kvHeads}, head dim: ${state.headDim}\n`;
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
-  report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${computed.deviceCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
+  report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${computed.deviceCount > 1 ? ' (' + interconnectName(state) + ')' : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
   // Cluster-scoped and summing, exactly as the on-screen breakdown row does —
   // this is the same four numbers in text, and a reader pastes it somewhere the
   // page cannot explain itself.

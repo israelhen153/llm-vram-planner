@@ -93,6 +93,8 @@ const stateFor = (gpu, o = {}) => ({
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
     perfKey: gpu.perfKey,
+    // The form names the link the devices share, off the row too.
+    gpuForm: gpu.form,
     ...o,
 });
 const state = (o = {}) => {
@@ -1184,6 +1186,7 @@ const asState = (card, count, extra = {}) => ({
   // a real row with no confirmed source, and priceSourceLabel() treats that
   // as "not recorded" rather than throwing.
   priceSource: card.priceSource,
+  gpuForm: card.form,
   gpuName: card.name, ...extra,
 });
 // The same silicon described as one dual-device board, or as two single-device
@@ -2935,11 +2938,16 @@ test('no view prints null, undefined, NaN or a throughput figure when there are 
   /* Every element, not only the discovered surfaces, and everything each one
      renders, writes or sets: a leaked figure is as wrong in a title as in the
      throughput panel. */
-  const BAD = new RegExp(String.raw`\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b|N\/A|` + FIGURE.source, 'i');
+  /* Infinity as a value, not as the first word of AMD's interconnect: an OAM
+     board's page names "Infinity Fabric" on purpose, and a numeric Infinity is
+     never followed by it. */
+  const BAD = new RegExp(String.raw`\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b(?! Fabric)|N\/A|` + FIGURE.source, 'i');
   for (const sample of ['~null ms', '~N/A ms', 'is undefined', 'NaN%', '~0 tok/s', '0 tokens/sec', 'Infinity',
+                        '-Infinity GiB', 'Infinity GiB free',
                         '~0 ms', '~0 tokens per second', 'first token in ~0 milliseconds', '0 tok per sec',
                         '~147 t/s per user', '40 tokens each second'.replace('each second', 'per second')])
     assert.match(sample, BAD, `the pattern cannot see "${sample}"`);
+  assert.doesNotMatch('Infinity Fabric — sharded 2-way', BAD, 'the pattern bans the name of an interconnect');
   let chars = 0, knownHits = 0;
   for (const { label, ks, us, known, unknown } of absentViews()) {
     for (const id of viewIds(unknown)) {
@@ -3337,6 +3345,8 @@ test('the state carries the perfKey its constants are chosen by, for every row',
       `${key}: state carries perfKey=${state.perfKey}, the catalog says ${gpu.perfKey}`);
     // vendor still rides along — it selects nothing now, but it is the card's.
     assert.strictEqual(state.vendor, gpu.vendor, `${key}: state.vendor`);
+    // form too: it names the link every interconnect surface prints.
+    assert.strictEqual(state.gpuForm, gpu.form, `${key}: state.gpuForm`);
   }
   /* And a row whose two fields differ. On every real row both are 'nvidia', so
      a state builder that filled perfKey from vendor passed the loop above — a
@@ -3347,9 +3357,17 @@ test('the state carries the perfKey its constants are chosen by, for every row',
   assert.strictEqual(probe.perfKey, 'acme-arch1',
     `a row with perfKey acme-arch1 reached the state as ${probe.perfKey}`);
   assert.strictEqual(probe.vendor, 'acme', `a row with vendor acme reached the state as ${probe.vendor}`);
+  // No catalog row is an OAM board yet, so the form's other value comes in on a probe.
+  const oam = readInputStateFor('probe-oam', '1', { ...GPU_TABLE, 'probe-oam': { ...GPU_TABLE['b200-192'], form: 'oam' } });
+  assert.strictEqual(oam.gpuForm, 'oam', `a row with form oam reached the state as ${oam.gpuForm}`);
+  assert.strictEqual(oam.hasNVLink, false, 'an OAM board was granted NVLink');
 });
 
 console.log('\nThe interconnect control follows the card');
+/* Every value the catalog's `form` may take — a contract, so a literal, and the
+   one list the structural-fields check and the naming checks below both walk.
+   tests/report.test.py and tests/parity.test.py carry the same four. */
+const FORMS = ['sxm', 'pcie', 'consumer', 'oam'];
 const syncFor = (gpuKey, interconnect) => {
   const dom = domStub(gpuKey, interconnect);
   dom.fields['interconnect'].options = [{ value: '1', disabled: false, textContent: 'NVLink / NVSwitch' },
@@ -3381,6 +3399,58 @@ test('switching back to an SXM card restores the NVLink it took away', () => {
     'switching to an SXM card should give back the NVLink the clamp removed');
   assert.strictEqual(dom.fields['interconnect'].options[0].disabled, false);
 });
+test('an OAM board offers its own fabric in the control, and a PCIe card gets "PCIe only" back', () => {
+  const table = { ...GPU_TABLE, 'probe-oam': { ...GPU_TABLE['b200-192'], form: 'oam' } };
+  const dom = domStub('probe-oam', '1');
+  dom.fields['interconnect'].options = [{ value: '1', disabled: false, textContent: 'NVLink / NVSwitch' },
+                                        { value: '0', disabled: false, textContent: 'PCIe only' }];
+  const src = html.slice(html.indexOf('let interconnectForcedToPCIe'), html.indexOf('function recalculate'));
+  const sync = new Function('document', 'GPU_TABLE', `${nvDecl[0]}\n${src}; return syncInterconnect;`)(dom, table);
+  sync();
+  const sel = dom.fields['interconnect'];
+  assert.strictEqual(sel.value, '0', 'an OAM board was left on the NVLink option');
+  assert.strictEqual(sel.options[0].disabled, true, 'NVLink stayed selectable on an OAM board');
+  assert.strictEqual(sel.options[1].textContent, 'Infinity Fabric',
+    `the option an OAM board falls back to reads ${JSON.stringify(sel.options[1].textContent)}`);
+  dom.fields['gpu-model'].value = 'rtx4090-24';
+  sync();
+  assert.strictEqual(sel.options[1].textContent, 'PCIe only', 'a PCIe card kept the OAM board\'s label');
+});
+test('every surface names the link the devices actually talk over, on every form', () => {
+  /* What the renderers print, not what interconnectName() returns: the NVLink
+     gate was once pinned by its predicate while both places that called it went
+     unread. Every form the catalog allows, NVLink asked for and not, one domain
+     and past it, with constants and without. */
+  const seen = new Set();
+  let checked = 0;
+  for (const form of FORMS)
+    for (const count of [2, 16])
+      for (const asked of [true, false])
+        for (const perfKey of ['nvidia', 'no-such-key']) {
+          const card = { ...GPU_TABLE['b200-192'], form, perfKey };
+          const hasNVLink = supportsNVLink(card) && asked;
+          const want = hasNVLink ? 'NVLink' : form === 'oam' ? 'Infinity Fabric' : 'PCIe';
+          const { html: out, written, props } = renderEverything(asState(card, count, { hasNVLink }));
+          const text = [...Object.values(out), ...Object.values(written),
+                        ...Object.values(props).flatMap(p => Object.values(p))].join('\n');
+          const label = `${form} x${count}, NVLink ${asked ? 'asked for' : 'not asked for'}, perfKey ${perfKey}`;
+          assert.ok(out['gpu-cards'].includes(`${want} — `), `${label}: the sharding line does not name ${want}`);
+          assert.ok(out['(copied report)'].includes(`(${want})`), `${label}: the copied report does not name ${want}`);
+          if (form === 'oam') {
+            // Neither of the other two links exists on an OAM board, under any wording.
+            for (const other of ['PCIe', 'NVLink'])
+              assert.ok(!text.includes(other), `${label}: an OAM board's page mentions ${other}: ` +
+                JSON.stringify(text.slice(Math.max(0, text.indexOf(other) - 80), text.indexOf(other) + 40)));
+          } else {
+            assert.ok(!text.includes('Infinity Fabric'), `${label}: a ${form} board's page mentions Infinity Fabric`);
+          }
+          seen.add(want);
+          checked++;
+        }
+  assert.deepStrictEqual([...seen].sort(), ['Infinity Fabric', 'NVLink', 'PCIe'],
+    'the grid never reached one of the three links, so it checks nothing about it');
+  assert.strictEqual(checked, FORMS.length * 2 * 2 * 2);
+});
 test('a deliberate PCIe choice on an SXM card is not overridden', () => {
   const sel = syncFor('h100-80', '0');
   assert.strictEqual(sel.value, '0', 'the reader chose PCIe; leave it alone');
@@ -3401,7 +3471,7 @@ test('every row carries the structural fields the engines read', () => {
     assert.strictEqual(typeof gpu.vendor, 'string', `${key}.vendor`);
     assert.strictEqual(typeof gpu.perfKey, 'string', `${key}.perfKey`);
     assert.strictEqual(typeof gpu.devices, 'number', `${key}.devices`);
-    assert.ok(['sxm', 'pcie', 'consumer'].includes(gpu.form), `${key}.form=${gpu.form}`);
+    assert.ok(FORMS.includes(gpu.form), `${key}.form=${gpu.form}`);
     assert.strictEqual(typeof gpu.caps?.fp8, 'boolean', `${key}.caps.fp8`);
   }
 });
