@@ -175,6 +175,31 @@ GPUS_H100_SRC_BLOCK = ("\"priceSource\": { \"hyper\": { \"provider\": \"azure\",
                       "\"date\": \"2026-09-22\", \"price\": 12.29 }")
 
 # The engine files a sabotage edits.
+
+# feat/amd-gpus: what engine_r6_amd_rows.py attacks — the null price tier, the
+# interconnect's name, the vendor sections, and price_check's null-tier rules.
+JS_TIER_COST = "  const tierCost = (perBoard) => (perBoard == null ? null : perBoard * gpuCount);\n"
+JS_HOURLY_HYPER = "  const hourlyHyper = tierCost(gpuHyperCost);\n"
+JS_NULL_LABEL = "  if (state[TIER_COST_FIELD[tier]] === null) return NO_PRICE;\n"
+JS_CMP_COSTS = "    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot].filter(v => v != null);\n"
+JS_EXEC_COSTS = ("  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot]"
+                 ".filter(v => v != null);\n")
+JS_USD_DASH = "  if (v == null) return '—';\n"
+JS_INTERCONNECT_NAME = "  return state.hasNVLink ? 'NVLink' : state.gpuForm === 'oam' ? 'Infinity Fabric' : 'PCIe';\n"
+JS_SHARDING_ONE = ("    : (fabric !== 'PCIe' ? fabric + ' — sharded ' + computed.deviceCount + '-way, each device "
+                   "holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}"
+                   "</div>`;\n")
+JS_SYNC_OAM_LABEL = "  sel.options[1].textContent = gpu && gpu.form === 'oam' ? 'Infinity Fabric' : 'PCIe only';\n"
+JS_VENDORS = "  const vendors = [...new Set(rows.map(([, gpu]) => gpu.vendor))];\n"
+JS_STATE_FORM = "    gpuForm: gpu.form,\n"
+PY_HOURLY_HYPER = "    hourly_hyper = None if gpu[\"hyper\"] is None else gpu[\"hyper\"] * n_gpu\n"
+PY_NULL_LABEL = "    if tier in gpu and gpu[tier] is None:\n        return NO_PRICE\n"
+PY_INTERCONNECT_NAME = "    return \"Infinity Fabric\" if cfg[\"gpu\"].get(\"form\") == \"oam\" else \"PCIe\"\n"
+PY_INTERCONNECT_ROW = "            [\"Interconnect\", interconnect_name(cfg)],\n"
+PY_MENU_SPAN = "        if v[\"spot\"] is not None and v[\"hyper\"] is not None:\n"
+PRICE_SPOT_SKU = "    recorded_sku = f\"{sku} ({kind})\" if kind else sku\n"
+PRICE_NULL_GUARD = "            if row.get(tier) is None:\n"
+PRICE_NULL_REFUSAL = "    on_null = automated_null_tiers(catalog[\"data\"], SOURCE_MAP)\n    if on_null:\n"
 INDEX_HTML = "index.html"
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
