@@ -184,6 +184,53 @@ GPUS_H100_SRC_BLOCK = ("\"priceSource\": { \"hyper\": { \"provider\": \"azure\",
                       "\"sku\": \"Standard_ND96isr_H100_v5\", \"region\": \"eastus\", "
                       "\"date\": \"2026-09-22\", \"price\": 12.29 }")
 
+# ---- feat/rocm-guidance (engine_r10_rocm_guidance.py): the FP8 gate, the ROCm command and
+# its lines, the notes, the leads, and the overhead's words ----
+JS_R10_FP8_LINE = "  if (!arch.fp8Weights) out.push(L.fp8Weights);\n"
+JS_R10_BLOCKED = "  if (!gpu || gpu.vendor !== 'amd' || (ROCM.arch[gpu.gfx] || {}).fp8Weights) return '';\n"
+JS_R10_BUILD_REFUSE = "  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
+JS_R10_ARCH = "  const arch = state.vendor === 'amd' ? (ROCM.arch[state.gfx] || {}) : null;\n"
+JS_R10_AITER = "      + (arch.aiter ? '    --env VLLM_ROCM_USE_AITER=1 \\\\\\n' : '')\n"
+JS_R10_IMAGE = "  \"image\": \"vllm/vllm-openai-rocm:v0.30.0\",\n"
+JS_R10_GCD = "  if ((state.gpuDevices || 1) > 1) out.push(L.gcd);\n"
+JS_R10_PANEL_ROCM = "  const rocm = computed.fits ? rocmGuidance(state) : [];\n"
+JS_R10_EXPORT_ROCM = "  const rocmLines = computed.fits ? rocmGuidance(state) : [];\n"
+JS_R10_PEER = "  const peerBufferGB = deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) : 0;\n"
+JS_R10_PEER_TEXT = "    + `${state.vendor === 'amd' ? 'RCCL' : 'NCCL'} buffers ~${computed.peerBufferGB} GB/peer. `;\n"
+JS_R10_SYNC_FORCE = "  if (blocked && fp8.selected) {\n"
+JS_R10_SYNC_GIVE = "    if (bf16.selected) fp8.selected = true;\n"
+JS_R10_SYNC_CALL = "  syncInterconnect();\n  syncPrecision();\n"
+JS_R10_NOTE_TEXT = "  return note ? `${note.reason} Checked ${note.checked}.` : '';\n"
+JS_R10_NOTE_LINE = "    + (priceNoteText(state, tier) ? `  - ${priceNoteText(state, tier)}\\n` : '')\n"
+JS_R10_LEAD_LINE = "    + priceLeads(state, tier).map(lead => `  - ${priceLeadText(lead)}\\n`).join('');\n"
+JS_R10_LEAD_GATE = "  if (state[TIER_COST_FIELD[tier]] !== null) return [];\n"
+PY_R10_FP8_LINE = "    if not arch.get(\"fp8Weights\"):\n        out.append(lines[\"fp8Weights\"])\n"
+PY_R10_BLOCKED = "    if gpu.get(\"vendor\") != \"amd\" or ROCM[\"arch\"].get(gpu.get(\"gfx\"), {}).get(\"fp8Weights\"):\n"
+PY_R10_REFUSE_RAISE = "            raise PlanRefused(f\"{reason} Choose --prec bf16, awq or gptq.\")\n"
+PY_R10_EXIT2 = "        print(f\"error: {refused}\", file=sys.stderr)\n        sys.exit(2)\n"
+PY_R10_MENU_FILTER = "        prec_opts = [o for o in prec_opts if o[1] != \"FP8\"]\n"
+PY_R10_MENU_QUANT = "    bpp, quant = prec_opts[prec_choice][0], prec_opts[prec_choice][2]\n"
+PY_R10_JSON_FP8 = "    if cfg.get(\"bpp\") == 1 and not cfg.get(\"quant\"):\n        cfg[\"quant\"] = \"fp8\"\n"
+PY_R10_ARCH = "    arch = ROCM[\"arch\"].get(gpu.get(\"gfx\"), {}) if gpu.get(\"vendor\") == \"amd\" else None\n"
+PY_R10_LIBRARY = "            library = \"RCCL\" if cfg[\"gpu\"].get(\"vendor\") == \"amd\" else \"NCCL\"\n"
+PY_R10_PEER = "    peer_buffer_gb = (0.3 if nvlink else 0.2) if device_count > 1 else 0\n"
+PY_R10_WHY = "            story.append(Paragraph(\"Why — \" + \" \".join(why), self.styles[\"Small\"]))\n"
+PY_R10_LEADS = "                story.append(Paragraph(f\"{name} — {price_lead_text(lead)}\", self.styles[\"Small\"]))\n"
+PY_R10_PDF_ROCM = "        rocm = rocm_guidance(cfg) if c[\"fits\"] else []\n"
+PY_R10_NOTE_TEXT = "    return f\"{note['reason']} Checked {note['checked']}.\" if note else \"\"\n"
+PRICE_R10_NOTE_DROP = "        if note and oc.tier in note:\n            del note[oc.tier]\n            if not note:\n                del row[\"priceNote\"]\n"
+
+JS_R10_HIP_SUB = "HIP_VISIBLE_DEVICES=0,1"
+PY_R10_HIP_SUB = "HIP_VISIBLE_DEVICES=0,1"
+PY_R10_IMAGE = "'image': 'vllm/vllm-openai-rocm:v0.30.0'"
+JS_R10_COST_SPOT = "${priceNoteLine(state, 'spot')}${priceLeadLines(state, 'spot')}</td>"
+JS_R10_HOURLY_SPEC = "  const hourlySpec = tierCost(gpuSpecCost);\n"
+PY_R10_HOURLY_SPEC = "    hourly_spec = None if gpu[\"spec\"] is None else gpu[\"spec\"] * n_gpu\n"
+PY_R10_CONTEXT_AMD = "        if cfg[\"gpu\"].get(\"vendor\") == \"amd\":\n"
+JS_R10_GFX90A = "\"gfx90a\": {\n      \"fp8Weights\": false,"
+PY_R10_GFX90A = "'gfx90a': {'fp8Weights': False,"
+PY_R10_GFX942 = "'gfx942': {'fp8Weights': True, 'aiter': True,"
+
 # The engine files a sabotage edits.
 
 # feat/amd-gpus: what engine_r6_amd_rows.py attacks — the null price tier, the
