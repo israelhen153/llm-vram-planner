@@ -17,6 +17,7 @@ import contextlib
 import copy
 import json
 import os
+import re
 import sys
 import urllib.parse
 
@@ -910,6 +911,35 @@ test("--apply refreshes one tier's provenance and keeps another tier's hand reco
      check_apply_keeps_a_hand_record_intact)
 
 
+def check_apply_replaces_a_note_with_the_reading():
+    """A note says why a tier has no source. When --apply records a reading for
+    that tier, the note has to go: a tier carries exactly one of priceSource,
+    priceRecord and priceNote, and h100-80's spot tier is automated and noted
+    today, so the first weekly run that confirms it would otherwise leave the
+    catalog breaking that rule, and the page showing a reason that is no
+    longer true beside a price that now has a source. A note on another tier
+    stays, and a row's last note going takes the empty key with it."""
+    note = lambda reason: {"reason": reason, "checked": "2026-09-23"}
+    raw = ('{\n  "_meta": {\n    "last_updated": "2026-09-22"\n  },\n  "data": {\n'
+           '    "x": { "hyper": 6.0, "spec": 2.39, "spot": 1.11, "priceNote": { "spot": '
+           + json.dumps(note("Held for a second read.")) + ', "spec": ' + json.dumps(note("No reader for this provider.")) + ' } }\n  }\n}\n')
+    gpus = json.loads(raw)["data"]
+    read = pc.Outcome("x", "spot", "CONFIRMED", current=1.11, proposed=1.11,
+                      reading=_reading(price=1.11, date="2026-09-28"))
+    assert pc.apply_outcomes(gpus, [read]), "a CONFIRMED outcome changed nothing"
+    row = json.loads(pc.apply_to_text(raw, gpus, ["x"], "2026-09-28"))["data"]["x"]
+    assert "spot" in row.get("priceSource", {}), "the tier that was read gained no provenance"
+    assert row.get("priceNote") == {"spec": note("No reader for this provider.")}, (
+        f"the read tier's note should be gone and the other kept: {row.get('priceNote')}")
+    last = pc.Outcome("x", "spec", "CONFIRMED", current=2.39, proposed=2.39,
+                      reading=_reading(price=2.39, date="2026-09-28"))
+    pc.apply_outcomes(gpus, [last])
+    assert "priceNote" not in gpus["x"], f"an empty priceNote was left behind: {gpus['x'].get('priceNote')}"
+
+test("--apply replaces a tier's note with the reading it records, and keeps the others",
+     check_apply_replaces_a_note_with_the_reading)
+
+
 # ===========================================================================
 # Cross-check disagreement: two live sources for one run, not catalog-vs-live
 # ===========================================================================
@@ -1419,6 +1449,126 @@ def check_every_real_price_record_follows_the_rules():
 
 
 test("every real priceRecord follows the rules", check_every_real_price_record_follows_the_rules)
+
+
+PRICE_NOTE_FIELDS = {"reason", "checked"}
+# Words the suites' leak checks read as a value that escaped into the text: the
+# PDF refuses "none" for a Python None, the page "null", "undefined" and "NaN".
+# A note is prose, and a note using one of them would read to those checks as
+# a leak (one did, "none in the Azure API", and it was reworded).
+NOTE_LEAK_WORDS = re.compile(r"\b(none|null|undefined|nan)\b", re.I)
+
+
+def price_note_problems(rows, today):
+    """Every rule a price note must satisfy, and the one rule over every tier.
+
+    The note is the third provenance kind: why a tier has neither an automated
+    reading nor a hand record. That means where its figure came from and why
+    no weekly reader covers it, or, on a null tier, why no hourly price
+    qualified. Every tier of every row carries exactly one of the three, so no
+    figure, and no missing figure, reaches a reader without saying how it got
+    there. A note carries no dollar figure, because one beside the tier's own
+    would read as a price. It ends as a sentence ends, because both engines
+    print "Checked <date>." straight after it."""
+    import datetime as _dt
+    bad = []
+    for slug, row in rows.items():
+        notes = row.get("priceNote") or {}
+        for tier in notes:
+            if tier not in ("hyper", "spec", "spot"):
+                bad.append(f"{slug}/{tier}: not a price tier")
+        for tier in ("hyper", "spec", "spot"):
+            where = f"{slug}/{tier}"
+            kinds = [k for k in ("priceSource", "priceRecord", "priceNote") if tier in (row.get(k) or {})]
+            if len(kinds) != 1:
+                bad.append(f"{where}: carries {kinds or 'no provenance at all'} — every tier carries exactly one "
+                           "of priceSource, priceRecord and priceNote")
+            note = notes.get(tier)
+            if note is None:
+                continue
+            if not isinstance(note, dict) or set(note) != PRICE_NOTE_FIELDS:
+                bad.append(f"{where}: note fields {sorted(note) if isinstance(note, dict) else note!r}, "
+                           f"expected exactly {sorted(PRICE_NOTE_FIELDS)}")
+                continue
+            reason = note["reason"]
+            if not isinstance(reason, str) or not reason.strip():
+                bad.append(f"{where}.reason: {reason!r} — must be a non-empty sentence")
+            else:
+                if "$" in reason:
+                    bad.append(f"{where}.reason: carries a dollar figure, which beside the tier's own would "
+                               "read as a price")
+                if not reason.rstrip().endswith("."):
+                    bad.append(f"{where}.reason: must end as a sentence ends — both engines print "
+                               "'Checked <date>.' straight after it")
+                if NOTE_LEAK_WORDS.search(reason):
+                    bad.append(f"{where}.reason: uses {NOTE_LEAK_WORDS.search(reason).group(0)!r}, one of the "
+                               "words the suites' leak checks read as an escaped value")
+            try:
+                checked = _dt.datetime.strptime(str(note["checked"]), "%Y-%m-%d").date()
+                if checked > today:
+                    bad.append(f"{where}.checked: {note['checked']} is after today ({today})")
+            except ValueError:
+                bad.append(f"{where}.checked: {note['checked']!r} is not YYYY-MM-DD")
+    return bad
+
+
+def check_every_price_note_rule_is_exercised():
+    """Each rule, broken on its own by one fixture, must be the one reported,
+    and a row that breaks none reports nothing, so no rule passes by being
+    unreachable."""
+    import datetime as _dt
+    today = _dt.date(2026, 9, 23)
+    good = {"reason": "No hyperscaler rents this card.", "checked": "2026-09-23"}
+    source = {"provider": "aws", "sku": "g6e.xlarge", "region": "US East (N. Virginia)",
+              "date": "2026-09-22", "price": 1.86}
+    record = {"provider": "RunPod", "sku": "X", "region": "global", "date": "2026-09-23",
+              "price": 2.39, "url": "https://www.runpod.io/gpu-models/x"}
+
+    def rows_with(note=good, **row):
+        # One of each kind, so the one-per-tier rule holds unless a fixture breaks it.
+        base = {"hyper": None, "spec": 2.39, "spot": 1.86, "priceNote": {"hyper": note},
+                "priceRecord": {"spec": record}, "priceSource": {"spot": source}}
+        base.update(row)
+        return {"x": base}
+
+    assert price_note_problems(rows_with(), today) == [], (
+        f"a valid note was refused: {price_note_problems(rows_with(), today)}")
+    breaks = {
+        "a missing field": (rows_with({"reason": good["reason"]}), "expected exactly"),
+        "an extra field": (rows_with(dict(good, price=2.0)), "expected exactly"),
+        "a blank reason": (rows_with(dict(good, reason="  ")), "non-empty sentence"),
+        "a dollar figure": (rows_with(dict(good, reason="Runcrate advertises $0.82/hr.")), "dollar figure"),
+        "no closing period": (rows_with(dict(good, reason="No hyperscaler rents this card")), "sentence ends"),
+        "a leak word": (rows_with(dict(good, reason="There are none in the Azure API.")), "leak checks"),
+        "a date after today": (rows_with(dict(good, checked="2026-09-24")), "after today"),
+        "a malformed date": (rows_with(dict(good, checked="23/09/2026")), "not YYYY-MM-DD"),
+        "a note beside a reading": (rows_with(priceNote={"hyper": good, "spot": good}), "exactly one"),
+        "a tier with nothing": (rows_with(priceSource={}), "no provenance at all"),
+        "a note on no tier": (rows_with(priceNote={"hyper": good, "total": good}), "not a price tier"),
+    }
+    for what, (rows, words) in breaks.items():
+        found = price_note_problems(rows, today)
+        assert any(words in f for f in found), f"{what} was not reported by its own rule: {found}"
+
+test("every priceNote rule is reached by a fixture that breaks it, and a valid note passes",
+     check_every_price_note_rule_is_exercised)
+
+
+def check_every_real_tier_says_how_its_figure_was_reached():
+    """The real catalog, held to the same rules: every tier of every row carries
+    exactly one of priceSource, priceRecord and priceNote, and every note
+    follows the note's rules."""
+    import datetime as _dt
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad = price_note_problems(rows, _dt.datetime.now(_dt.timezone.utc).date())
+    assert not bad, "a tier does not say how its figure was reached:\n       " + "\n       ".join(bad)
+    # A floor, so the rules above cannot pass by having nothing to read.
+    held = sum(len(r.get("priceNote") or {}) for r in rows.values())
+    assert held >= 20, f"only {held} real priceNote(s) — the rules above checked almost nothing"
+
+test("every real tier carries exactly one of priceSource, priceRecord and priceNote, and every note follows the rules",
+     check_every_real_tier_says_how_its_figure_was_reached)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

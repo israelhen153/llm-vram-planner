@@ -911,6 +911,14 @@ def apply_outcomes(gpus_data, outcomes):
             "region": oc.reading.region, "date": oc.reading.date,
             "price": round(oc.reading.price_per_gpu, 2),
         }
+        # The note said why this tier had no source. It has one now, and a tier
+        # carries exactly one of priceSource, priceRecord and priceNote, so the
+        # reading replaces the note rather than sitting beside a stale one.
+        note = row.get("priceNote")
+        if note and oc.tier in note:
+            del note[oc.tier]
+            if not note:
+                del row["priceNote"]
         changed = True
     return changed
 

@@ -808,7 +808,7 @@ else:
         # disagreeing about a provider name or a date.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
                   "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource",
-                  "priceRecord"):
+                  "priceRecord", "priceNote"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:

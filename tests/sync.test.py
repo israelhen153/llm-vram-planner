@@ -354,6 +354,29 @@ test("priceRecord is optional and round-trips through both languages, URL includ
      check_a_price_record_round_trips_through_both_languages)
 
 
+def check_a_price_note_round_trips_through_both_languages():
+    """priceNote is optional like the other two provenance kinds: written only on
+    the rows that carry it, and intact in both generated blocks. The reasons
+    are prose, so the probe carries what prose carries: an apostrophe, double
+    quotes, an em dash and a colon, each of which a string renderer can
+    mangle in one language and not the other."""
+    note = {"reason": "Lambda's and CoreWeave's \"A6000\" is the older card — not this one: see the docs.",
+            "checked": "2026-09-16"}
+    rows = {"probe-note": dict(NULL_TIER_ROW, priceNote={"hyper": note}),
+            "probe-plain": dict(NULL_TIER_ROW)}
+    assert js_eval(sync_data.render_gpu_js(rows), "GPU_TABLE") == rows, "the JS block did not round-trip"
+    block = sync_data.render_gpu_py(rows)
+    ns = {}
+    exec("\n".join(l for l in block.splitlines() if not l.startswith("#")), ns)
+    assert ns["GPUS"] == rows, "the Python block did not round-trip"
+    assert "priceNote" not in sync_data.render_gpu_js({"probe-plain": NULL_TIER_ROW}), (
+        "a row without priceNote was given one")
+
+
+test("priceNote is optional and round-trips through both languages, prose intact",
+     check_a_price_note_round_trips_through_both_languages)
+
+
 def check_marker_text_in_a_value_is_refused():
     """A note discussing this tool by name is ordinary contributor prose.
 

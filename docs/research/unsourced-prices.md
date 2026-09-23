@@ -18,8 +18,9 @@ weekly reader covers each tier is the note in `tools/price_check.py`'s `SOURCE_M
 ## Where the figures came from
 
 - **Every one of the 20 arrived in one of two commits, and neither names a provider:**
-  - `597df81`, "Initial commit", 2026-05-28;
+  - `597df81`, "Initial commit", 2026-05-28. The page it shipped called them "mid-2026 per-GPU/hr estimates";
   - `de26df2`, "Add four GPUs and correct two bandwidth figures", 2026-07-27. It says only "Prices are mid-2026 list and drift; the UI already says so."
+- Each note repeats its own commit's word: "estimate" for the first, "list price" for the second.
 - None has changed since.
 
 | Row | Tier | Catalog | In the catalog since | Why no weekly reader covers it (`SOURCE_MAP`) |

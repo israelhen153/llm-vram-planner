@@ -90,6 +90,7 @@ const stateFor = (gpu, o = {}) => ({
     // Cost provenance, off the row like every other GPU field above.
     priceSource: gpu.priceSource,
     priceRecord: gpu.priceRecord,
+    priceNote: gpu.priceNote,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1220,6 +1221,7 @@ const asState = (card, count, extra = {}) => ({
   // as "not recorded" rather than throwing.
   priceSource: card.priceSource,
   priceRecord: card.priceRecord,
+  priceNote: card.priceNote,
   gpuForm: card.form,
   /* The name as the page's state carries it: getGpuSpec() drops the space
      ("MI250X 128GB"), as stateFor() above does. card.name kept the catalog's
@@ -2235,6 +2237,17 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
         `a record on ${on}, asked about ${asked}`);
 });
 
+/* The catalog's own note for a tier, in the one form both engines print it: the
+   reason as written, then "Checked <date>." Only where the tier has neither an
+   automated reading nor a hand record, since either of those is the answer
+   then. Written out here rather than read from the page: this is the contract
+   the page is held to. */
+const catalogNoteText = (st, tier) => {
+  const note = st.priceNote && st.priceNote[tier];
+  const other = (st.priceSource && st.priceSource[tier]) || (st.priceRecord && st.priceRecord[tier]);
+  return note && !other ? `${note.reason} Checked ${note.checked}.` : '';
+};
+
 test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
   /* Same discovery approach as the two sweeps above: every renderer the
      harness exposes is invoked, and any rendered element whose text carries
@@ -2324,6 +2337,16 @@ test('every cost surface names a source or says "not recorded", discovered not e
       try { h[name](...args); } catch (e) { assert.fail(`${label}: ${name}(...) threw: ${e.message}`); }
     }
     const texts = { ...h.out, '(copied report)': h.exportSummary(st, c) };
+    /* A tier's note is the catalog's own sentence about where its figure came
+       from, and it names providers and says "price" by design. It has its own
+       test below: verbatim, under its own tier, and nowhere else. Here it is
+       taken out, exact text only, so every rule in this sweep still holds for
+       the rest of the surface. A note changed by one character is not taken
+       out, and meets the rules like anything else. */
+    for (const tier of ['hyper', 'spec', 'spot']) {
+      const note = catalogNoteText(st, tier);
+      if (note) for (const id of Object.keys(texts)) texts[id] = texts[id].split(note).join(' ');
+    }
     let sawCostSurface = false;
     for (const [id, text] of Object.entries(texts)) {
       if (!COST.test(text)) continue;
@@ -2462,6 +2485,66 @@ test('every cost surface names a source or says "not recorded", discovered not e
   assert.ok(surfacesSeen.size >= 3,
     `only ${surfacesSeen.size} surfaces print a cost figure at all (${[...surfacesSeen].join(', ')}) — ` +
     'the sweep has stopped reaching them');
+});
+
+test("every tier the catalog notes says why, under its own label, in the cost table and the copied report, and nowhere else", () => {
+  /* Tier honesty: a figure with no source, and a tier with no figure, both say
+     how they got there. The note sits under the tier's own label in the cost
+     table, and on its own line under the tier's line in the copied report; the
+     compact views (the comparison card, the executive summary) keep the short
+     label, since the full reason is on the same page. Every catalog row, every
+     tier. */
+  const ROWS = { hyper: ['Hyperscaler', 'Hyperscaler'], spec: ['Specialized', 'Specialized'],
+                 spot: ['Spot / marketplace', 'Spot'] };
+  let shown = 0, silent = 0;
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const h = renderHarness();
+    const st = asState(gpu, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.pushSnapshot(st, c);
+    for (const name of Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function')) {
+      try { h[name](st, c); } catch (e) { /* renderers that take other arguments are covered elsewhere */ }
+    }
+    const report = h.exportSummary(st, c);
+    const costRows = (h.out['cost-output'] || '').split('<tr').slice(1);
+    for (const [tier, [rowName, lineLabel]] of Object.entries(ROWS)) {
+      const note = catalogNoteText(st, tier);
+      const row = costRows.find(r => r.includes(`<b>${rowName}</b>`));
+      assert.ok(row, `${key}: the cost table has no ${rowName} row`);
+      const lines = report.split('\n');
+      const at = lines.findIndex(l => l.startsWith(`- ${lineLabel}: `));
+      assert.ok(at >= 0, `${key}: the copied report has no ${lineLabel} line`);
+      if (note) {
+        shown++;
+        assert.ok(row.includes(`</span><br><span style="font-size:11px;color:var(--text-muted)">${note}</span></td>`),
+          `${key}/${tier}: the cost table does not carry the note under the tier's label — ${row.slice(0, 400)}`);
+        assert.strictEqual(lines[at + 1], `  - ${note}`, `${key}/${tier}: the copied report's line under ${lineLabel}`);
+        for (const [id, text] of Object.entries(h.out))
+          if (id !== 'cost-output') assert.ok(!text.includes(note), `${key}/${tier}: the note also appears in ${id}`);
+        assert.strictEqual(report.split(note).length - 1, 1, `${key}/${tier}: the copied report carries the note more than once`);
+      } else {
+        silent++;
+        assert.ok(!row.includes('</span><br><span'), `${key}/${tier}: a tier with no note has a second line — ${row.slice(0, 300)}`);
+        assert.ok(!(lines[at + 1] || '').startsWith('  - '), `${key}/${tier}: a tier with no note has a line under it in the copied report`);
+      }
+    }
+  }
+  assert.ok(shown >= 20 && silent > 0, `checked ${shown} noted and ${silent} un-noted tiers — this needs both`);
+});
+
+test('a tier with a reading or a hand record shows that, not a note that slipped in beside it', () => {
+  /* The catalog tests refuse a note beside either, but the page is the last line:
+     the reading or the record is the answer, and a stale note next to it would
+     contradict it. */
+  const note = { reason: 'No hyperscaler rents this card.', checked: '2026-09-23' };
+  const withSource = { ...GPU_TABLE['h100-80'], priceNote: { hyper: note } };
+  const h = renderHarness();
+  const st = asState(withSource, 1, { params: 8, layers: 32 });
+  const c = h.computeInference(st);
+  h.renderCost(st, c);
+  assert.ok(st.priceSource && st.priceSource.hyper, 'h100-80 no longer has an automated hyper reading; pick another row');
+  assert.ok(!(h.out['cost-output'] || '').includes(note.reason), 'the cost table shows a note beside a reading');
+  assert.ok(!h.exportSummary(st, c).includes(note.reason), 'the copied report shows a note beside a reading');
 });
 
 test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
@@ -3445,7 +3528,7 @@ test('the page hands the engine each tier\'s price exactly as the catalog record
      test green, and `hyper: g.hyper ?? 0` printed $0.00 (cold check, round 1).
      Driven through the real state builder, for every row and every tier —
      priced or null — and the provenance each tier carries. */
-  let nulls = 0, priced = 0;
+  let nulls = 0, priced = 0, noted = 0;
   for (const [key, gpu] of Object.entries(GPU_TABLE)) {
     const st = readInputStateFor(key, '1');
     for (const [tier, field] of [['hyper', 'gpuHyperCost'], ['spec', 'gpuSpecCost'], ['spot', 'gpuSpotCost']]) {
@@ -3454,8 +3537,11 @@ test('the page hands the engine each tier\'s price exactly as the catalog record
     }
     assert.deepStrictEqual(st.priceSource, gpu.priceSource, `${key}: the state's priceSource`);
     assert.deepStrictEqual(st.priceRecord, gpu.priceRecord, `${key}: the state's priceRecord`);
+    assert.deepStrictEqual(st.priceNote, gpu.priceNote, `${key}: the state's priceNote`);
+    if (gpu.priceNote) noted++;
   }
   assert.ok(nulls > 0 && priced > 0, `the catalog gave ${nulls} null and ${priced} priced tiers — this needs both`);
+  assert.ok(noted > 0, 'no catalog row carries a priceNote, so the state was never shown one');
 });
 test('the state carries the perfKey its constants are chosen by, for every row', () => {
   /* Deleting perfKey from readInputState() — or from getGpuSpec(), which it reads

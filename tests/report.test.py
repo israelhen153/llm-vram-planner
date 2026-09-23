@@ -1961,6 +1961,16 @@ NOTES_PRICE_SENTENCE = (
     '"not recorded" where it has no confirmed source.')
 
 
+def catalog_note_text(gpu, tier):
+    """The catalog's own note for a tier, in the one form both engines print it:
+    the reason as written, then "Checked <date>." Only where the tier has neither
+    an automated reading nor a hand record. Written out here rather than taken
+    from generate_report.py: this is the contract the PDF is held to."""
+    note = (gpu.get("priceNote") or {}).get(tier)
+    other = (gpu.get("priceSource") or {}).get(tier) or (gpu.get("priceRecord") or {}).get(tier)
+    return f"{note['reason']} Checked {note['checked']}." if note and not other else ""
+
+
 def check_pdf_cost_section_names_a_source_or_says_not_recorded():
     """Mirrors tests/model.test.js's discovery sweep for the same requirement,
     on the engine that has no DOM to discover renderers from: report_strings()
@@ -1993,6 +2003,15 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
     mixed_sourced_hit = mixed_not_recorded_hit = 0
     for label, card, shape in cases:
         cfg, strings = report_strings(card, 1, bpp=2)
+        # A tier's note is the catalog's own sentence about where its figure came
+        # from; it names providers and says "price" by design, and it has its own
+        # test below. Taken out here, exact text only, so every rule in this sweep
+        # still holds for the rest of the PDF; a note changed by one character
+        # stays in and meets them.
+        for tier in ("hyper", "spec", "spot"):
+            note = catalog_note_text(card, tier)
+            if note:
+                strings = [s.replace(note, " ") for s in strings]
         cost_strings = [s for s in strings if cost_line.search(s)]
         assert cost_strings, f"{label}: no cost figure printed at all — report_strings found nothing"
 
@@ -2135,6 +2154,34 @@ def check_pdf_tier_names_are_bare():
     assert "Hyperscaler" in strings, "the PDF cost table lost its Hyperscaler tier name"
     assert "Specialized" in strings, "the PDF cost table lost its Specialized tier name"
     assert "Spot / marketplace" in strings, "the PDF cost table lost its Spot / marketplace tier name"
+
+def check_every_noted_tier_says_why_in_the_pdf():
+    """Tier honesty on the artifact that gets forwarded: under the Source line, a
+    "Why —" line carries each noted tier's note, verbatim, in tier order, and
+    nothing else; a row with no notes has no such line; and no note appears
+    anywhere else in the PDF. Every catalog row."""
+    shown = 0
+    for slug, card in gr.GPUS.items():
+        _, strings = report_strings(card, 1, bpp=2)
+        notes = [(name, catalog_note_text(card, tier))
+                 for name, tier in (("Hyperscaler", "hyper"), ("Specialized", "spec"), ("Spot", "spot"))]
+        want = [f"{name}: {note}" for name, note in notes if note]
+        why = [s for s in strings if s.startswith("Why — ")]
+        if want:
+            shown += len(want)
+            assert why == ["Why — " + " ".join(want)], f"{slug}: the Why line is {why!r}, expected {want!r}"
+            src = next(i for i, s in enumerate(strings) if s.startswith("Source — "))
+            assert strings[src + 1] == why[0], f"{slug}: the Why line does not sit under the Source line"
+            for _, note in notes:
+                if note:
+                    assert sum(s.count(note) for s in strings) == 1, f"{slug}: a note appears more than once"
+        else:
+            assert not why, f"{slug}: a row with no notes has a Why line: {why!r}"
+    assert shown >= 20, f"only {shown} noted tiers reached the PDF — the check above checked almost nothing"
+
+test("every tier the catalog notes says why in the PDF, verbatim, under the Source line, and nowhere else",
+     check_every_noted_tier_says_why_in_the_pdf)
+
 
 test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
