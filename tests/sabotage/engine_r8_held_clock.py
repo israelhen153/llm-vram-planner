@@ -17,6 +17,11 @@ would notice only once a minute, by chance. What catches these every time:
 K5 to K10 come from the cold check of the first version, which checked the
 clock on one probe config and scrubbed the cover by its shape. A clock read
 around the hold for FP8 reports only (K5) passed all 120 tests.
+
+K11 and K12 come from the second round. The recorder then sat in
+story_strings(), and report_text() builds reports that never pass through it:
+a read gated on a config only report_text() builds passed all 121. The record
+now lives in the report's own classes. K13 to K15 uninstall each piece of it.
 """
 import os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
@@ -31,6 +36,9 @@ HOLD = "gr.datetime = HeldClock\n"
 HELD_AT = "HELD = datetime(2001, 2, 3, 4, 5)\n"
 COVER_SCRUB = '        (re.compile(re.escape(HELD_COVER)), "Generated [date] at [time]"),\n'
 DATE_SCRUB = '        (re.compile(r"\\A" + re.escape(HELD_DATE) + r"\\Z"), "[today]"),\n'
+RECORDERS = ("gr.Paragraph = RecordingParagraph\n",
+             "gr.ReportCard.generate = _covers_recorded(gr.ReportCard.generate)\n",
+             "gr.ReportCard._header_footer = _page_dates_recorded(gr.ReportCard._header_footer)\n")
 EVERY_BUILD = ('test("every report this suite built printed the held clock, so no check depends on when it runs",\n'
                '     check_every_report_built_here_read_the_held_clock)\n')
 
@@ -73,6 +81,17 @@ S = {
     "K10 test: the golden scrubs the cover by its shape again, hiding any clock":
         [(REPORT_TEST, COVER_SCRUB, COVER_SCRUB.replace(
             "re.compile(re.escape(HELD_COVER))", 're.compile(r"Generated \\w+ \\d+, \\d{4} at \\d{2}:\\d{2}")'), 1)],
+    # ---- the second round: builds a helper-level recorder never saw ----
+    "K11 py: the cover reads the machine's clock only at 20 concurrent users (built by report_text() alone)":
+        [(REPORT_PY, PY_CLOCK_COVER, cover_around_hold("cfg.get('conc') == 20"), 1)],
+    "K12 py: the cover reads the machine's clock only for a 123B model (built by report_text() alone)":
+        [(REPORT_PY, PY_CLOCK_COVER, cover_around_hold("cfg.get('params') == 123"), 1)],
+    "K13 test: the cover recorder is never installed":
+        [(REPORT_TEST, RECORDERS[0], "", 1)],
+    "K14 test: generate() is never wrapped, so no build is delimited":
+        [(REPORT_TEST, RECORDERS[1], "", 1)],
+    "K15 test: the page-date recorder is never installed":
+        [(REPORT_TEST, RECORDERS[2], "", 1)],
 }
 
 if __name__ == "__main__":
