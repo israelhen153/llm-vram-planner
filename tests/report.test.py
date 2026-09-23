@@ -58,6 +58,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import generate_report as gr
 
+# The report prints the wall clock twice, the cover's "Generated <date> at
+# <time>" and the page footer's date, and checks below build one report more
+# than once and compare the builds. A run that crossed a minute between two of
+# them failed with nothing wrong: on 2026-09-23 a sabotage run's baseline went
+# red that way, and in a sabotage run a check that goes red on its own reads as
+# a catch. So the whole suite reads one instant, pinned the way
+# tests/sabotage/compare/nochange.py pins it. The date is one no content in the
+# report can carry, so the golden's by-value scrub of it (golden_clocks) can
+# only ever match a clock.
+HELD = datetime(2001, 2, 3, 4, 5)
+
+
+class HeldClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return HELD
+
+
+gr.datetime = HeldClock
+
 pass_ct = fail_ct = 0
 
 def test(name, fn):
@@ -1825,6 +1845,26 @@ test("the clock scrubs fire exactly as often as the report has clocks",
      check_the_clock_scrubs_fire_exactly_as_often_as_there_are_clocks)
 
 
+def check_the_report_reads_the_held_clock():
+    """Every clock the report prints is HELD, so no check in this file depends on
+    when it runs. A clock read that goes around the hold — time.strftime,
+    date.today(), a second import of datetime — prints the machine's date, and
+    fails here the day it lands instead of on whichever run crosses a minute."""
+    _, strings = report_strings(gr.GPUS["h100-80"], 1, bpp=2)
+    covers = [m.group(0) for s in strings
+              for m in re.finditer(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}", s)]
+    held_cover = f"Generated {HELD.strftime('%B %d, %Y at %H:%M')}"
+    assert covers == [held_cover] * CLOCKS_PER_CASE, (
+        f"the cover's clock is not the held instant: {covers!r}, want {held_cover!r}")
+    dates = [s for s in strings if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)]
+    held_date = HELD.strftime("%Y-%m-%d")
+    assert dates == [held_date] * BARE_DATES_PER_CASE, (
+        f"the footer's date is not the held instant: {dates!r}, want {held_date!r}")
+
+test("the report reads the suite's held clock, so no check depends on when it runs",
+     check_the_report_reads_the_held_clock)
+
+
 test("the PDF cost section names a source or says \"not recorded\", for every shape",
      check_pdf_cost_section_names_a_source_or_says_not_recorded)
 
@@ -2468,8 +2508,12 @@ GOLDEN_REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden
 # angle-bracket placeholder inserted *before* reader_view() runs is stripped
 # right back out — "Generated <date> at <time>" golden as "Generated  at ",
 # both clocks scrubbed to invisible rather than to a readable placeholder.
+#
+# "Today" is HELD's date, not the machine's: the report reads HELD, and keying
+# the scrub on the machine's clock would let a report that reads the real
+# clock again scrub itself clean.
 def golden_clocks():
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = HELD.strftime("%Y-%m-%d")
     return (
         (re.compile(r"Generated \w+ \d+, \d{4} at \d{2}:\d{2}"), "Generated [date] at [time]"),
         (re.compile(r"\A" + re.escape(today) + r"\Z"), "[today]"),
