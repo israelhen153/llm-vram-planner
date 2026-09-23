@@ -1119,7 +1119,7 @@ for slug, row in GPUS.items():
                 for hf in ("/opt/models/YourModel", "meta-llama/Llama-3.1-8B-Instruct"):
                     MATRIX.append({"n_gpu": n, "prefix_caching": True, "fits": True, "quant": q,
                                    "is_moe": False, "kv_bpp": kv, "ctx": 16384, "hf_model": hf,
-                                   "devices": row["devices"], "vendor": "amd", "gfx": row["gfx"],
+                                   "devices": row["devices"], "vendor": "amd", "gfx": row.get("gfx"),
                                    "skip_reason": None})
 
 for unsafe in UNSAFE_HF_MODELS:

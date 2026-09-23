@@ -1690,5 +1690,36 @@ def check_every_real_price_lead_follows_the_rules():
 test("every real priceLead follows the rules", check_every_real_price_lead_follows_the_rules)
 
 
+def check_a_tier_nobody_offers_has_no_price():
+    """Tier honesty's sharpest case: a price shown for an offer that doesn't exist.
+    Until 2026-09-23 the price map said "no hyperscaler rents this card" for
+    rtx4090-24, rtx5090-32 and rtx6000ada-48 while the catalog priced their
+    hyperscaler tiers. A re-check against AWS, Azure, Google Cloud and Oracle
+    (docs/research/unsourced-prices.md) settled all four. Two rules:
+    - a tier whose own note says no hyperscaler rents the card has no price;
+    - the four the re-check settled stay as it settled them until a new check
+      says otherwise: three null, and rtxpro-96's read from AWS g7e.2xlarge.
+    Only the goldens saw a price put back on one of the three, and a golden
+    regenerated in the same pull request would have let it through."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    said = 0
+    for slug, row in rows.items():
+        for tier, note in (row.get("priceNote") or {}).items():
+            if note["reason"].startswith("No hyperscaler rents this card"):
+                said += 1
+                assert row[tier] is None, (
+                    f"{slug}/{tier}: its note says no hyperscaler rents the card, and the tier has a price")
+    assert said >= 6, f"only {said} notes say no hyperscaler rents the card; the rule above checked almost nothing"
+    for slug in ("rtx4090-24", "rtx5090-32", "rtx6000ada-48"):
+        assert rows[slug]["hyper"] is None, f"{slug}: the re-check found no hyperscaler renting it, and it has a price"
+    src = (rows["rtxpro-96"].get("priceSource") or {}).get("hyper") or {}
+    assert (src.get("provider"), src.get("sku")) == ("aws", "g7e.2xlarge"), (
+        f"rtxpro-96's hyperscaler tier is no longer read from AWS g7e.2xlarge: {src}")
+
+test("a tier nobody offers has no price, and the four hyperscaler tiers the re-check settled stay settled",
+     check_a_tier_nobody_offers_has_no_price)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)
