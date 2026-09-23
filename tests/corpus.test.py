@@ -87,7 +87,7 @@ def check_the_paths_are_the_engine_files():
         assert path in PREFIX_FILE.values() and os.path.exists(os.path.join(ROOT, path)), (
             f"{n} = {path!r}, which is not one of the engine files sabotages edit")
 
-test("the three path constants name the engine files", check_the_paths_are_the_engine_files)
+test("the path constants name the engine files", check_the_paths_are_the_engine_files)
 
 
 print("\nThe corpus can still reach what it attacks")

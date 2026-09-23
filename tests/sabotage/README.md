@@ -53,7 +53,7 @@ Two files are not drivers:
   `run_judging_suites`, `require_green_baseline`, and `run_driver`, the one loop every Python driver
   calls. There used to be fifteen copies of that loop in six different shapes.
 - **`anchors.py`** — the exact excerpts of the engine files that `engine_*` sabotages anchor their
-  edits on, plus `INDEX_HTML`, `REPORT_PY` and `SYNC_PY`, the paths they edit.
+  edits on, plus `INDEX_HTML`, `REPORT_PY`, `SYNC_PY`, `PRICE_PY` and `GPUS_JSON`, the paths they edit.
 
 Until 2026-09-22 the drivers were `sab.py`, `sab2.py` … `sab10.py`, and `sab.py` was both the
 harness and the biggest driver. The rename changed no sabotage: all 330 in the Python drivers were
