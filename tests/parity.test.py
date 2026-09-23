@@ -807,7 +807,8 @@ else:
         # nested-dict renderers, and nothing else here would catch the two
         # disagreeing about a provider name or a date.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
-                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource"):
+                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource",
+                  "priceRecord"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:

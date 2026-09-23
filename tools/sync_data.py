@@ -82,7 +82,7 @@ def load_benchmarks():
 # would reach both engines as "no constants" without anyone having decided so.
 GPU_FIELDS = ("gb", "bw", "hyper", "spec", "spot", "tflops", "name",
               "vendor", "perfKey", "devices", "form", "caps")
-GPU_OPTIONAL = ("default", "priceSource")
+GPU_OPTIONAL = ("default", "priceSource", "priceRecord")
 # The only fields a GPU row may set to null: a price tier with no confirmed
 # hourly price for this card. Still required — a row has to say so, not leave
 # the tier out — and null nowhere else, so a missing value in any other field

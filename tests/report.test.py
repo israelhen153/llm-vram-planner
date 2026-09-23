@@ -1822,6 +1822,18 @@ def check_price_source_label_format_is_a_fixed_expectation():
     assert gr.price_source_label(leaky, "hyper") == "not recorded", (
         "a sourced spec tier must not leak into a hyper lookup")
 
+    # A price read by hand off the provider's page: named and dated, and saying so.
+    hand = {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+            "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}
+    assert gr.price_source_label({"spec": 2.39, "priceRecord": {"spec": hand}}, "spec") == (
+        "RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly")
+    assert gr.price_source_label({"spec": 2.39, "priceRecord": {"spot": hand}}, "spec") == "not recorded", (
+        "a hand record on another tier leaked into this one")
+    assert gr.price_source_label(dict(gpu, priceRecord={"hyper": hand}), "hyper") == (
+        "Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16"), "a hand record displaced a reading"
+    assert gr.price_source_label({"spot": None, "priceRecord": {"spot": hand}}, "spot") == (
+        "no confirmed hourly price"), "a null tier rendered the hand record attached to it"
+
 test("price_source_label formats provider, SKU, region and date — a fixed expectation",
      check_price_source_label_format_is_a_fixed_expectation)
 
@@ -1847,6 +1859,12 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         ("none recorded (real rtx5090-32)", dict(gr.GPUS["rtx5090-32"]), "none"),
         ("all sourced (synthetic)",
          dict(gr.GPUS["h100-80"], priceSource={"hyper": sourced, "spec": sourced, "spot": sourced}), "all"),
+        # h100-80's unsourced spot tier, recorded by hand: the Source line must
+        # carry that label for that tier, exactly as price_source_label() renders it.
+        ("hand-recorded spot (synthetic)",
+         dict(gr.GPUS["h100-80"], priceRecord={"spot": {
+             "provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+             "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}}), "mixed"),
     ]
     # A dollar figure, or the dedicated provenance line: reportlab's cost
     # table is plain strings per cell, so the tier's price ("$12.30") and its

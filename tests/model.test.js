@@ -89,6 +89,7 @@ const stateFor = (gpu, o = {}) => ({
     gpuFp8: !!(gpu.caps && gpu.caps.fp8),
     // Cost provenance, off the row like every other GPU field above.
     priceSource: gpu.priceSource,
+    priceRecord: gpu.priceRecord,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1186,6 +1187,7 @@ const asState = (card, count, extra = {}) => ({
   // a real row with no confirmed source, and priceSourceLabel() treats that
   // as "not recorded" rather than throwing.
   priceSource: card.priceSource,
+  priceRecord: card.priceRecord,
   gpuForm: card.form,
   gpuName: card.name, ...extra,
 });
@@ -2174,6 +2176,16 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
   assert.strictEqual(priceSourceLabel({ gpuSpotCost: null, priceSource: { spot: state.priceSource.hyper } }, 'spot'),
     'no confirmed hourly price', 'a null tier rendered the source attached to it');
   assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.5, priceSource: undefined }, 'spec'), 'not recorded');
+  // A price read by hand off the provider's page: named and dated, and saying so.
+  const handRec = { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' };
+  assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.39, priceRecord: { spec: handRec } }, 'spec'),
+    'RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly');
+  assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.39, priceRecord: { spot: handRec } }, 'spec'), 'not recorded',
+    'a hand record on another tier leaked into this one');
+  assert.strictEqual(priceSourceLabel({ priceSource: state.priceSource, priceRecord: { hyper: handRec } }, 'hyper'),
+    'Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16', 'a hand record displaced an automated reading');
+  assert.strictEqual(priceSourceLabel({ gpuSpotCost: null, priceRecord: { spot: handRec } }, 'spot'),
+    'no confirmed hourly price', 'a null tier rendered the hand record attached to it');
 });
 
 test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
@@ -2245,6 +2257,9 @@ test('every cost surface names a source or says "not recorded", discovered not e
     ['none recorded (real rtx5090-32)', GPU_TABLE['rtx5090-32'], 'none'],
     ['all sourced (synthetic)',
      { ...GPU_TABLE['h100-80'], priceSource: { hyper: sourced, spec: sourced, spot: sourced } }, 'all'],
+    // h100-80's unsourced spot tier, recorded by hand: each surface must print
+    // that label under that tier, exactly as priceSourceLabel() renders it.
+    ['hand-recorded spot (synthetic)', { ...GPU_TABLE['h100-80'], priceRecord: { spot: { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' } } }, 'mixed'],
   ];
 
   const surfacesSeen = new Set();

@@ -334,6 +334,26 @@ def check_null_outside_a_price_tier_is_refused():
 test("a null anywhere but a price tier is refused by both renderers", check_null_outside_a_price_tier_is_refused)
 
 
+def check_a_price_record_round_trips_through_both_languages():
+    """priceRecord is optional like priceSource: written only on the rows that
+    carry it, and intact — URL included — in both generated blocks."""
+    rec = {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+           "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}
+    rows = {"probe-rec": dict(NULL_TIER_ROW, spec=2.39, priceRecord={"spec": rec}),
+            "probe-plain": dict(NULL_TIER_ROW)}
+    assert js_eval(sync_data.render_gpu_js(rows), "GPU_TABLE") == rows, "the JS block did not round-trip"
+    block = sync_data.render_gpu_py(rows)
+    ns = {}
+    exec("\n".join(l for l in block.splitlines() if not l.startswith("#")), ns)
+    assert ns["GPUS"] == rows, "the Python block did not round-trip"
+    assert "priceRecord" not in sync_data.render_gpu_js({"probe-plain": NULL_TIER_ROW}), (
+        "a row without priceRecord was given one")
+
+
+test("priceRecord is optional and round-trips through both languages, URL included",
+     check_a_price_record_round_trips_through_both_languages)
+
+
 def check_marker_text_in_a_value_is_refused():
     """A note discussing this tool by name is ordinary contributor prose.
 

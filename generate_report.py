@@ -168,6 +168,13 @@ def price_source_label(gpu, tier):
     if tier in gpu and gpu[tier] is None:
         return NO_PRICE
     src = (gpu.get("priceSource") or {}).get(tier)
+    # Read by a person rather than by tools/price_check.py: named and dated the
+    # same way, and saying so, because nothing re-reads it on a schedule. Only
+    # where no automated reading exists. Mirrors priceSourceLabel().
+    rec = None if src else (gpu.get("priceRecord") or {}).get(tier)
+    if rec:
+        return (f"{rec['provider']} · {rec['sku']} · {rec['region']} · recorded by hand "
+                f"{rec['date']}, not re-checked weekly")
     if not src:
         return "not recorded"
     provider = PROVIDER_NAMES.get(src["provider"], src["provider"])
@@ -1275,7 +1282,9 @@ def interactive_mode():
     # the cost table printed after selection carries every tier's full source.
     print("\nAvailable GPUs (* marks a price with a recorded source; see the cost table after selecting):")
     for i, (k, v) in enumerate(GPUS.items()):
-        ps = v.get("priceSource") or {}
+        # Either kind of named, dated source earns the mark: read by the tool,
+        # or recorded by hand — the cost table says which.
+        ps = {**(v.get("priceRecord") or {}), **(v.get("priceSource") or {})}
         if v["spot"] is not None and v["hyper"] is not None:
             span = (f"${v['spot']}{'*' if 'spot' in ps else ''}"
                     f"-${v['hyper']}{'*' if 'hyper' in ps else ''}/hr")

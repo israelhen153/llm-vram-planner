@@ -661,7 +661,9 @@ function getGpuSpec() {
            // this is the one place readInputState() draws every GPU field
            // from. Absent on most rows today, which is a supported state:
            // priceSourceLabel() renders "not recorded" for a missing tier.
-           priceSource: g.priceSource };
+           priceSource: g.priceSource,
+           // The hand-recorded kind, for a tier no automated source reads.
+           priceRecord: g.priceRecord };
 }
 
 /* Builds the GPU dropdown's <option> elements from GPU_TABLE at load time — the
@@ -940,6 +942,10 @@ function readInputState() {
        rather than throwing. tests/model.test.js's stateFor()/asState() carry
        this too, so a hand-built test state exercises the same path. */
     priceSource: gpu.priceSource,
+    /* A price a person read off the provider's own page, for a tier no
+       automated source reads — named and dated like priceSource, and said to
+       be hand-recorded wherever it is shown. Undefined on most rows. */
+    priceRecord: gpu.priceRecord,
     gpuName: gpu.name,
     // How many accelerator devices this board presents. 1 for every NVIDIA card
     // here; a multi-GCD board like the MI250X is one row with devices: 2,
@@ -1874,6 +1880,12 @@ function priceSourceLabel(state, tier) {
   // that has none.
   if (state[TIER_COST_FIELD[tier]] === null) return NO_PRICE;
   const src = state.priceSource && state.priceSource[tier];
+  /* Read by a person rather than by tools/price_check.py: named and dated the
+     same way, and saying so, because nothing re-reads it on a schedule. Only
+     where no automated reading exists — the catalog tests refuse both on one
+     tier, and an automated reading wins here if one ever slips through. */
+  const rec = !src && state.priceRecord && state.priceRecord[tier];
+  if (rec) return `${rec.provider} · ${rec.sku} · ${rec.region} · recorded by hand ${rec.date}, not re-checked weekly`;
   if (!src) return 'not recorded';
   const provider = PROVIDER_NAMES[src.provider] || src.provider;
   return `${provider} · ${src.sku} · ${src.region} · read ${src.date}`;
