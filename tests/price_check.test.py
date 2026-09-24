@@ -1721,5 +1721,34 @@ test("a tier nobody offers has no price, and the four hyperscaler tiers the re-c
      check_a_tier_nobody_offers_has_no_price)
 
 
+# Every tier the catalog holds with no confirmed hourly price. Each one tells a
+# reader "no confirmed hourly price" and its note says why. The rule above
+# covers the notes that say no hyperscaler rents the card; a price put on any
+# other empty tier (the RX 7900 XTX's specialized tier, a spot tier nobody
+# offers) passed everything but the goldens (engine_r6_amd_rows C4). A tier
+# leaves this set only when a reading or a hand record lands for it, which
+# changes what the page tells people, so it has to be changed here as well.
+NO_CONFIRMED_PRICE = {
+    "rtx4090-24": ["hyper"], "rtx5090-32": ["hyper"], "rtx6000ada-48": ["hyper"],
+    "rx7900xtx-24": ["hyper", "spec", "spot"], "mi210-64": ["hyper", "spec", "spot"],
+    "mi250x-128": ["hyper", "spec", "spot"], "mi325x-256": ["hyper", "spot"],
+}
+
+
+def check_the_tiers_with_no_confirmed_price_are_the_pinned_ones():
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    empty = {(slug, t) for slug, row in rows.items() for t in ("hyper", "spec", "spot") if row[t] is None}
+    pinned = {(slug, t) for slug, tiers in NO_CONFIRMED_PRICE.items() for t in tiers}
+    priced = sorted(f"{slug}/{t}" for slug, t in pinned - empty)
+    unpinned = sorted(f"{slug}/{t}" for slug, t in empty - pinned)
+    assert not priced and not unpinned, (
+        f"priced, though pinned as having no confirmed price: {priced or 'none'}; "
+        f"empty, though not pinned: {unpinned or 'none'}")
+
+test("the tiers with no confirmed price are exactly the ones pinned here",
+     check_the_tiers_with_no_confirmed_price_are_the_pinned_ones)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)
