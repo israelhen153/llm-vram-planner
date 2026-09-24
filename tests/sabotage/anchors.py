@@ -178,6 +178,27 @@ GPUS_H100_SRC_BLOCK = ("\"priceSource\": { \"hyper\": { \"provider\": \"azure\",
                       "\"sku\": \"Standard_ND96isr_H100_v5\", \"region\": \"eastus\", "
                       "\"date\": \"2026-09-22\", \"price\": 12.29 }")
 
+# ---- fix/gguf-plugin (engine_r9_gguf_plugin.py): the GGUF guidance and the
+# copied report's command block ----
+JS_EXPORT_CODEBOX = "  const emitted = document.querySelector('#command-output .code-box code');\n"
+JS_GGUF_BANNER_IF = "    if (state.quantMethod === 'gguf') {\n"
+JS_GGUF_BANNER_MAP = ("      const lines = GGUF_GUIDANCE.map(([text, source]) => "
+                      "text.replace(/`([^`]+)`/g, '<code>$1</code>')\n")
+JS_GGUF_BANNER_LINK = ("        + (source ? ` (<a href=\"${source}\" target=\"_blank\" "
+                       "style=\"color:var(--accent-text)\">source</a>)` : ''));\n")
+JS_GGUF_EXPORT_IF = "  if (computed.fits && state.quantMethod === 'gguf') {\n"
+JS_GGUF_EXPORT_SOURCE = "- ${text}${source ? ` (source: ${source})` : ''}`"
+JS_GGUF_FIRST = "  [\"GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin.\",\n"
+JS_GGUF_ADVICE = ("  ['For GGUF specifically, llama.cpp or Ollama is the better-supported path; "
+                  "AWQ or GPTQ is the usual choice on vLLM.',\n")
+PY_GGUF_PDF_IF = "        if c[\"fits\"] and cfg.get(\"quant\") == \"gguf\":\n"
+PY_GGUF_PDF_SOURCE = "                                       + (f\" (source: {source})\" if source else \"\"),\n"
+PY_GGUF_FIRST = "    (\"GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin.\",\n"
+PY_GGUF_ADVICE = ("    (\"For GGUF specifically, llama.cpp or Ollama is the better-supported path; "
+                  "AWQ or GPTQ \"\n")
+JS_GGUF_RELEASE_SRC = "   'https://github.com/vllm-project/vllm/releases/tag/v0.24.0'],\n"
+PY_GGUF_RELEASE_SRC = "     \"https://github.com/vllm-project/vllm/releases/tag/v0.24.0\"),\n"
+
 # The engine files a sabotage edits.
 INDEX_HTML = "index.html"
 REPORT_PY = "generate_report.py"

@@ -1339,8 +1339,17 @@ const renderHarness = (inputs = {}) => {
        empty string here left that block empty for every card, so a renderer that
        dropped the command for one of them changed nothing a test could see. */
     querySelector: (sel) => {
+      /* As a browser resolves them: the panel's first <code> wherever it sits, or the
+         one inside the command box. The first is what the report used to quote, and a
+         banner's <code> span precedes the box, so modelling both is what lets a test
+         see the difference. */
+      const panel = out['command-output'] || '';
       if (sel === '#command-output code') {
-        const m = (out['command-output'] || '').match(/<code>([\s\S]*?)<\/code>/);
+        const m = panel.match(/<code>([\s\S]*?)<\/code>/);
+        return m ? { textContent: m[1] } : null;
+      }
+      if (sel === '#command-output .code-box code') {
+        const m = panel.match(/<div class="code-box">[\s\S]*?<code>([\s\S]*?)<\/code>/);
         return m ? { textContent: m[1] } : null;
       }
       return { textContent: '', innerHTML: '', parentElement: null };
@@ -3637,6 +3646,97 @@ test('no document promises a --device flag', () => {
   }
 });
 
+console.log('\nThe copied report quotes the command box');
+/* Every weight option the page offers, read from its own <select>, so an option
+   added tomorrow is covered without anyone listing it here. */
+const WEIGHT_SELECT = html.slice(html.indexOf('<select id="weight-precision"'),
+                                 html.indexOf('</select>', html.indexOf('<select id="weight-precision"')));
+/* Each <option>'s own attributes, read in any order. The first version matched
+   value and data-q only when they sat side by side, so the AWQ option, the page's
+   default, which carries `selected` between them, was silently left out. A GGUF
+   banner shown for every AWQ plan then passed every check here (cold check,
+   fix/gguf-plugin). Hence the count below: the options read must be all the
+   options there are. */
+const WEIGHT_OPTION_TAGS = [...WEIGHT_SELECT.matchAll(/<option\b([^>]*)>/g)].map(m => m[1]);
+const WEIGHT_OPTIONS = WEIGHT_OPTION_TAGS.map(attrs => ({
+  bytesPerParam: Number((attrs.match(/\bvalue="([\d.]+)"/) || [])[1]),
+  quantMethod: (attrs.match(/\bdata-q="(\w*)"/) || [])[1],
+}));
+assert.ok(WEIGHT_OPTIONS.length === (WEIGHT_SELECT.match(/<option\b/g) || []).length
+          && WEIGHT_OPTIONS.every(o => Number.isFinite(o.bytesPerParam) && typeof o.quantMethod === 'string'),
+  `read ${WEIGHT_OPTIONS.length} weight options, not every <option> the select holds, or one without a value and data-q`);
+assert.ok(WEIGHT_OPTIONS.filter(o => o.quantMethod === 'gguf').length >= 6
+          && ['', 'fp8', 'awq', 'gptq'].every(q => WEIGHT_OPTIONS.some(o => o.quantMethod === q)),
+  'the weight options were not found in the page, so the checks below would check nothing');
+const dense8BPlan = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
+test('the copied report quotes the whole command, for every weight option the page offers', () => {
+  /* The report used to quote the panel's first <code>, which for a GGUF plan was a
+     span in the banner above the box: the report said `vllm serve` and nothing else. */
+  for (const opt of WEIGHT_OPTIONS) {
+    const h = renderHarness();
+    const st = asState(GPU_TABLE['h100-80'], 1, { ...dense8BPlan, ...opt });
+    const c = h.computeInference(st);
+    assert.ok(c.fits, `8B at ${opt.bytesPerParam} B/param should fit one H100, or this checks nothing`);
+    h.renderCommand(st, c);
+    const box = (h.out['command-output'] || '').match(/<div class="code-box">[\s\S]*?<code>([\s\S]*?)<\/code>/);
+    assert.ok(box && box[1].startsWith('vllm serve ') && box[1].includes('--max-model-len'),
+      `${opt.bytesPerParam}/${opt.quantMethod}: no command box on the panel`);
+    assert.ok(h.exportSummary(st, c).includes('\n## vLLM command\n```\n' + box[1] + '\n```\n'),
+      `${opt.bytesPerParam}/${opt.quantMethod}: the copied report does not quote the command box`);
+  }
+});
+
+console.log('\nGGUF guidance says what vLLM needs today');
+/* The sentences are a contract, so they are literals here rather than read back
+   from GGUF_GUIDANCE: a test that took its expectation from the page would follow
+   any edit to it, including the one that put the retired single-file claim back. */
+const GGUF_LINES = [
+  ["GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin.",
+   'https://github.com/vllm-project/vllm/releases/tag/v0.24.0'],
+  ["Install `vllm-gguf-plugin` before serving a GGUF model. Point the command at a GGUF checkpoint, either a Hugging Face repo as `repo_id:quant_type` (for example `unsloth/Qwen3-0.6B-GGUF:Q4_K_M`) or a local `.gguf` file, and pass the base model's tokenizer with `--tokenizer`.",
+   'https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html'],
+  ['vLLM calls its GGUF support "highly experimental and under-optimized".',
+   'https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html'],
+  ['For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM.',
+   null],
+];
+const stripTags = (s) => s.replace(/<[^>]+>/g, '');
+const ggufSurfaces = (card, extra) => {
+  const h = renderHarness();
+  const st = asState(card, 1, extra);
+  const c = h.computeInference(st);
+  h.renderCommand(st, c);
+  const panel = h.out['command-output'] || '';
+  return { c, panel, text: stripTags(panel), report: h.exportSummary(st, c) };
+};
+test('every GGUF level names the plugin, with its sources, on the command panel and in the copied report', () => {
+  for (const opt of WEIGHT_OPTIONS) {
+    const { c, panel, text, report } = ggufSurfaces(GPU_TABLE['h100-80'], { ...dense8BPlan, ...opt });
+    assert.ok(c.fits, `8B at ${opt.bytesPerParam} B/param should fit one H100, or this checks nothing`);
+    const gguf = opt.quantMethod === 'gguf';
+    const where = `${opt.bytesPerParam} B/param, --quantization ${opt.quantMethod || '(none)'}`;
+    for (const [line, source] of GGUF_LINES) {
+      assert.strictEqual(text.includes(line.replace(/`/g, '')), gguf,
+        `${where}: the command panel ${gguf ? 'lacks' : 'shows'} "${line}"`);
+      assert.strictEqual(report.includes(`- ${line}${source ? ` (source: ${source})` : ''}\n`), gguf,
+        `${where}: the copied report ${gguf ? 'lacks' : 'shows'} "${line}" with its source`);
+      if (source) assert.strictEqual(panel.includes(`href="${source}"`), gguf,
+        `${where}: the command panel ${gguf ? 'does not link' : 'links'} ${source}`);
+    }
+    assert.ok(!/not a repo|single \.?gguf file/i.test(text + report),
+      `${where}: the retired single-file claim is back`);
+  }
+});
+test('a GGUF plan that does not fit prints no GGUF guidance, because it prints no command', () => {
+  const { c, text, report } = ggufSurfaces(GPU_TABLE['t4-16'],
+    { params: 70, layers: 80, bytesPerParam: 0.63, quantMethod: 'gguf' });
+  assert.ok(!c.fits, '70B at Q4_K_M should not fit one T4, or this checks nothing');
+  for (const [line] of GGUF_LINES) {
+    assert.ok(!text.includes(line.replace(/`/g, '')) && !report.includes(line),
+      `guidance for a command the page does not print: "${line}"`);
+  }
+});
+
 console.log('\nShared links resolve to the card they named');
 const legacyDecl = html.match(/^function legacyGpuKeyFromPipeString\(raw\) \{[\s\S]*?\n\}$/m);
 assert.ok(legacyDecl, 'legacyGpuKeyFromPipeString() not found in index.html');
@@ -3822,6 +3922,8 @@ const goldenCases = () => {
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
      asState(h, 1, { ...dense8B, contextLength: 32768, concurrency: 4,
                      sharedPrefix: 8192, prefixCaching: true })],
+    ['h100-80 x1 — AWQ weights, the page\'s default precision',
+     asState(h, 1, { ...dense8B, bytesPerParam: 0.5, quantMethod: 'awq' })],
     ['h100-80 x1 — GGUF weights, which renderCommand branches on',
      asState(h, 1, { ...dense8B, bytesPerParam: 0.63, quantMethod: 'gguf' })],
     ['h100-80 x1 — a model imported by id rather than named by a preset',
@@ -3912,6 +4014,7 @@ test('the golden records every catalog row, and the shapes that change what the 
     'fp8 weights on silicon without them': sts =>
       sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
+    'AWQ weights, the default': sts => sts.some(st => st.quantMethod === 'awq'),
     'a shared prefix': sts => sts.some(st => st.sharedPrefix > 0),
     'a batch the KV cache cannot hold': sts =>
       sts.some(st => computeInference(st).batchLimitedByKV),
