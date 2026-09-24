@@ -4308,12 +4308,48 @@ const ROCM_FLAGS = ['--group-add=video', '--cap-add=SYS_PTRACE', '--security-opt
 const ROCM_ARCH = { gfx90a: { fp8Weights: false, aiter: false, fp8KvUnverified: false },
                     gfx942: { fp8Weights: true, aiter: true, fp8KvUnverified: false },
                     gfx1100: { fp8Weights: false, aiter: false, fp8KvUnverified: true } };
+/* Every line the planner prints under an AMD command, word for word, with its source.
+   The rules below it (a sentence, a source of the right kind) held while
+   engine_r10_rocm_guidance's R11 swapped HIP_VISIBLE_DEVICES for CUDA_VISIBLE_DEVICES
+   in both engines alike, so parity saw nothing and only the goldens noticed. A line
+   is a claim a reader acts on: changing one means changing it here too. */
+const ROCM_LINES = {
+  image: ["This is vLLM's own ROCm image, pinned to `v0.30.0`, the release these lines were checked against on 2026-09-23. AMD's `rocm/vllm` images are deprecated.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/getting_started/installation/gpu.rocm.inc.md#L353-L394'],
+  wheels: ["vLLM's ROCm wheels are built for Python 3.12 only, and on any other Python the installer silently falls back to the CUDA wheel, which fails on AMD GPUs. The image avoids that.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/getting_started/installation/gpu.rocm.inc.md#L30-L32'],
+  hip: ['To choose GPUs, add `--env HIP_VISIBLE_DEVICES=0,1` before the image name, with your own device IDs. Since v0.30.0, vLLM on ROCm no longer falls back to `CUDA_VISIBLE_DEVICES`.',
+    'https://github.com/vllm-project/vllm/releases/tag/v0.30.0'],
+  hipBoth: ['If both are set and differ, vLLM stops at startup.',
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L127-L137'],
+  gcd: ['Each board of this card is two GPUs to ROCm, one per GCD, so N boards are 2N device IDs.',
+    'https://instinct.docs.amd.com/projects/system-acceptance/en/latest/gpus/mi250.html'],
+  aiterOn: ["`VLLM_ROCM_USE_AITER=1` turns on AITER, AMD's kernel library; AMD's vLLM guide says to always set it on Instinct MI300-series GPUs.",
+    'https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference-optimization/vllm-optimization.html'],
+  aiterDefault: ['vLLM leaves AITER off unless it is set.',
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/envs.py#L1231-L1232'],
+  aiterOff: ["AITER, AMD's kernel library, is enabled only on CDNA3 and newer, so this card runs without it.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/_aiter_ops.py#L138-L160'],
+  fp8Weights: ["vLLM v0.30.0's FP8 weight kernels need CDNA3 or newer, or RDNA4, so FP8 weights are not offered on this card.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/kernels/linear/scaled_mm/rocm.py#L89-L90'],
+  awqDocs: ["vLLM's quantization table marks AWQ and GPTQ as unsupported on AMD GPUs.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/README.md#L69-L70'],
+  awqSource: ["v0.30.0's ROCm platform accepts both; this tool has not run either.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L503-L527'],
+  gguf: ["GGUF needs `vllm-gguf-plugin`, which this image doesn't include. The plugin lists ROCm among its prerequisites; this tool has not run it.",
+    'https://github.com/vllm-project/vllm-gguf-plugin'],
+  kvUnverified: ["On RDNA, vLLM v0.30.0's custom paged-attention kernel takes only the default KV cache type, so an FP8 cache runs on another kernel path, which this tool has not verified.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L401-L410'],
+  more: ["Every line here, and what could not be verified, is in the planner's ROCm notes.",
+    'https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/vllm-rocm.md'],
+};
 
 test('the ROCm table says what vLLM v0.30.0 and AMD say, each line with a source of the kind it claims', () => {
   assert.strictEqual(ROCM_TABLE.image, ROCM_IMAGE);
   assert.deepStrictEqual(ROCM_TABLE.dockerFlags, ROCM_FLAGS);
   assert.deepStrictEqual(ROCM_TABLE.arch, ROCM_ARCH);
   assert.strictEqual(ROCM_TABLE.vllm, 'v0.30.0');
+  assert.deepStrictEqual(ROCM_TABLE.lines, ROCM_LINES);
   const PINNED = /^https:\/\/(github\.com\/vllm-project\/vllm\/(blob|releases\/tag)\/v0\.30\.0([\/#]|$)|github\.com\/vllm-project\/vllm-gguf-plugin$|rocm\.docs\.amd\.com\/|instinct\.docs\.amd\.com\/|github\.com\/israelhen153\/llm-vram-planner\/blob\/HEAD\/docs\/research\/vllm-rocm\.md$)/;
   for (const [id, [text, source]] of Object.entries(ROCM_TABLE.lines)) {
     assert.ok(typeof text === 'string' && text.trim().endsWith('.'), `line ${id} is not a sentence`);
