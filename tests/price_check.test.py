@@ -18,6 +18,7 @@ import copy
 import json
 import os
 import sys
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -132,6 +133,23 @@ def check_azure_isolates_linux_ondemand():
 
 test("Windows/Spot/Low-Priority rows are excluded even though Windows shares meterName with Linux",
      check_azure_isolates_linux_ondemand)
+
+
+def check_azure_spot_meter_says_spot_in_its_sku():
+    """Two tiers can be read off one Azure SKU — MI300X's hyperscaler price and
+    its spot price are both ND96isr_MI300X_v5. The spot reading records "(Spot)"
+    in its SKU, so the page never shows one label beside two prices; the
+    on-demand reading keeps the SKU verbatim."""
+    with fake_http_get((_azure_body(AZURE_H100_ITEMS), {})):
+        spot = pc.fetch_azure("Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5 Spot", 8)
+    assert abs(spot.price_per_gpu - 18.169536 / 8) < 1e-9, spot.price_per_gpu
+    assert spot.sku == "Standard_ND96isr_H100_v5 (Spot)", spot.sku
+    with fake_http_get((_azure_body(AZURE_H100_ITEMS), {})):
+        on_demand = pc.fetch_azure("Standard_ND96isr_H100_v5", "eastus", "ND96isrH100v5", 8)
+    assert on_demand.sku == "Standard_ND96isr_H100_v5", on_demand.sku
+
+test("a spot meter's reading says Spot in its SKU; the on-demand reading keeps the SKU verbatim",
+     check_azure_spot_meter_says_spot_in_its_sku)
 
 
 def check_azure_zero_rows_aborts():
@@ -793,6 +811,105 @@ test("--only excluding a tier's configured kind reports it as manual for this ru
      check_run_only_filter_excludes_a_kind)
 
 
+def check_run_never_fetches_a_null_tier():
+    """A catalog tier recorded as null has no confirmed hourly price, so an
+    automated source has nothing to confirm or move — and a price appearing
+    where the catalog declared none is a person's decision. run() never fetches
+    it, whatever the map says; a manual entry keeps its own reason."""
+    calls = []
+
+    def fetch(spec, shared):
+        calls.append(spec["kind"])
+        return _reading(price=5.0)
+
+    gpus = {"x": {"hyper": None, "spec": None, "spot": 2.0}}
+    source_map = {"x": {"hyper": {"primary": {"kind": "azure"}},
+                        "spec": {"manual": "no specialised cloud lists it"},
+                        "spot": {"primary": {"kind": "vast"}}}}
+    original = pc._fetch_one
+    pc._fetch_one = fetch
+    try:
+        outcomes = {o.tier: o for o in pc.run(gpus, source_map, shared={})}
+    finally:
+        pc._fetch_one = original
+    assert calls == ["vast"], f"fetched {calls}: a null tier was sent to its source"
+    assert outcomes["hyper"].status == "ABORTED" and "null" in outcomes["hyper"].note, outcomes["hyper"]
+    assert outcomes["spec"].status == "MANUAL" and outcomes["spec"].note == "no specialised cloud lists it"
+    assert outcomes["spot"].status != "ABORTED"
+
+test("run() never fetches a tier the catalog records as null", check_run_never_fetches_a_null_tier)
+
+
+def check_main_refuses_to_automate_a_null_tier():
+    """Before any fetch: a SOURCE_MAP that automates a null tier is a
+    configuration error, named, rather than a run that quietly skips it."""
+    catalog = {"_meta": {}, "data": {"x": {"hyper": None, "spec": 1.0, "spot": 1.0}}}
+    assert pc.automated_null_tiers(catalog["data"], {"x": {"hyper": {"primary": {"kind": "azure"}}}}) == ["x/hyper"]
+    assert pc.automated_null_tiers(catalog["data"], {"x": {"hyper": {"manual": "none"}}}) == []
+    assert pc.automated_null_tiers(catalog["data"], {"x": {"spec": {"primary": {"kind": "azure"}}}}) == []
+    saved = pc.load_catalog, pc.SOURCE_MAP
+    pc.load_catalog = lambda: (catalog, "/dev/null")
+    pc.SOURCE_MAP = {"x": {"hyper": {"primary": {"kind": "azure"}}}}
+    try:
+        try:
+            pc.main([])
+        except SystemExit as e:
+            assert "x/hyper" in str(e) and "null" in str(e), f"the refusal does not name the tier: {e}"
+        else:
+            raise AssertionError("main() ran with an automated source on a null tier")
+    finally:
+        pc.load_catalog, pc.SOURCE_MAP = saved
+
+test("main() refuses a SOURCE_MAP that automates a null tier, before fetching",
+     check_main_refuses_to_automate_a_null_tier)
+
+
+def check_every_real_null_tier_is_manual():
+    """The real catalog and the real map, held to the same rule."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    assert pc.automated_null_tiers(rows, pc.SOURCE_MAP) == []
+    bad = [f"{slug}/{tier}" for slug, row in rows.items() for tier in ("hyper", "spec", "spot")
+           if row.get(tier) is None and tier in (row.get("priceSource") or {})]
+    assert not bad, f"a null tier carries a priceSource: {bad}"
+
+test("in the real catalog, no null tier is automated or carries a priceSource",
+     check_every_real_null_tier_is_manual)
+
+
+def check_apply_keeps_a_null_tier_null():
+    """apply_to_text() re-serialises every row. A null tier must come back as
+    JSON null — not 0, not "None", not dropped."""
+    raw = ('{\n  "_meta": {\n    "last_updated": "2026-08-24"\n  },\n  "data": {\n'
+           '    "x": { "hyper": null, "spec": 1.0, "spot": 2.0 }\n  }\n}\n')
+    new_text = pc.apply_to_text(raw, {"x": {"hyper": None, "spec": 1.5, "spot": 2.0}}, ["x"], "2026-09-23")
+    assert '"hyper": null' in new_text and json.loads(new_text)["data"]["x"]["hyper"] is None, new_text
+
+test("apply_to_text() writes a null tier back as null", check_apply_keeps_a_null_tier_null)
+
+
+def check_apply_keeps_a_hand_record_intact():
+    """--apply refreshes provenance on the tiers it read and re-serialises every
+    row. A hand record on another tier of the same row has to come back as it
+    was, URL included: the writer carried no fixture with one, so dropping it —
+    or its URL — passed every test (cold check, round 1)."""
+    rec = {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+           "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}
+    raw = ('{\n  "_meta": {\n    "last_updated": "2026-09-22"\n  },\n  "data": {\n'
+           '    "x": { "hyper": 6.0, "spec": 2.39, "spot": 1.11, "priceRecord": { "spec": '
+           + json.dumps(rec) + ' } }\n  }\n}\n')
+    gpus = json.loads(raw)["data"]
+    confirmed = pc.Outcome("x", "hyper", "CONFIRMED", current=6.0, proposed=6.0,
+                           reading=_reading(price=6.0, date="2026-09-23"))
+    assert pc.apply_outcomes(gpus, [confirmed]), "a CONFIRMED outcome changed nothing"
+    row = json.loads(pc.apply_to_text(raw, gpus, ["x"], "2026-09-23"))["data"]["x"]
+    assert row.get("priceRecord") == {"spec": rec}, f"the hand record did not survive --apply: {row.get('priceRecord')}"
+    assert "hyper" in row.get("priceSource", {}), "the tier that was read gained no provenance"
+
+test("--apply refreshes one tier's provenance and keeps another tier's hand record, URL included",
+     check_apply_keeps_a_hand_record_intact)
+
+
 # ===========================================================================
 # Cross-check disagreement: two live sources for one run, not catalog-vs-live
 # ===========================================================================
@@ -1185,6 +1302,123 @@ def check_every_real_price_source_field_is_non_empty():
 
 test("every real priceSource's provider/sku/region/date is a non-empty string",
      check_every_real_price_source_field_is_non_empty)
+
+
+# ===========================================================================
+# priceRecord: a price read by hand, for a tier no automated source reads
+# ===========================================================================
+print("\npriceRecord: a hand-recorded price names its page, its day, and nothing it cannot back")
+
+PRICE_RECORD_FIELDS = {"provider", "sku", "region", "date", "price", "url"}
+
+
+def price_record_problems(rows, source_map, today):
+    """Every rule a hand-recorded price must satisfy, as one list of problems.
+
+    A hand record is the weaker provenance — a person read the page, nothing
+    re-reads it — so it is allowed only where the stronger kind is impossible:
+    on a tier whose SOURCE_MAP entry is manual. It never sits beside an
+    automated reading, never on a tier with no price, and it carries the URL of
+    the provider's own page so a reader can check it, and the price it read so
+    a hand-edit of the catalog value cannot hide behind it."""
+    import datetime as _dt
+    bad = []
+    for slug, row in rows.items():
+        for tier, rec in (row.get("priceRecord") or {}).items():
+            where = f"{slug}/{tier}"
+            if tier not in ("hyper", "spec", "spot"):
+                bad.append(f"{where}: not a price tier")
+                continue
+            if not isinstance(rec, dict) or set(rec) != PRICE_RECORD_FIELDS:
+                bad.append(f"{where}: fields {sorted(rec) if isinstance(rec, dict) else rec!r}, "
+                           f"expected exactly {sorted(PRICE_RECORD_FIELDS)}")
+                continue
+            for field in ("provider", "sku", "region", "date", "url"):
+                if not isinstance(rec[field], str) or not rec[field].strip():
+                    bad.append(f"{where}.{field}: {rec[field]!r} — must be a non-empty string")
+            if isinstance(rec["url"], str) and not rec["url"].startswith("https://"):
+                bad.append(f"{where}.url: {rec['url']!r} — must be the provider's page, over https")
+            elif isinstance(rec["url"], str) and urllib.parse.urlparse(rec["url"]).path in ("", "/"):
+                # A site's front page is not where a reader can check the price
+                # (cold check, round 1: nothing rejected one).
+                bad.append(f"{where}.url: {rec['url']!r} names a site, not the page the price was read on")
+            try:
+                read = _dt.datetime.strptime(str(rec["date"]), "%Y-%m-%d").date()
+                if read > today:
+                    bad.append(f"{where}.date: {rec['date']} is after today ({today})")
+            except ValueError:
+                bad.append(f"{where}.date: {rec['date']!r} is not YYYY-MM-DD")
+            if row.get(tier) is None:
+                bad.append(f"{where}: the tier is null — a hand record cannot price a tier the catalog "
+                           "says has no confirmed price")
+            elif not isinstance(rec["price"], (int, float)) or isinstance(rec["price"], bool):
+                bad.append(f"{where}.price: {rec['price']!r} is not a number")
+            elif abs(row[tier] - rec["price"]) > PRICE_DRIFT_TOLERANCE * rec["price"]:
+                bad.append(f"{where}: catalog {row[tier]} differs from the recorded {rec['price']} by more "
+                           f"than {PRICE_DRIFT_TOLERANCE:.1%}")
+            if tier in (row.get("priceSource") or {}):
+                bad.append(f"{where}: carries both an automated reading and a hand record")
+            cfg = source_map.get(slug, {}).get(tier) or {}
+            if "manual" not in cfg:
+                bad.append(f"{where}: SOURCE_MAP gives this tier an automated source, so a hand record "
+                           "would stand in for a reading the weekly job can make")
+    return bad
+
+
+def check_every_price_record_rule_is_exercised():
+    """Each rule, broken on its own by one fixture, must be the one reported —
+    and a record that breaks none reports nothing, so no rule passes by being
+    unreachable."""
+    import datetime as _dt
+    today = _dt.date(2026, 9, 23)
+    good = {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+            "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}
+    manual = {"x": {"spec": {"manual": "no RunPod reader"}, "hyper": {"primary": {"kind": "azure"}}}}
+
+    def rows_with(rec=good, tier="spec", **row):
+        base = {"hyper": 6.0, "spec": 2.39, "spot": 1.11, "priceRecord": {tier: rec}}
+        base.update(row)
+        return {"x": base}
+
+    assert price_record_problems(rows_with(), manual, today) == [], "a valid record was refused"
+    # Each fixture, and the words only its own rule's report carries.
+    breaks = {
+        "a missing field": (rows_with({k: v for k, v in good.items() if k != "url"}), "expected exactly"),
+        "an extra field": (rows_with(dict(good, note="x")), "expected exactly"),
+        "a blank provider": (rows_with(dict(good, provider=" ")), ".provider:"),
+        "a plain-http url": (rows_with(dict(good, url="http://www.runpod.io/")), "over https"),
+        "a front-page url": (rows_with(dict(good, url="https://www.runpod.io/")), "names a site"),
+        "a date after today": (rows_with(dict(good, date="2026-09-24")), "after today"),
+        "a malformed date": (rows_with(dict(good, date="23/09/2026")), "not YYYY-MM-DD"),
+        "a null tier": (rows_with(spec=None), "the tier is null"),
+        "a non-numeric price": (rows_with(dict(good, price="2.39")), "is not a number"),
+        "a catalog value the record does not back": (rows_with(spec=2.49), "differs from the recorded"),
+        "an automated reading beside it": (rows_with(priceSource={"spec": {"provider": "lambda"}}),
+                                           "both an automated reading and a hand record"),
+        "an automated tier": (rows_with(tier="hyper"), "gives this tier an automated source"),
+    }
+    for what, (rows, words) in breaks.items():
+        found = price_record_problems(rows, manual, today)
+        assert any(words in f for f in found), f"{what} was not reported by its own rule: {found}"
+
+
+test("every priceRecord rule is reached by a fixture that breaks it, and a valid record passes",
+     check_every_price_record_rule_is_exercised)
+
+
+def check_every_real_price_record_follows_the_rules():
+    """The real catalog and the real SOURCE_MAP, held to the same rules."""
+    import datetime as _dt
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad = price_record_problems(rows, pc.SOURCE_MAP, _dt.datetime.now(_dt.timezone.utc).date())
+    assert not bad, "priceRecord breaks a rule:\n       " + "\n       ".join(bad)
+    # A floor, so the rules above cannot pass by having nothing to read.
+    held = sum(len(r.get("priceRecord") or {}) for r in rows.values())
+    assert held >= 2, f"only {held} real priceRecord(s) — the rules above checked almost nothing"
+
+
+test("every real priceRecord follows the rules", check_every_real_price_record_follows_the_rules)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

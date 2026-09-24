@@ -83,7 +83,7 @@ Things it does not model yet, listed because finding out the hard way is worse:
 
 - **Pipeline parallel and multi-node.** TP and DP only. Single-node assumptions throughout. One surface disagrees and is simply wrong: the "Layers per device" tile divides layers by the device count, which is pipeline-parallel arithmetic on a command that never emits it. The tile says so; the fix is queued.
 - **CPU/NVMe offload.** If it doesn't fit in VRAM, the answer here is "it doesn't fit".
-- **Non-NVIDIA hardware and non-vLLM engines.** AMD is on the roadmap for v1.1. Apple Silicon, llama.cpp and MLX are not planned — see [ROADMAP.md](ROADMAP.md) for why.
+- **AMD throughput, and hardware and engines beyond NVIDIA, AMD and vLLM.** The five AMD cards get the full VRAM breakdown, fit verdict, vLLM command and cost, but no speed figures: no ROCm memory-bandwidth or compute utilisation measurements are published to base them on, and borrowing NVIDIA's would be a guess. Apple Silicon, llama.cpp and MLX are not planned — see [ROADMAP.md](ROADMAP.md) for why.
 - **Speculative decoding and MTP.** Both change the throughput picture substantially and neither is modelled.
 - **Chunked prefill scheduling.** Prefill and decode interleaving affects tail latency under mixed load.
 

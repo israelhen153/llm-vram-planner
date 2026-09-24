@@ -96,6 +96,11 @@ GPUS = {
     "rtxpro-96": {"gb":96,"bw":1792,"hyper":5.0,"spec":2.5,"spot":2.0,"tflops":504,"name":"RTX PRO 6000 96 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"pcie","caps":{"fp8": True},"priceSource":{"spec": {"provider": "coreweave", "sku": "NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory)", "region": "global", "date": "2026-09-22", "price": 2.5}}},
     "h200-141": {"gb":141,"bw":4800,"hyper":7.91,"spec":6.31,"spot":2.5,"tflops":990,"name":"H200 141 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p5en.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 7.91}, "spec": {"provider": "coreweave", "sku": "NVIDIA HGX H200", "region": "global", "date": "2026-09-22", "price": 6.31}}},
     "b200-192": {"gb":192,"bw":8000,"hyper":14.24,"spec":6.69,"spot":2.12,"tflops":2250,"name":"B200 192 GB","vendor":"nvidia","perfKey":"nvidia","devices":1,"form":"sxm","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "aws", "sku": "p6-b200.48xlarge", "region": "US East (N. Virginia)", "date": "2026-09-22", "price": 14.24}, "spec": {"provider": "lambda", "sku": "NVIDIA B200 SXM6 (180 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 6.69}}},
+    "rx7900xtx-24": {"gb":24,"bw":960,"hyper":None,"spec":None,"spot":None,"tflops":123,"name":"RX 7900 XTX 24 GB","vendor":"amd","perfKey":"rdna3","devices":1,"form":"consumer","caps":{"fp8": False}},
+    "mi210-64": {"gb":64,"bw":1638.4,"hyper":None,"spec":None,"spot":None,"tflops":181,"name":"MI210 64 GB","vendor":"amd","perfKey":"cdna2","devices":1,"form":"pcie","caps":{"fp8": False}},
+    "mi250x-128": {"gb":128,"bw":3276.8,"hyper":None,"spec":None,"spot":None,"tflops":383,"name":"MI250X 128 GB","vendor":"amd","perfKey":"cdna2","devices":2,"form":"oam","caps":{"fp8": False}},
+    "mi300x-192": {"gb":192,"bw":5325,"hyper":6.0,"spec":2.39,"spot":1.11,"tflops":1307.4,"name":"MI300X 192 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceSource":{"hyper": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2", "date": "2026-09-23", "price": 6.0}, "spot": {"provider": "azure", "sku": "Standard_ND96isr_MI300X_v5 (Spot)", "region": "eastus2", "date": "2026-09-23", "price": 1.11}},"priceRecord":{"spec": {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global", "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}}},
+    "mi325x-256": {"gb":256,"bw":6000,"hyper":None,"spec":3.8,"spot":None,"tflops":1307.4,"name":"MI325X 256 GB","vendor":"amd","perfKey":"cdna3","devices":1,"form":"oam","caps":{"fp8": True},"priceRecord":{"spec": {"provider": "DigitalOcean", "sku": "AMD Instinct\u2122 MI325X", "region": "global", "date": "2026-09-23", "price": 3.8, "url": "https://www.digitalocean.com/pricing/gpu-droplets"}}},
 }
 # GPU_TABLE:END
 
@@ -110,7 +115,7 @@ DEFAULT_GPU_KEY = next((k for k, g in GPUS.items() if g.get("default")), next(it
 def supports_nvlink(gpu):
     """Whether this board carries NVLink at all.
 
-    Seven of the twelve catalogued cards do not — T4, L4, RTX 4090, RTX 5090,
+    Seven of the twelve NVIDIA cards do not, nor does any AMD card — T4, L4, RTX 4090, RTX 5090,
     RTX 6000 Ada, L40S, RTX PRO 6000 — yet nvlink defaulted to True at every
     construction site below, so a multi-GPU report on any of them claimed an
     interconnect the machine does not have and scaled throughput by 0.85 for
@@ -121,6 +126,23 @@ def supports_nvlink(gpu):
     return gpu.get("form") == "sxm"
 
 
+def interconnect_name(cfg):
+    """The link a multi-device configuration's devices actually talk over, named
+    as the vendor names it: NVLink where the board has it and it is selected,
+    Infinity Fabric on an OAM board — AMD's link is part of that platform rather
+    than an option on it — and PCIe otherwise. Every surface that names the
+    interconnect reads this; branching on cfg["nvlink"] alone printed "PCIe" for
+    OAM boards whose devices never talk over PCIe. compute() still reads
+    cfg["nvlink"], so Infinity Fabric is priced like any other non-NVLink link:
+    no measurement gives it a speed of its own, and no OAM row carries
+    throughput constants for one to apply to. Mirrored by interconnectName() in
+    index.html; the parity suite compares the two form by form.
+    """
+    if cfg.get("nvlink"):
+        return "NVLink"
+    return "Infinity Fabric" if cfg["gpu"].get("form") == "oam" else "PCIe"
+
+
 # Display names for the providers tools/price_check.py's SOURCE_MAP fetches
 # from. The catalog stores the lowercase source id ('azure', 'aws', ...);
 # this is only for the label a reader sees. Mirrored by PROVIDER_NAMES in
@@ -128,6 +150,12 @@ def supports_nvlink(gpu):
 # short, hand-written, and unlikely to move, the same as the tier names.
 PROVIDER_NAMES = {"azure": "Azure", "aws": "AWS", "lambda": "Lambda",
                    "coreweave": "CoreWeave", "vast": "Vast.ai"}
+
+# What a price tier the catalog records as null says, on every surface: no
+# provider's own page confirmed an hourly price for this card in this tier. One
+# string so every view says the same thing, and never a dollar figure in its
+# place. Mirrored by NO_PRICE in index.html.
+NO_PRICE = "no confirmed hourly price"
 
 
 def price_source_label(gpu, tier):
@@ -140,7 +168,18 @@ def price_source_label(gpu, tier):
     by priceSourceLabel() in index.html; each engine's own tests check its
     own surfaces independently, since there is no shared render path between
     an HTML page and a PDF to diff against."""
+    # No price, so no source either way: "not recorded" would imply a figure
+    # that exists without provenance.
+    if tier in gpu and gpu[tier] is None:
+        return NO_PRICE
     src = (gpu.get("priceSource") or {}).get(tier)
+    # Read by a person rather than by tools/price_check.py: named and dated the
+    # same way, and saying so, because nothing re-reads it on a schedule. Only
+    # where no automated reading exists. Mirrors priceSourceLabel().
+    rec = None if src else (gpu.get("priceRecord") or {}).get(tier)
+    if rec:
+        return (f"{rec['provider']} · {rec['sku']} · {rec['region']} · recorded by hand "
+                f"{rec['date']}, not re-checked weekly")
     if not src:
         return "not recorded"
     provider = PROVIDER_NAMES.get(src["provider"], src["provider"])
@@ -155,7 +194,8 @@ def nvlink_for(gpu, requested):
     finished report.
     """
     if requested and not supports_nvlink(gpu):
-        print(f"Note: {gpu['name']} has no NVLink — using PCIe interconnect instead.")
+        fallback = "Infinity Fabric" if gpu.get("form") == "oam" else "PCIe interconnect"
+        print(f"Note: {gpu['name']} has no NVLink — using {fallback} instead.")
         return False
     return bool(requested)
 
@@ -511,9 +551,11 @@ def compute(cfg):
         ttft_warm_ms = ttft_for(ctx - eff_prefix) if prefix_caching else ttft_cold_ms
         ttft_ms = ttft_warm_ms
     # Boards, not devices: a dual-GCD module is one line item on the invoice.
-    hourly_hyper = gpu["hyper"] * n_gpu
-    hourly_spec = gpu["spec"] * n_gpu
-    hourly_spot = gpu["spot"] * n_gpu
+    # A tier with no confirmed hourly price is None in the catalog and stays
+    # None here. Mirrors index.html, where null * gpuCount would be 0.
+    hourly_hyper = None if gpu["hyper"] is None else gpu["hyper"] * n_gpu
+    hourly_spec = None if gpu["spec"] is None else gpu["spec"] * n_gpu
+    hourly_spot = None if gpu["spot"] is None else gpu["spot"] * n_gpu
 
     fits = per_total <= device_gb
     comfortable = per_total <= device_gb * 0.9
@@ -896,8 +938,7 @@ class ReportCard:
         story.append(Paragraph(
             f"Generated {datetime.now().strftime('%B %d, %Y at %H:%M')} — "
             f"{cfg['n_gpu']}x {gpu['name']}"
-            f"{' (NVLink)' if cfg.get('nvlink') and device_count_for(cfg) > 1 else ''}"
-            f"{' (PCIe)' if not cfg.get('nvlink') and device_count_for(cfg) > 1 else ''}",
+            f"{' (' + interconnect_name(cfg) + ')' if device_count_for(cfg) > 1 else ''}",
             self.styles["ReportSub"]
         ))
 
@@ -958,7 +999,7 @@ class ReportCard:
              + (f" ({device_count_for(cfg)} devices)"
                 if device_count_for(cfg) != cfg["n_gpu"] else "")],
             ["Total VRAM", f"{c['total_vram']} GB"],
-            ["Interconnect", "NVLink" if cfg.get("nvlink") else "PCIe"],
+            ["Interconnect", interconnect_name(cfg)],
             ["Memory bandwidth", f"{c['device_bw']:g} GB/s per device"],
             ["Parallelism", parallelism_label],
         ]
@@ -1048,20 +1089,29 @@ class ReportCard:
         # same defect the composite sub-labels on the web tool had. Which
         # provider actually did is now price_source_label(), printed below
         # the table rather than crammed into a column this table already has.
+        def usd(v, digits=2):
+            """A dollar figure, or the dash that holds a null tier's place."""
+            if v is None:
+                return "—"
+            return f"${round(v):,}" if digits == 0 else f"${v:.{digits}f}"
+
+        def monthly(hourly):
+            return None if hourly is None else hourly * 730
+
         cost_data = [
             ["Provider tier", "Per board/hr", f"Total/hr ({cfg['n_gpu']}×)", "Monthly (730h)"],
             ["Hyperscaler",
-             f"${gpu['hyper']:.2f}",
-             f"${c['hourly_hyper']:.2f}",
-             f"${round(c['hourly_hyper']*730):,}"],
+             usd(gpu['hyper']),
+             usd(c['hourly_hyper']),
+             usd(monthly(c['hourly_hyper']), 0)],
             ["Specialized",
-             f"${gpu['spec']:.2f}",
-             f"${c['hourly_spec']:.2f}",
-             f"${round(c['hourly_spec']*730):,}"],
+             usd(gpu['spec']),
+             usd(c['hourly_spec']),
+             usd(monthly(c['hourly_spec']), 0)],
             ["Spot / marketplace",
-             f"${gpu['spot']:.2f}",
-             f"${c['hourly_spot']:.2f}",
-             f"${round(c['hourly_spot']*730):,}"],
+             usd(gpu['spot']),
+             usd(c['hourly_spot']),
+             usd(monthly(c['hourly_spot']), 0)],
         ]
         cost_table = Table(cost_data, colWidths=[55*mm, 30*mm, 30*mm, 35*mm])
         cost_table.setStyle(TableStyle([
@@ -1077,7 +1127,9 @@ class ReportCard:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("LINEBELOW", (0, 0), (-1, -2), 0.3, C_BD),
-            ("BACKGROUND", (3, 3), (3, 3), C_OK_BG),
+            # The spot row's monthly figure is the one highlighted — but only
+            # a figure: a null spot tier's dash is not the cheapest anything.
+            *([("BACKGROUND", (3, 3), (3, 3), C_OK_BG)] if c["hourly_spot"] is not None else []),
         ]))
         story.append(cost_table)
         story.append(Paragraph(
@@ -1120,10 +1172,16 @@ class ReportCard:
                       f"{'— enabled via --kv-cache-dtype fp8' if cfg.get('kv_bpp', 2) < 2 else '— default vLLM behavior'}.")
         notes.append("VRAM estimates include ~1.5 GB CUDA context overhead per device.")
         if device_count_for(cfg) > 1:
-            notes.append(f"{'NVLink' if cfg.get('nvlink') else 'PCIe'} interconnect assumed. "
-                         # The PCIe loss is the interconnect curve's, withheld with
-                         # the throughput figures it prices.
-                         f"{'NVLink provides 600-900 GB/s bidirectional.' if cfg.get('nvlink') else 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.' if c['throughput_modelled'] else 'PCIe provides 64-128 GB/s.'}")
+            link = interconnect_name(cfg)
+            # No bandwidth figure for Infinity Fabric: nothing here measures it,
+            # and the NVLink and PCIe figures are the published link rates the
+            # interconnect curve was tuned against.
+            speed = {"NVLink": 'NVLink provides 600-900 GB/s bidirectional.',
+                     "Infinity Fabric": "",
+                     # The PCIe loss is the interconnect curve's, withheld with
+                     # the throughput figures it prices.
+                     "PCIe": 'PCIe (64-128 GB/s) loses 30-50% decode throughput vs NVLink.' if c['throughput_modelled'] else 'PCIe provides 64-128 GB/s.'}[link]
+            notes.append(f"{link} interconnect assumed." + (f" {speed}" if speed else ""))
             notes.append(f"NCCL buffers add ~0.3 GB per device peer connection.")
         if cfg.get("shared_exp", 0):
             notes.append(f"{cfg['shared_exp']} shared expert(s) are always active and included in activation memory.")
@@ -1160,7 +1218,8 @@ class ReportCard:
                              f"command performs, with a full copy of the model in each of the {dp} data-parallel "
                              f"groups. KV cache is divided by all {device_count_for(cfg)} devices, because data "
                              f"parallelism partitions the request stream rather than replicating the cache.")
-            notes.append(f"TP={tp} x DP={dp} is a starting point, not an answer. Above one NVLink domain both the "
+            domain = "Infinity Fabric" if interconnect_name(cfg) == "Infinity Fabric" else "NVLink"
+            notes.append(f"TP={tp} x DP={dp} is a starting point, not an answer. Above one {domain} domain both the "
                          f"split and the interconnect factor priced against it are heuristics; nothing here is "
                          f"measured above 2 devices"
                          + (", so the throughput and TTFT figures inherit that uncertainty."
@@ -1172,6 +1231,11 @@ class ReportCard:
         # each tier's own source or says "not recorded"; this note points
         # there instead of re-describing it with language a sourced,
         # dated, attributed figure does not deserve.
+        # The table's wording for a tier with no price, explained beside the
+        # rest of the price notes, and only on a card that has one.
+        if any(gpu.get(t) is None for t in ("hyper", "spec", "spot")):
+            notes.append("\"No confirmed hourly price\" marks a tier for which no provider's own page "
+                         "prices this card by the hour.")
         notes.append("GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
                      "specialized, spot/marketplace — see each tier's own source above, or "
                      "\"not recorded\" where it has no confirmed source. Reserved instances "
@@ -1258,11 +1322,19 @@ def interactive_mode():
     # the cost table printed after selection carries every tier's full source.
     print("\nAvailable GPUs (* marks a price with a recorded source; see the cost table after selecting):")
     for i, (k, v) in enumerate(GPUS.items()):
-        ps = v.get("priceSource") or {}
-        spot_mark = "*" if "spot" in ps else ""
-        hyper_mark = "*" if "hyper" in ps else ""
-        print(f"  {i+1:2d}. {k:14s} — {v['name']} ({v['bw']} GB/s, "
-             f"${v['spot']}{spot_mark}-${v['hyper']}{hyper_mark}/hr)")
+        # Either kind of named, dated source earns the mark: read by the tool,
+        # or recorded by hand — the cost table says which.
+        ps = {**(v.get("priceRecord") or {}), **(v.get("priceSource") or {})}
+        if v["spot"] is not None and v["hyper"] is not None:
+            span = (f"${v['spot']}{'*' if 'spot' in ps else ''}"
+                    f"-${v['hyper']}{'*' if 'hyper' in ps else ''}/hr")
+        else:
+            # A card with a null tier: the tiers that do have a price, cheapest
+            # tier first, or the null wording when none do. Never "$None".
+            priced = [(t, v[t]) for t in ("spot", "spec", "hyper") if v[t] is not None]
+            span = ("-".join(f"${p}{'*' if t in ps else ''}" for t, p in priced) + "/hr"
+                    if priced else NO_PRICE)
+        print(f"  {i+1:2d}. {k:14s} — {v['name']} ({v['bw']} GB/s, {span})")
     gpu_choice = int(input("\nSelect GPU number: ").strip()) - 1
     gpu_key = list(GPUS.keys())[gpu_choice]
     gpu = GPUS[gpu_key]
@@ -1273,7 +1345,8 @@ def interactive_mode():
     else:
         nvlink = False
         if n_gpu * (gpu.get("devices", 1) or 1) > 1:
-            print(f"{gpu['name']} has no NVLink — assuming PCIe.")
+            print(f"{gpu['name']} has no NVLink — "
+                  + ("its devices use Infinity Fabric." if gpu.get("form") == "oam" else "assuming PCIe."))
 
     print("\nPrecision options:")
     prec_opts = [(2.0, "BF16"), (1.0, "FP8"), (0.5, "INT4/AWQ"), (0.63, "Q4_K_M"), (0.82, "Q6_K")]

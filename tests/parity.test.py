@@ -40,7 +40,7 @@ wanted = {"GIB", "GPUS", "PERF"}
 # compute() now calls split_parallelism(device_count_for(cfg)) for the TP/DP
 # split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
-              "device_count_for"}
+              "device_count_for", "interconnect_name"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -55,6 +55,7 @@ for name in sorted(wanted):
     assert name in ns, f"{name} not extracted from generate_report.py — is it still a top-level assignment?"
 compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
 supports_nvlink = ns["supports_nvlink"]
+interconnect_name = ns["interconnect_name"]
 build_vllm_cmd = ns["build_vllm_cmd"]
 # build_vllm_cmd() reads the split off comp rather than deriving it, so the
 # command matrix at the bottom has to derive one to hand it — with this engine's
@@ -217,6 +218,23 @@ CASES = [
      "card": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
               "tflops": 990, "name": "Keyless 80 GB", "vendor": "nvidia", "devices": 1,
               "caps": {"fp8": True}}},
+    # Price tiers the catalog records as null — no confirmed hourly price. Each
+    # engine must keep the tier's cost absent (None, null) rather than turning
+    # it into a number: null * n is 0 in JavaScript and a TypeError in Python,
+    # so the two would disagree by crashing on one side and pricing a free
+    # cluster on the other. With constants, and without them.
+    {"name": "Null price tiers, constants present: hyper and spot absent in both engines",
+     "params": 70, "active": 100, "bpp": 1, "quant": "fp8", "layers": 80, "kv_heads": 8,
+     "h_dim": 128, "ctx": 8192, "conc": 16, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 80, "bw": 3352, "hyper": None, "spec": 3.99, "spot": None,
+              "tflops": 990, "name": "Null-tier 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 1, "caps": {"fp8": True}}},
+    {"name": "Null price tiers, no constants: every tier absent in both engines",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": None, "spec": None, "spot": None,
+              "tflops": 383, "name": "Unpriced 128 GB", "vendor": "amd", "perfKey": "cdna2",
+              "devices": 2, "caps": {"fp8": False}}},
 ]
 
 js_runner = r"""
@@ -533,7 +551,10 @@ for case, js in zip(CASES, js_results):
         except Missing:
             problems.append(f"js returned no {jk} at all")
             continue
-        want_none = absent and pk in PERF_BOUND
+        # A cost whose tier the card records as null is absent too, with or
+        # without constants — the only other field allowed to be None.
+        tier = {"hourly_hyper": "hyper", "hourly_spec": "spec", "hourly_spot": "spot"}.get(pk)
+        want_none = (absent and pk in PERF_BOUND) or (tier is not None and cfg["gpu"].get(tier) is None)
         for engine, v in (("python", py[pk]), ("js", jv)):
             if (v is None) != want_none:
                 problems.append(f"{engine} {pk}={v!r}, expected {'None' if want_none else 'a value'}")
@@ -735,6 +756,9 @@ else:
 
 # The GPU tables are maintained twice.# The GPU tables are maintained twice. Drift there is silent and produces
 # confidently wrong numbers, so compare them field by field.
+# Every value the catalog's `form` may take: the contract tests/model.test.js
+# checks every row against, and the same four tests/report.test.py walks.
+FORMS = ["sxm", "pcie", "consumer", "oam"]
 js_side = json.loads(subprocess.run(
     ["node", "-e", """
 const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');
@@ -746,11 +770,18 @@ if(!fn) throw new Error('supportsNVLink() not found in index.html');
 const supportsNVLink=new Function(`${fn[0]}; return supportsNVLink;`)();
 const nvlink={};
 for(const [k,g] of Object.entries(T)) nvlink[k]=supportsNVLink(g);
+const icn=h.match(/^function interconnectName\\(state\\) \\{[\\s\\S]*?\\n\\}$/m);
+if(!icn) throw new Error('interconnectName() not found in index.html');
+const interconnectName=new Function(`${icn[0]}; return interconnectName;`)();
+const links={};
+for(const form of JSON.parse(process.argv[2]))
+  for(const asked of [true,false])
+    links[form+'/'+asked]=interconnectName({hasNVLink:supportsNVLink({form})&&asked,gpuForm:form});
 const bd=h.match(/^const BENCHMARK_DATA = \\{[\\s\\S]*?\\n\\};$/m);
 if(!bd) throw new Error('BENCHMARK_DATA not found in index.html');
 const benchmarks=new Function(`${bd[0]}; return BENCHMARK_DATA;`)();
-console.log(JSON.stringify({table:T, nvlink, benchmarks}));""",
-     os.path.join(ROOT, "index.html")],
+console.log(JSON.stringify({table:T, nvlink, links, benchmarks}));""",
+     os.path.join(ROOT, "index.html"), json.dumps(FORMS)],
     capture_output=True, text=True).stdout)
 js_gpus = js_side["table"]
 
@@ -776,7 +807,8 @@ else:
         # nested-dict renderers, and nothing else here would catch the two
         # disagreeing about a provider name or a date.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
-                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource"):
+                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource",
+                  "priceRecord"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:
@@ -860,6 +892,34 @@ elif with_nv != by_form:
     failed += 1
 else:
     print(f"  ok   NVLink tracks `form`: {len(with_nv)} cards have it, {len(without_nv)} do not")
+    passed += 1
+
+# ---- the interconnect's name, form by form ----------------------------------
+# Both engines print the link a configuration's devices share, and both derive
+# it from the NVLink gate and the form. A disagreement would title the PDF
+# "(PCIe)" above a page that says Infinity Fabric. Driven over every form the
+# catalog allows rather than over its rows, because no row need exist for a
+# form to be reachable.
+link_drift = []
+for form in FORMS:
+    for asked in (True, False):
+        nv = supports_nvlink({"form": form}) and asked
+        py = interconnect_name({"nvlink": nv, "gpu": {"form": form}})
+        js = js_side["links"].get(f"{form}/{str(asked).lower()}")
+        if py != js:
+            link_drift.append(f"{form}, NVLink {'asked' if asked else 'not asked'}: py={py!r} js={js!r}")
+names = {interconnect_name({"nvlink": supports_nvlink({"form": f}) and a, "gpu": {"form": f}})
+         for f in FORMS for a in (True, False)}
+if link_drift:
+    print("  FAIL the two engines name the interconnect differently")
+    for d in link_drift:
+        print(f"       {d}")
+    failed += 1
+elif names != {"NVLink", "Infinity Fabric", "PCIe"}:
+    print(f"  FAIL the forms reach only {sorted(names)}, so the agreement check covers too little")
+    failed += 1
+else:
+    print(f"  ok   both engines name the same link for every form ({len(FORMS)} forms x NVLink asked/not)")
     passed += 1
 
 # ---- the same guard, for the benchmark table ------------------------------

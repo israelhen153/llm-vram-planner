@@ -29,7 +29,7 @@ S["S1 js: renderCost's hyper sub-label is the old three-provider composite"] = [
     (INDEX_HTML, JS_COST_HYPER_SUBLABEL,
      JS_COST_HYPER_SUBLABEL.replace("${priceSourceLabel(state, 'hyper')}", "AWS, GCP, Azure on-demand"), 1)]
 S["S2 sync: priceSource dropped from GPU_OPTIONAL, so neither generated block carries it"] = [
-    (SYNC_PY, SYNC_OPTIONAL, "GPU_OPTIONAL = (\"default\",)\n", 1)]
+    (SYNC_PY, SYNC_OPTIONAL, "GPU_OPTIONAL = (\"default\", \"priceRecord\")\n", 1)]
 S["S3 data: rtx6000ada-48/spot gets a priceSource for a tier SOURCE_MAP marks manual"] = [
     (GPUS_JSON, GPUS_ADA_ROW,
      GPUS_ADA_ROW[:-2] + (", \"priceSource\": { \"spot\": { \"provider\": \"vast\", "
@@ -69,7 +69,7 @@ S["C3 py: the general 'GPU prices are... estimates' note regains a composite and
                              .replace("hyperscaler, \"\n", "hyperscaler (AWS/GCP/Azure), \"\n"), 1)]
 S["C4 js: renderComparisons' Cost/hr falls back to spot-hyperscaler instead of true min/max"] = [
     (INDEX_HTML, JS_CMP_RANGE,
-     "<span class=\"val\">$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}</span>", 1)]
+     "`$${c.hourlySpot.toFixed(2)}–$${c.hourlyHyper.toFixed(2)}`", 1)]
 S["C5 js: renderCost's spot sub-label falls back to the old composite when spot is unsourced"] = [
     (INDEX_HTML, JS_CMP_COST_SOURCE,
      JS_CMP_COST_SOURCE.replace(

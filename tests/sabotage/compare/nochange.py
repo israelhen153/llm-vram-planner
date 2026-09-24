@@ -114,9 +114,18 @@ def pdf_bytes(m, cfg):
         os.remove(out)
 
 
+# The cards both versions have. A card only one side has cannot show "no
+# change": master's from_cli_args() falls back to its default card for a slug it
+# does not know, so comparing one would report a difference that is only the
+# fallback. It is named here instead, and the comparison below is of the cards
+# that exist on both sides.
+SHARED = [g for g in NEW.GPUS if g in OLD.GPUS]
+print(f"cards only in new: {[g for g in NEW.GPUS if g not in OLD.GPUS]}  "
+      f"only in {BASE_REF}: {[g for g in OLD.GPUS if g not in NEW.GPUS]}")
+
 n = comp_diffs = story_n = story_diffs = pdf_n = pdf_diffs = cfg_diffs = 0
 new_only, old_only, samples = set(), set(), []
-for gpu in NEW.GPUS:
+for gpu in SHARED:
     for count, model, prec, fp8kv, (ctx, conc), no_nv in itertools.product(COUNTS, MODELS, PRECS, KVS, CTX, NV):
         if no_nv and NEW.GPUS[gpu]["form"] != "sxm":
             continue  # nvlink_for() downgrades either way
@@ -177,9 +186,11 @@ for gpu in ("a100-40", "h100-80", "rtx4090-24", "t4-16", "b200-192"):
         jn += 1
         if story_strings(OLD, ca) != story_strings(NEW, cb) or OLD.compute(ca) != {k: v for k, v in NEW.compute(cb).items() if k in OLD.compute(ca)}:
             jd += 1; samples.append(f"from_json {gpu} {spec}: differs")
-    answers = [str(list(NEW.PRESETS).index("llama31-8b") + 1), str(list(NEW.GPUS).index(gpu) + 1), "2", "y" , "1", "n", "8192", "4"]
     outs = []
     for m in (OLD, NEW):
+        # Each version's own menu number: the two lists need not agree once the
+        # catalog grows, and this compares a card, not a menu position.
+        answers = [str(list(m.PRESETS).index("llama31-8b") + 1), str(list(m.GPUS).index(gpu) + 1), "2", "y", "1", "n", "8192", "4"]
         ans = list(answers) if m.supports_nvlink(m.GPUS[gpu]) else [a for i, a in enumerate(answers) if i != 3]
         with unittest.mock.patch("builtins.input", side_effect=ans), contextlib.redirect_stdout(io.StringIO()):
             outs.append(m.interactive_mode())

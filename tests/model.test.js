@@ -89,10 +89,13 @@ const stateFor = (gpu, o = {}) => ({
     gpuFp8: !!(gpu.caps && gpu.caps.fp8),
     // Cost provenance, off the row like every other GPU field above.
     priceSource: gpu.priceSource,
+    priceRecord: gpu.priceRecord,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
     perfKey: gpu.perfKey,
+    // The form names the link the devices share, off the row too.
+    gpuForm: gpu.form,
     ...o,
 });
 const state = (o = {}) => {
@@ -690,6 +693,9 @@ test('every catalog row declares the FP8 support its silicon actually has', () =
     'l4-24': true, 'l40s-48': true, 'rtx4090-24': true, 'rtx5090-32': true,
     'rtx6000ada-48': true, 'rtxpro-96': true,
     'h100-80': true, 'h200-141': true, 'b200-192': true,
+    // AMD, per ROCm's precision-support table: FP8 matrix support on CDNA3 only.
+    'rx7900xtx-24': false /* RDNA3 */, 'mi210-64': false /* CDNA2 */, 'mi250x-128': false /* CDNA2 */,
+    'mi300x-192': true /* CDNA3 */, 'mi325x-256': true /* CDNA3 */,
   };
   assert.deepStrictEqual(Object.keys(FP8_BY_ARCH).sort(), Object.keys(GPU_TABLE).sort(),
     'a catalog row was added or removed without deciding its FP8 support here');
@@ -699,19 +705,48 @@ test('every catalog row declares the FP8 support its silicon actually has', () =
       ` — this flag halves the compute ceiling and prints a user-facing warning`);
   }
 });
+test('the AMD rows carry the figures AMD publishes, and are the AMD rows', () => {
+  /* Literals, typed from AMD's own documents — docs/research/amd-gpu-specs.md
+     cites each. A card with no throughput constants shows its TFLOPS nowhere,
+     so a figure off by 2x, the MI250X's 383 read per GCD and doubled as this
+     project's own research once did, passed every other test
+     (engine_r6_amd_rows C3). The vendor is pinned for the same reason: the
+     first AMD row relabelled nvidia slid into the end of the NVIDIA section
+     with the dropdown's text unchanged (C7). A row added under vendor amd
+     without deciding its figures here fails. */
+  const AMD_SPECS = {
+    'rx7900xtx-24': { gb: 24, bw: 960, tflops: 123, devices: 1, form: 'consumer', fp8: false },
+    'mi210-64': { gb: 64, bw: 1638.4, tflops: 181, devices: 1, form: 'pcie', fp8: false },
+    'mi250x-128': { gb: 128, bw: 3276.8, tflops: 383, devices: 2, form: 'oam', fp8: false },
+    'mi300x-192': { gb: 192, bw: 5325, tflops: 1307.4, devices: 1, form: 'oam', fp8: true },
+    'mi325x-256': { gb: 256, bw: 6000, tflops: 1307.4, devices: 1, form: 'oam', fp8: true },
+  };
+  const amd = Object.keys(GPU_TABLE).filter(k => GPU_TABLE[k].vendor !== 'nvidia').sort();
+  assert.deepStrictEqual(amd, Object.keys(AMD_SPECS).sort(),
+    'the rows whose vendor is not nvidia are not exactly the pinned AMD rows');
+  for (const [slug, want] of Object.entries(AMD_SPECS)) {
+    const row = GPU_TABLE[slug];
+    assert.strictEqual(row.vendor, 'amd', `${slug}.vendor`);
+    const got = { gb: row.gb, bw: row.bw, tflops: row.tflops, devices: row.devices, form: row.form, fp8: row.caps.fp8 };
+    assert.deepStrictEqual(got, want, `${slug} no longer carries AMD's published figures`);
+  }
+});
 test('every catalog row names the constants its silicon was measured with', () => {
   /* A literal per row, for the reason the FP8 flags above are literals: which
      constants a card runs on is a statement about hardware, and a catalog
      checked against itself passes any value. Moving one row to a key PERF does
      not have — through data/gpus.json and the sync tool, so every other check
      agrees with itself — would take that card's throughput off the page, and
-     no other test reads most of these rows' throughput. All twelve are NVIDIA
-     silicon, and nvidia is the entry PERF has for them. A row added without
-     deciding its key here fails. */
+     no other test reads most of these rows' throughput. The twelve NVIDIA
+     cards run on nvidia, the entry PERF has for them; the five AMD cards name
+     their architecture, which PERF has no entry for, so their throughput is
+     absent by design. A row added without deciding its key here fails. */
   const PERF_KEY_BY_ROW = {
     't4-16': 'nvidia', 'l4-24': 'nvidia', 'rtx4090-24': 'nvidia', 'rtx5090-32': 'nvidia',
     'a100-40': 'nvidia', 'rtx6000ada-48': 'nvidia', 'l40s-48': 'nvidia', 'a100-80': 'nvidia',
     'h100-80': 'nvidia', 'rtxpro-96': 'nvidia', 'h200-141': 'nvidia', 'b200-192': 'nvidia',
+    'rx7900xtx-24': 'rdna3', 'mi210-64': 'cdna2', 'mi250x-128': 'cdna2',
+    'mi300x-192': 'cdna3', 'mi325x-256': 'cdna3',
   };
   assert.deepStrictEqual(Object.keys(PERF_KEY_BY_ROW).sort(), Object.keys(GPU_TABLE).sort(),
     'a catalog row was added or removed without deciding its perfKey here');
@@ -1184,7 +1219,14 @@ const asState = (card, count, extra = {}) => ({
   // a real row with no confirmed source, and priceSourceLabel() treats that
   // as "not recorded" rather than throwing.
   priceSource: card.priceSource,
-  gpuName: card.name, ...extra,
+  priceRecord: card.priceRecord,
+  gpuForm: card.form,
+  /* The name as the page's state carries it: getGpuSpec() drops the space
+     ("MI250X 128GB"), as stateFor() above does. card.name kept the catalog's
+     spelling, so no state built here ever carried the name the page does — a
+     leak keyed on it passed the whole suite (engine_r6_amd_rows A5), and the
+     golden recorded a spelling the page never shows. */
+  gpuName: displayName(card), ...extra,
 });
 // The same silicon described as one dual-device board, or as two single-device
 // boards. Every number except the per-board cost must agree.
@@ -2144,8 +2186,11 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
   assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
   const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
   assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const noPriceDecl = html.match(/^const NO_PRICE = .+;$/m);
+  const tierFieldDecl = html.match(/^const TIER_COST_FIELD = \{.*\};$/m);
+  assert.ok(noPriceDecl && tierFieldDecl, 'NO_PRICE / TIER_COST_FIELD not found in index.html');
   const priceSourceLabel = new Function(
-    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+    `${providerNamesDecl[0]}\n${noPriceDecl[0]}\n${tierFieldDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
 
   const state = { priceSource: { hyper: { provider: 'azure', sku: 'Standard_ND96isr_H100_v5',
                                            region: 'eastus', date: '2026-09-16' } } };
@@ -2170,6 +2215,33 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
   assert.strictEqual(priceSourceLabel({ priceSource: {} }, 'hyper'), 'not recorded');
   assert.strictEqual(priceSourceLabel({ priceSource: { spec: { provider: 'x', sku: 'y', region: 'z', date: 'd' } } }, 'hyper'),
     'not recorded', 'a sourced spec tier must not leak into a hyper lookup');
+  // A tier the catalog records as null has no price, so it has no source to
+  // name either — even with a source attached, which the catalog tests refuse.
+  assert.strictEqual(priceSourceLabel({ gpuHyperCost: null, priceSource: undefined }, 'hyper'),
+    'no confirmed hourly price');
+  assert.strictEqual(priceSourceLabel({ gpuSpotCost: null, priceSource: { spot: state.priceSource.hyper } }, 'spot'),
+    'no confirmed hourly price', 'a null tier rendered the source attached to it');
+  assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.5, priceSource: undefined }, 'spec'), 'not recorded');
+  // A price read by hand off the provider's page: named and dated, and saying so.
+  const handRec = { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' };
+  assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.39, priceRecord: { spec: handRec } }, 'spec'),
+    'RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly');
+  assert.strictEqual(priceSourceLabel({ gpuSpecCost: 2.39, priceRecord: { spot: handRec } }, 'spec'), 'not recorded',
+    'a hand record on another tier leaked into this one');
+  assert.strictEqual(priceSourceLabel({ priceSource: state.priceSource, priceRecord: { hyper: handRec } }, 'hyper'),
+    'Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16', 'a hand record displaced an automated reading');
+  assert.strictEqual(priceSourceLabel({ gpuSpotCost: null, priceRecord: { spot: handRec } }, 'spot'),
+    'no confirmed hourly price', 'a null tier rendered the hand record attached to it');
+  /* Looked up by the tier asked about. A lookup hard-wired to .spec passed
+     while every real record sat on spec (cold check, round 1): every tier the
+     record is on, asked about every tier, each of them priced and unsourced. */
+  for (const on of ['hyper', 'spec', 'spot'])
+    for (const asked of ['hyper', 'spec', 'spot'])
+      assert.strictEqual(
+        priceSourceLabel({ gpuHyperCost: 1, gpuSpecCost: 1, gpuSpotCost: 1, priceRecord: { [on]: handRec } }, asked),
+        asked === on ? 'RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly'
+                     : 'not recorded',
+        `a record on ${on}, asked about ${asked}`);
 });
 
 test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
@@ -2190,8 +2262,11 @@ test('every cost surface names a source or says "not recorded", discovered not e
   assert.ok(priceSourceLabelDecl, 'priceSourceLabel() not found in index.html');
   const providerNamesDecl = html.match(/^const PROVIDER_NAMES = \{[\s\S]*?\};$/m);
   assert.ok(providerNamesDecl, 'PROVIDER_NAMES not found in index.html');
+  const noPriceDecl = html.match(/^const NO_PRICE = .+;$/m);
+  const tierFieldDecl = html.match(/^const TIER_COST_FIELD = \{.*\};$/m);
+  assert.ok(noPriceDecl && tierFieldDecl, 'NO_PRICE / TIER_COST_FIELD not found in index.html');
   const priceSourceLabel = new Function(
-    `${providerNamesDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
+    `${providerNamesDecl[0]}\n${noPriceDecl[0]}\n${tierFieldDecl[0]}\n${priceSourceLabelDecl[0]}; return priceSourceLabel;`)();
   assert.strictEqual(priceSourceLabel({ priceSource: undefined }, 'hyper'), 'not recorded');
 
   const params = {};
@@ -2238,6 +2313,9 @@ test('every cost surface names a source or says "not recorded", discovered not e
     ['none recorded (real rtx5090-32)', GPU_TABLE['rtx5090-32'], 'none'],
     ['all sourced (synthetic)',
      { ...GPU_TABLE['h100-80'], priceSource: { hyper: sourced, spec: sourced, spot: sourced } }, 'all'],
+    // h100-80's unsourced spot tier, recorded by hand: each surface must print
+    // that label under that tier, exactly as priceSourceLabel() renders it.
+    ['hand-recorded spot (synthetic)', { ...GPU_TABLE['h100-80'], priceRecord: { spot: { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' } } }, 'mixed'],
   ];
 
   const surfacesSeen = new Set();
@@ -2419,9 +2497,28 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     const h = renderHarness();
     const st = asState(card, 1, { params: 8, layers: 32 });
     const c = h.computeInference(st);
-    const trueMin = Math.min(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
-    const trueMax = Math.max(c.hourlyHyper, c.hourlySpec, c.hourlySpot);
-    if (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot))
+    /* A row with a tier the catalog records as null prices fewer than three:
+       its range spans the priced tiers, one priced tier prints alone, and none
+       prints the null wording. The test below walks every null pattern on a
+       synthetic card; this holds each real row to the same rule. */
+    const priced = [c.hourlyHyper, c.hourlySpec, c.hourlySpot].filter(v => v !== null);
+    if (priced.length < 2) {
+      h.pushSnapshot(st, c);
+      h.renderComparisons();
+      h.renderExecutiveSummary(st, c);
+      const want = priced.length ? [`$${priced[0].toFixed(2)}`, `$${Math.round(priced[0] * 730).toLocaleString()}/mo`]
+                                 : ['no confirmed hourly price', 'no confirmed hourly price'];
+      assert.ok((h.out['comparison-output'] || '').includes(`Cost/hr</span><span class="val">${want[0]}</span>`),
+        `${slug}: renderComparisons' Cost/hr is not ${want[0]}`);
+      assert.ok((h.out['exec-summary'] || '').includes(`Monthly cost range</span><span class="exec-value">${want[1]}</span>`),
+        `${slug}: the Monthly cost range is not ${want[1]}`);
+      checkedCmp++; checkedExec++;
+      continue;
+    }
+    const trueMin = Math.min(...priced);
+    const trueMax = Math.max(...priced);
+    if (priced.length === 3 &&
+        (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot)))
       inverted++;   // specialized is the true floor or ceiling, not just spot/hyper — the regime that broke
 
     h.pushSnapshot(st, c);
@@ -2432,12 +2529,10 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     checkedCmp++;
     assert.strictEqual(Number(cmpMatch[1]), Number(trueMin.toFixed(2)),
       `${slug}: renderComparisons' Cost/hr floor is ${cmpMatch[1]}, expected the true cheapest ` +
-      `tier ${trueMin.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
-      `spot=${c.hourlySpot.toFixed(2)})`);
+      `tier ${trueMin.toFixed(2)} (hyper=${c.hourlyHyper} spec=${c.hourlySpec} spot=${c.hourlySpot})`);
     assert.strictEqual(Number(cmpMatch[2]), Number(trueMax.toFixed(2)),
       `${slug}: renderComparisons' Cost/hr ceiling is ${cmpMatch[2]}, expected the true priciest ` +
-      `tier ${trueMax.toFixed(2)} (hyper=${c.hourlyHyper.toFixed(2)} spec=${c.hourlySpec.toFixed(2)} ` +
-      `spot=${c.hourlySpot.toFixed(2)})`);
+      `tier ${trueMax.toFixed(2)} (hyper=${c.hourlyHyper} spec=${c.hourlySpec} spot=${c.hourlySpot})`);
 
     Object.keys(h.out).forEach(k => delete h.out[k]);
     h.renderExecutiveSummary(st, c);
@@ -2460,6 +2555,7 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     `only ${inverted} catalog row(s) have specialized as the true floor/ceiling instead of spot/hyper — ` +
     'expected at least l40s-48 and rtx4090-24, so this sweep is not actually exercising the broken regime');
 });
+
 
 
 console.log('\nHardware with no measured constants');
@@ -2494,17 +2590,21 @@ const PROBE_CARDS = [
   ['T4 16GB (PCIe, no FP8 cores)', GPU_TABLE['t4-16'], 't4-16'],
   ['B200 192GB (sxm)', GPU_TABLE['b200-192'], 'b200-192'],
   ['dual-GCD board (2 devices)', dualGCD, undefined],
-  /* Two cards whose vendor is not nvidia, under names no current row has.
-     data/gpus.json documents `vendor` as the hook for vendor-specific guidance
-     and the rows that come next are vendor "amd", so a renderer branching on the
-     vendor — or on the card's name, which is the other thing that will look
-     unfamiliar — is the designed extension rather than a hypothetical. Their
-     perfKey is one PERF has, because a probe is a pair and the constants are
-     what the pair varies: fixing the key here is what isolates the vendor. */
-  ['MI300X 192GB (amd, oam)',
-   { ...GPU_TABLE['b200-192'], name: 'MI300X 192 GB', vendor: 'amd', form: 'oam' }, undefined],
+  /* Two cards whose vendor is not nvidia, under names no catalog row has, so a
+     renderer branching on the vendor — or on a name it has never seen — is
+     probed apart from the real rows below. Their perfKey is one PERF has,
+     because a probe is a pair and the constants are what the pair varies:
+     fixing the key here is what isolates the vendor. */
+  ['MI355X 288GB (amd, oam, not in the catalog)',
+   { ...GPU_TABLE['b200-192'], name: 'MI355X 288 GB', vendor: 'amd', form: 'oam' }, undefined],
   ['Radeon PRO W7900 (amd, workstation)',
    { ...GPU_TABLE['rtx6000ada-48'], name: 'Radeon PRO W7900 48 GB', vendor: 'amd' }, undefined],
+  /* And every real row whose vendor is not nvidia, derived from the catalog so
+     a row added later joins the grid without editing this list: their real
+     names, forms, device counts and unpriced tiers, given a key PERF has for the
+     side of the pair with constants. */
+  ...Object.entries(GPU_TABLE).filter(([, g]) => g.vendor !== 'nvidia')
+    .map(([key, g]) => [`${g.name} (catalog, ${g.vendor}, ${g.form})`, { ...g, perfKey: 'nvidia' }, key]),
 ];
 const PROBE_MODELS = [
   ['8B dense', { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 }],
@@ -2534,10 +2634,17 @@ const PROBE_LOADS = [
    { contextLength: 32768, concurrency: 4, sharedPrefix: 8192, prefixCaching: false }],
 ];
 /* More than one key with no PERF entry, because a leak can be gated on the key
-   itself rather than on its absence — and the keys that arrive next are named:
-   cdna2, cdna3, rdna3. One key would have made "the key is unknown" and "the key
-   is this string" the same probe. */
-const PROBE_UNKNOWN_KEYS = ['no-such-key', 'cdna3'];
+   itself rather than on its absence. Every key a catalog row names that PERF has
+   no entry for — the AMD architectures — derived rather than typed, so a leak
+   gated on any real one is probed, plus a placeholder no row will ever name.
+   One key would have made "the key is unknown" and "the key is this string"
+   the same probe. */
+const PROBE_UNKNOWN_KEYS = ['no-such-key',
+  ...new Set(Object.values(GPU_TABLE).map(g => g.perfKey).filter(k => !Object.hasOwn(PERF, k)))];
+assert.ok(PROBE_UNKNOWN_KEYS.length >= 2, 'no catalog row names a key PERF lacks, so only the placeholder is probed');
+/* Every catalog row's name as the page's state spells it, for the probe axis
+   below that needs a name no row carries. */
+const CATALOG_NAMES = new Set(Object.values(GPU_TABLE).map(displayName));
 const absentProbes = () => {
   const probes = [];
   let i = 0;
@@ -2583,7 +2690,7 @@ test('the probe grid renders the shapes the tool ships', () => {
     'a full NVLink domain': p => p.known.gpuCount * (p.known.gpuDevices || 1) === 8,
     'past an NVLink domain': p => p.known.gpuCount * (p.known.gpuDevices || 1) > 8,
     'a vendor that is not nvidia': p => p.known.vendor !== 'nvidia',
-    'a card name unlike the catalog\'s': p => /MI300|Radeon/.test(p.known.gpuName),
+    'a card name unlike the catalog\'s': p => !CATALOG_NAMES.has(p.known.gpuName),
     'an unknown key that is not the placeholder': p => p.unknown.perfKey !== 'no-such-key',
     'the placeholder unknown key': p => p.unknown.perfKey === 'no-such-key',
     'FP8 KV cache': p => p.known.kvBytesPerValue < 2,
@@ -2944,11 +3051,16 @@ test('no view prints null, undefined, NaN or a throughput figure when there are 
   /* Every element, not only the discovered surfaces, and everything each one
      renders, writes or sets: a leaked figure is as wrong in a title as in the
      throughput panel. */
-  const BAD = new RegExp(String.raw`\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b|N\/A|` + FIGURE.source, 'i');
+  /* Infinity as a value, not as the first word of AMD's interconnect: an OAM
+     board's page names "Infinity Fabric" on purpose, and a numeric Infinity is
+     never followed by it. */
+  const BAD = new RegExp(String.raw`\bnull\b|\bundefined\b|\bNaN\b|\bInfinity\b(?! Fabric)|N\/A|` + FIGURE.source, 'i');
   for (const sample of ['~null ms', '~N/A ms', 'is undefined', 'NaN%', '~0 tok/s', '0 tokens/sec', 'Infinity',
+                        '-Infinity GiB', 'Infinity GiB free',
                         '~0 ms', '~0 tokens per second', 'first token in ~0 milliseconds', '0 tok per sec',
                         '~147 t/s per user', '40 tokens each second'.replace('each second', 'per second')])
     assert.match(sample, BAD, `the pattern cannot see "${sample}"`);
+  assert.doesNotMatch('Infinity Fabric — sharded 2-way', BAD, 'the pattern bans the name of an interconnect');
   let chars = 0, knownHits = 0;
   for (const { label, ks, us, known, unknown } of absentViews()) {
     for (const id of viewIds(unknown)) {
@@ -3335,6 +3447,25 @@ test('an SXM card still honours the control in both positions', () => {
     assert.strictEqual(readInputStateFor(key, '0').hasNVLink, false, `${key} ignored PCIe`);
   }
 });
+test('the page hands the engine each tier\'s price exactly as the catalog records it, null included', () => {
+  /* The null-tier tests build their states by hand, so nothing read what
+     getGpuSpec() and readInputState() pass on. A `spot: g.spot ?? g.spec`
+     there printed the specialized price under Spot on the live page with every
+     test green, and `hyper: g.hyper ?? 0` printed $0.00 (cold check, round 1).
+     Driven through the real state builder, for every row and every tier —
+     priced or null — and the provenance each tier carries. */
+  let nulls = 0, priced = 0;
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const st = readInputStateFor(key, '1');
+    for (const [tier, field] of [['hyper', 'gpuHyperCost'], ['spec', 'gpuSpecCost'], ['spot', 'gpuSpotCost']]) {
+      assert.strictEqual(st[field], gpu[tier], `${key}: the state's ${field} is ${st[field]}, the catalog's ${tier} is ${gpu[tier]}`);
+      if (gpu[tier] === null) nulls++; else priced++;
+    }
+    assert.deepStrictEqual(st.priceSource, gpu.priceSource, `${key}: the state's priceSource`);
+    assert.deepStrictEqual(st.priceRecord, gpu.priceRecord, `${key}: the state's priceRecord`);
+  }
+  assert.ok(nulls > 0 && priced > 0, `the catalog gave ${nulls} null and ${priced} priced tiers — this needs both`);
+});
 test('the state carries the perfKey its constants are chosen by, for every row', () => {
   /* Deleting perfKey from readInputState() — or from getGpuSpec(), which it reads
      — leaves the page with no constants for any card. Driven through the real
@@ -3346,6 +3477,8 @@ test('the state carries the perfKey its constants are chosen by, for every row',
       `${key}: state carries perfKey=${state.perfKey}, the catalog says ${gpu.perfKey}`);
     // vendor still rides along — it selects nothing now, but it is the card's.
     assert.strictEqual(state.vendor, gpu.vendor, `${key}: state.vendor`);
+    // form too: it names the link every interconnect surface prints.
+    assert.strictEqual(state.gpuForm, gpu.form, `${key}: state.gpuForm`);
   }
   /* And a row whose two fields differ. On every real row both are 'nvidia', so
      a state builder that filled perfKey from vendor passed the loop above — a
@@ -3356,9 +3489,91 @@ test('the state carries the perfKey its constants are chosen by, for every row',
   assert.strictEqual(probe.perfKey, 'acme-arch1',
     `a row with perfKey acme-arch1 reached the state as ${probe.perfKey}`);
   assert.strictEqual(probe.vendor, 'acme', `a row with vendor acme reached the state as ${probe.vendor}`);
+  // No catalog row is an OAM board yet, so the form's other value comes in on a probe.
+  const oam = readInputStateFor('probe-oam', '1', { ...GPU_TABLE, 'probe-oam': { ...GPU_TABLE['b200-192'], form: 'oam' } });
+  assert.strictEqual(oam.gpuForm, 'oam', `a row with form oam reached the state as ${oam.gpuForm}`);
+  assert.strictEqual(oam.hasNVLink, false, 'an OAM board was granted NVLink');
+});
+
+console.log('\nA price tier with no confirmed price');
+test('a price tier with no confirmed price stays null, and every cost surface says so', () => {
+  /* A tier the catalog records as null: no provider's own page confirmed an
+     hourly price for this card in this tier. null * gpuCount is 0 in
+     JavaScript, so the failure this guards is a free cluster, printed as
+     $0.00 — or a neighbouring tier's price standing in the empty one's row.
+     Every non-empty set of null tiers, one board and three, read off what the
+     page prints rather than off computeInference() alone. The card carries
+     h100-80's provenance, so a source attached to a null tier would show. */
+  const NO_PRICE = 'no confirmed hourly price';
+  const TIERS = [['hyper', 'Hyperscaler', 'hourlyHyper', 'Hyperscaler'],
+                 ['spec', 'Specialized', 'hourlySpec', 'Specialized'],
+                 ['spot', 'Spot / marketplace', 'hourlySpot', 'Spot']];
+  const base = GPU_TABLE['h100-80'];
+  let checked = 0;
+  for (let mask = 1; mask < 8; mask++)
+    for (const count of [1, 3]) {
+      const card = { ...base };
+      const nulls = TIERS.filter((_, i) => mask & (1 << i)).map(t => t[0]);
+      for (const t of nulls) card[t] = null;
+      const label = `null ${nulls.join('+')}, ${count} board${count > 1 ? 's' : ''}`;
+      const st = asState(card, count, { params: 8, layers: 32 });
+      const c = computeInference(st);
+      const { html: out, written, props } = renderEverything(st, c);
+      const cost = out['cost-output'];
+      const rows = cost.split('</tr>');
+      const priced = [];
+      for (const [tier, rowLabel, field, lineLabel] of TIERS) {
+        const row = rows.find(r => r.includes(`<b>${rowLabel}</b>`));
+        assert.ok(row, `${label}: the cost table has no ${rowLabel} row`);
+        const line = out['(copied report)'].split('\n').find(l => l.startsWith(`- ${lineLabel}: `));
+        assert.ok(line, `${label}: the copied report has no ${lineLabel} line`);
+        if (nulls.includes(tier)) {
+          assert.strictEqual(c[field], null, `${label}: ${field} is ${c[field]}, not null`);
+          assert.ok(row.includes(NO_PRICE), `${label}: the ${rowLabel} row does not say "${NO_PRICE}"`);
+          assert.ok(!row.includes('$'), `${label}: the ${rowLabel} row prints a dollar figure: ${row.slice(-200)}`);
+          assert.strictEqual(line, `- ${lineLabel}: ${NO_PRICE}`, `${label}: the copied report's ${lineLabel} line`);
+        } else {
+          assert.strictEqual(c[field], card[tier] * count, `${label}: ${field}`);
+          assert.ok(row.includes(`$${card[tier].toFixed(2)}`) && row.includes(`$${(card[tier] * count).toFixed(2)}`),
+            `${label}: the ${rowLabel} row does not print its own price`);
+          assert.ok(line.includes(`$${(card[tier] * count).toFixed(2)}/hr`), `${label}: ${line}`);
+          priced.push(card[tier] * count);
+        }
+      }
+      const range = priced.length === 0 ? [NO_PRICE, NO_PRICE]
+        : priced.length === 1 ? [`$${priced[0].toFixed(2)}`, `$${Math.round(priced[0] * 730).toLocaleString()}/mo`]
+        : [`$${Math.min(...priced).toFixed(2)}–$${Math.max(...priced).toFixed(2)}`,
+           `$${Math.round(Math.min(...priced) * 730).toLocaleString()} – $${Math.round(Math.max(...priced) * 730).toLocaleString()}/mo`];
+      assert.ok(out['comparison-output'].includes(`Cost/hr</span><span class="val">${range[0]}</span>`),
+        `${label}: the snapshot's Cost/hr is not ${range[0]}`);
+      assert.ok(out['exec-summary'].includes(`Monthly cost range</span><span class="exec-value">${range[1]}</span>`),
+        `${label}: the Monthly cost range is not ${range[1]}`);
+      const text = [...Object.values(out), ...Object.values(written),
+                    ...Object.values(props).flatMap(p => Object.values(p))].join('\n');
+      for (const bad of ['$0.00', '$0/mo', '$NaN', 'NaN', 'undefined', '$null', 'null/hr'])
+        assert.ok(!text.includes(bad), `${label}: the page prints "${bad}"`);
+      if (nulls.includes('hyper'))
+        assert.ok(!text.includes(base.priceSource.hyper.sku), `${label}: a null hyper tier still names its source`);
+      // The notes explain the wording, and the spot figure is highlighted only when there is one.
+      assert.ok(out['notes-output'].includes('"No confirmed hourly price" marks a tier'),
+        `${label}: the notes do not explain the wording a null tier shows`);
+      const spotRow = rows.find(r => r.includes('<b>Spot / marketplace</b>'));
+      assert.strictEqual(spotRow.includes('var(--success)'), !nulls.includes('spot'),
+        `${label}: the spot monthly cell is highlighted ${nulls.includes('spot') ? 'over a dash' : 'nowhere'}`);
+      checked++;
+    }
+  assert.strictEqual(checked, 7 * 2, 'not every null pattern was rendered');
+  // And a card that prices every tier says nothing about a wording it never shows.
+  const priced = renderEverything(asState(base, 1, { params: 8, layers: 32 })).html;
+  assert.ok(!priced['notes-output'].includes('No confirmed hourly price'),
+    'a card with every tier priced explains a wording it never shows');
 });
 
 console.log('\nThe interconnect control follows the card');
+/* Every value the catalog's `form` may take — a contract, so a literal, and the
+   one list the structural-fields check and the naming checks below both walk.
+   tests/report.test.py and tests/parity.test.py carry the same four. */
+const FORMS = ['sxm', 'pcie', 'consumer', 'oam'];
 const syncFor = (gpuKey, interconnect) => {
   const dom = domStub(gpuKey, interconnect);
   dom.fields['interconnect'].options = [{ value: '1', disabled: false, textContent: 'NVLink / NVSwitch' },
@@ -3390,10 +3605,130 @@ test('switching back to an SXM card restores the NVLink it took away', () => {
     'switching to an SXM card should give back the NVLink the clamp removed');
   assert.strictEqual(dom.fields['interconnect'].options[0].disabled, false);
 });
+test('an OAM board offers its own fabric in the control, and a PCIe card gets "PCIe only" back', () => {
+  const table = { ...GPU_TABLE, 'probe-oam': { ...GPU_TABLE['b200-192'], form: 'oam' } };
+  const dom = domStub('probe-oam', '1');
+  dom.fields['interconnect'].options = [{ value: '1', disabled: false, textContent: 'NVLink / NVSwitch' },
+                                        { value: '0', disabled: false, textContent: 'PCIe only' }];
+  const src = html.slice(html.indexOf('let interconnectForcedToPCIe'), html.indexOf('function recalculate'));
+  const sync = new Function('document', 'GPU_TABLE', `${nvDecl[0]}\n${src}; return syncInterconnect;`)(dom, table);
+  sync();
+  const sel = dom.fields['interconnect'];
+  assert.strictEqual(sel.value, '0', 'an OAM board was left on the NVLink option');
+  assert.strictEqual(sel.options[0].disabled, true, 'NVLink stayed selectable on an OAM board');
+  assert.strictEqual(sel.options[1].textContent, 'Infinity Fabric',
+    `the option an OAM board falls back to reads ${JSON.stringify(sel.options[1].textContent)}`);
+  dom.fields['gpu-model'].value = 'rtx4090-24';
+  sync();
+  assert.strictEqual(sel.options[1].textContent, 'PCIe only', 'a PCIe card kept the OAM board\'s label');
+});
+test('every surface names the link the devices actually talk over, on every form', () => {
+  /* What the renderers print, not what interconnectName() returns: the NVLink
+     gate was once pinned by its predicate while both places that called it went
+     unread. Every form the catalog allows, NVLink asked for and not, one domain
+     and past it, with constants and without. */
+  const seen = new Set();
+  let checked = 0;
+  for (const form of FORMS)
+    for (const count of [2, 16])
+      for (const asked of [true, false])
+        for (const perfKey of ['nvidia', 'no-such-key']) {
+          const card = { ...GPU_TABLE['b200-192'], form, perfKey };
+          const hasNVLink = supportsNVLink(card) && asked;
+          const want = hasNVLink ? 'NVLink' : form === 'oam' ? 'Infinity Fabric' : 'PCIe';
+          const { html: out, written, props } = renderEverything(asState(card, count, { hasNVLink }));
+          const text = [...Object.values(out), ...Object.values(written),
+                        ...Object.values(props).flatMap(p => Object.values(p))].join('\n');
+          const label = `${form} x${count}, NVLink ${asked ? 'asked for' : 'not asked for'}, perfKey ${perfKey}`;
+          assert.ok(out['gpu-cards'].includes(`${want} — `), `${label}: the sharding line does not name ${want}`);
+          assert.ok(out['(copied report)'].includes(`(${want})`), `${label}: the copied report does not name ${want}`);
+          if (form === 'oam') {
+            // Neither of the other two links exists on an OAM board, under any wording.
+            for (const other of ['PCIe', 'NVLink'])
+              assert.ok(!text.includes(other), `${label}: an OAM board's page mentions ${other}: ` +
+                JSON.stringify(text.slice(Math.max(0, text.indexOf(other) - 80), text.indexOf(other) + 40)));
+          } else {
+            assert.ok(!text.includes('Infinity Fabric'), `${label}: a ${form} board's page mentions Infinity Fabric`);
+          }
+          seen.add(want);
+          checked++;
+        }
+  assert.deepStrictEqual([...seen].sort(), ['Infinity Fabric', 'NVLink', 'PCIe'],
+    'the grid never reached one of the three links, so it checks nothing about it');
+  assert.strictEqual(checked, FORMS.length * 2 * 2 * 2);
+  /* And every real row, at several boards: the probes above are one-device
+     boards, so the MI250X — two devices a board — was never named above one
+     board, and a gate keyed on devices and count at once passed (cold check,
+     round 1). Its own name, form, devices and constants, NVLink as the page
+     grants it. */
+  let rows = 0;
+  for (const [key, row] of Object.entries(GPU_TABLE))
+    for (const count of [2, 3, 16])
+      for (const asked of [true, false]) {
+        const hasNVLink = supportsNVLink(row) && asked;
+        const want = hasNVLink ? 'NVLink' : row.form === 'oam' ? 'Infinity Fabric' : 'PCIe';
+        const { html: out } = renderEverything(asState(row, count, { hasNVLink }));
+        const label = `${key} x${count}, NVLink ${asked ? 'asked for' : 'not asked for'}`;
+        assert.ok(out['gpu-cards'].includes(`${want} — `), `${label}: the sharding line does not name ${want}`);
+        assert.ok(out['(copied report)'].includes(`(${want})`), `${label}: the copied report does not name ${want}`);
+        rows++;
+      }
+  assert.ok(Object.values(GPU_TABLE).some(r => r.form === 'oam' && r.devices > 1),
+    'no real row is a multi-device OAM board, so the case that failed is not in the grid');
+  assert.strictEqual(rows, Object.keys(GPU_TABLE).length * 3 * 2);
+});
 test('a deliberate PCIe choice on an SXM card is not overridden', () => {
   const sel = syncFor('h100-80', '0');
   assert.strictEqual(sel.value, '0', 'the reader chose PCIe; leave it alone');
   assert.strictEqual(sel.options[0].disabled, false);
+});
+
+console.log('\nThe GPU dropdown groups by vendor');
+test('the GPU dropdown groups cards by vendor once the catalog has more than one', () => {
+  /* ROADMAP promises the dropdown an AMD section. One vendor keeps the flat
+     list the page always had; several get a section each. Run against a probe
+     catalog whose vendors are interleaved, so "group by vendor" cannot pass by
+     the rows happening to arrive already grouped, and with an id VENDOR_NAMES
+     does not know. */
+  const decl = (re, what) => { const m = html.match(re); assert.ok(m, `${what} not found in index.html`); return m[0]; };
+  const src = [decl(/^const VENDOR_NAMES = .+;$/m, 'VENDOR_NAMES'),
+               decl(/^const DEFAULT_GPU_KEY = .+;$/m, 'DEFAULT_GPU_KEY'),
+               decl(/^function renderGpuOptions\(\) \{[\s\S]*?\n\}$/m, 'renderGpuOptions()')].join('\n');
+  const render = (table) => {
+    const sel = { innerHTML: '' };
+    new Function('document', 'GPU_TABLE', `${src}; renderGpuOptions();`)({ getElementById: () => sel }, table);
+    return sel.innerHTML;
+  };
+  const keysIn = (h) => [...h.matchAll(/<option value="([^"]+)"/g)].map(m => m[1]);
+
+  const real = render(GPU_TABLE);
+  assert.deepStrictEqual(keysIn(real).sort(), Object.keys(GPU_TABLE).sort(), 'the real catalog lost or repeated a card');
+  if (new Set(Object.values(GPU_TABLE).map(g => g.vendor)).size === 1) {
+    assert.ok(!real.includes('<optgroup'), 'a one-vendor catalog was given section headings');
+    assert.deepStrictEqual(keysIn(real), Object.keys(GPU_TABLE), 'a one-vendor catalog was reordered');
+  }
+
+  const entries = Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'nvidia');
+  const probe = Object.fromEntries([
+    ...entries.slice(0, 3),
+    ['probe-amd-a', { ...GPU_TABLE['h100-80'], vendor: 'amd', name: 'Probe A 80 GB', default: undefined }],
+    ...entries.slice(3, 6),
+    ['probe-acme', { ...GPU_TABLE['h100-80'], vendor: 'acme', name: 'Probe C 80 GB', default: undefined }],
+    ['probe-amd-b', { ...GPU_TABLE['h100-80'], vendor: 'amd', name: 'Probe B 80 GB', default: undefined }],
+    ...entries.slice(6),
+  ]);
+  const grouped = render(probe);
+  const groups = [...grouped.matchAll(/<optgroup label="([^"]+)">([\s\S]*?)<\/optgroup>/g)]
+    .map(m => [m[1], keysIn(m[2])]);
+  assert.deepStrictEqual(groups.map(g => g[0]), ['NVIDIA', 'AMD', 'acme'],
+    'sections are not one per vendor in first-listed order, under their names');
+  for (const [label, keys] of groups) {
+    const vendor = { NVIDIA: 'nvidia', AMD: 'amd', acme: 'acme' }[label];
+    assert.deepStrictEqual(keys, Object.keys(probe).filter(k => probe[k].vendor === vendor),
+      `the ${label} section does not hold exactly its cards in catalog order`);
+  }
+  assert.deepStrictEqual(keysIn(grouped).sort(), Object.keys(probe).sort(), 'a card was lost or listed twice');
+  assert.strictEqual((grouped.match(/ selected/g) || []).length, 1, 'the default card is not selected exactly once');
 });
 
 console.log('\nThe catalog names its own default card');
@@ -3410,7 +3745,7 @@ test('every row carries the structural fields the engines read', () => {
     assert.strictEqual(typeof gpu.vendor, 'string', `${key}.vendor`);
     assert.strictEqual(typeof gpu.perfKey, 'string', `${key}.perfKey`);
     assert.strictEqual(typeof gpu.devices, 'number', `${key}.devices`);
-    assert.ok(['sxm', 'pcie', 'consumer'].includes(gpu.form), `${key}.form=${gpu.form}`);
+    assert.ok(FORMS.includes(gpu.form), `${key}.form=${gpu.form}`);
     assert.strictEqual(typeof gpu.caps?.fp8, 'boolean', `${key}.caps.fp8`);
   }
 });
@@ -3896,8 +4231,14 @@ const GOLDEN_PAGE = path.join(__dirname, 'golden', 'page.json');
    often nobody would read the diff. */
 const goldenCases = () => {
   const dense8B = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
+  /* NVLink as the page sets it: the control asks for it, and readInputState()
+     grants it only to a board that has it. asState() leaves it on for any card,
+     which no single-device row ever shows — the MI250X, two devices on one board
+     with no NVLink, was the first row where the golden recorded a page the tool
+     cannot produce. */
   const cases = Object.keys(GPU_TABLE).sort().map(slug =>
-    [`${slug} — 8B bf16, 16 at 8K`, asState(GPU_TABLE[slug], 1, dense8B)]);
+    [`${slug} — 8B bf16, 16 at 8K`,
+     asState(GPU_TABLE[slug], 1, { ...dense8B, hasNVLink: supportsNVLink(GPU_TABLE[slug]) })]);
   const h = GPU_TABLE['h100-80'], t4 = GPU_TABLE['t4-16'];
   return cases.concat([
     ['h100-80 x8 NVLink — 70B bf16', asState(h, 8, { params: 70, layers: 80 })],
@@ -3916,7 +4257,7 @@ const goldenCases = () => {
     ['h100-80 x1 — fp8 weights on silicon that has the tensor cores',
      asState(h, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
     ['t4-16 x1 — fp8 weights on silicon that does not, so the caveat',
-     asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+     asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
     ['h100-80 x1 — 256 at 1K, so the KV queue warning',
      asState(h, 1, { ...dense8B, contextLength: 1024, concurrency: 256 })],
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
@@ -3942,7 +4283,7 @@ const goldenCases = () => {
                hasNVLink: false })],
     ['(no constants) t4-16 x1 — fp8 on silicon without the tensor cores',
      asState({ ...t4, perfKey: 'no-such-key' }, 1,
-             { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8' })],
+             { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
   ]);
 };
 
@@ -3998,8 +4339,17 @@ test('the golden records every catalog row, and the shapes that change what the 
   const named = cases.map(([name]) => name);
   const missing = Object.keys(GPU_TABLE).filter(slug => !named.some(n => n.startsWith(`${slug} `)));
   assert.deepStrictEqual(missing, [], `the golden stopped recording catalog rows: ${missing}`);
+  // Every case is a page the tool can produce: NVLink only on a board that has it.
+  const unreachable = cases.filter(([, st]) => st.hasNVLink && !supportsNVLink({ form: st.gpuForm }))
+    .map(([name]) => name);
+  assert.deepStrictEqual(unreachable, [], `the golden records NVLink on a board without it: ${unreachable}`);
   const modelled = st => computeInference(st).throughputModelled;
   const shapes = {
+    'an OAM board with more than one device': sts =>
+      sts.some(st => st.gpuForm === 'oam' && st.gpuCount * (st.gpuDevices || 1) > 1),
+    'a price tier with no confirmed price': sts =>
+      sts.some(st => [st.gpuHyperCost, st.gpuSpecCost, st.gpuSpotCost].includes(null)),
+    'a price recorded by hand': sts => sts.some(st => st.priceRecord && Object.keys(st.priceRecord).length),
     'a card with constants': sts => sts.some(modelled),
     'a card with none': sts => sts.some(st => !modelled(st)),
     'one board': sts => sts.some(st => st.gpuCount === 1),
