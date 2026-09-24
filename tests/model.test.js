@@ -4308,20 +4308,6 @@ const ROCM_FLAGS = ['--group-add=video', '--cap-add=SYS_PTRACE', '--security-opt
 const ROCM_ARCH = { gfx90a: { fp8Weights: false, aiter: false, fp8KvUnverified: false },
                     gfx942: { fp8Weights: true, aiter: true, fp8KvUnverified: false },
                     gfx1100: { fp8Weights: false, aiter: false, fp8KvUnverified: true } };
-/* Every weight option the page offers, read from its own <select>: each option's
-   attributes in any order, and all of them, or the read fails. */
-const PAGE_WEIGHT_OPTIONS = (() => {
-  const at = html.indexOf('<select id="weight-precision"');
-  const sel = html.slice(at, html.indexOf('</select>', at));
-  const opts = [...sel.matchAll(/<option\b([^>]*)>/g)].map(m => ({
-    bytesPerParam: Number((m[1].match(/\bvalue="([\d.]+)"/) || [])[1]),
-    quantMethod: (m[1].match(/\bdata-q="(\w*)"/) || [])[1] }));
-  assert.ok(opts.length >= 10 && opts.length === (sel.match(/<option\b/g) || []).length
-            && opts.every(o => Number.isFinite(o.bytesPerParam) && typeof o.quantMethod === 'string'),
-    'the weight options could not all be read');
-  return opts;
-})();
-const DENSE_8B = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
 
 test('the ROCm table says what vLLM v0.30.0 and AMD say, each line with a source of the kind it claims', () => {
   assert.strictEqual(ROCM_TABLE.image, ROCM_IMAGE);
@@ -4353,9 +4339,9 @@ test("an AMD card's command is vLLM's ROCm image with the same serve arguments; 
      offers, both KV types, one to three boards, a local path and a hub id. */
   let amd = 0, nvidia = 0;
   for (const [key, card] of Object.entries(GPU_TABLE)) {
-    for (const opt of PAGE_WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2, 3]) {
+    for (const opt of WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2, 3]) {
       const h = renderHarness();
-      const st = asState(card, boards, { ...DENSE_8B, ...opt, kvBytesPerValue: kv });
+      const st = asState(card, boards, { ...dense8BPlan, ...opt, kvBytesPerValue: kv });
       const c = h.computeInference(st);
       for (const model of ['/opt/models/YourModel', 'meta-llama/Llama-3.1-8B-Instruct']) {
         const cmd = h.buildVllmCommand(st, c, model);
@@ -4400,8 +4386,8 @@ test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, f
   const src = [decl(/^const ROCM = \{[\s\S]*?\n\};$/m), decl(/^function fp8WeightsBlocked\(gpu\) \{[\s\S]*?\n\}$/m),
                decl(/^let precisionForcedFromFp8 = false;$/m), decl(/^function syncPrecision\(\) \{[\s\S]*?\n\}$/m)].join('\n');
   const page = () => {
-    const options = PAGE_WEIGHT_OPTIONS.map(o => ({ value: String(o.bytesPerParam), dataset: { q: o.quantMethod },
-                                                     disabled: false, textContent: '' }));
+    const options = WEIGHT_OPTIONS.map(o => ({ value: String(o.bytesPerParam), dataset: { q: o.quantMethod },
+                                                disabled: false, textContent: '' }));
     /* A single-select, as a browser runs one: selecting an option deselects the rest.
        A plain property would let two options be selected at once, which no page can. */
     const chosen = new Set();
@@ -4482,9 +4468,9 @@ test('the ROCm lines under the command are the ones that apply, each with its so
   const pageLine = ([text, source]) => `<div>${text.replace(/`([^`]+)`/g, '<code>$1</code>')} (<a href="${source}" target="_blank" style="color:var(--accent-text)">source</a>)</div>`;
   let shown = 0;
   for (const [key, card] of Object.entries(GPU_TABLE)) {
-    for (const opt of PAGE_WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2]) {
+    for (const opt of WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2]) {
       const h = renderHarness();
-      const st = asState(card, boards, { ...DENSE_8B, ...opt, kvBytesPerValue: kv });
+      const st = asState(card, boards, { ...dense8BPlan, ...opt, kvBytesPerValue: kv });
       const c = h.computeInference(st);
       h.renderCommand(st, c);
       const panel = h.out['command-output'] || '';

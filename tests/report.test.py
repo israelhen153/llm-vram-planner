@@ -1898,19 +1898,19 @@ GGUF_LINES = [
 ]
 
 
-def prec_tokens():
+def prec_quant_pairs():
     """Every --prec value from_cli_args() knows, with the quantization it maps to,
-    read from its own table so a GGUF level added there is covered here too."""
+    read from its own table so a precision added there is covered here too."""
     src = open(gr.__file__).read()
     table = re.search(r'"quant": \{([^}]*)\}', src)
     assert table, "from_cli_args() no longer has the --prec -> quant table this reads"
     pairs = re.findall(r'"(\w+)":"(\w*)"', table.group(1))
-    assert any(q == "gguf" for _, q in pairs) and any(q != "gguf" for _, q in pairs), pairs
+    assert {q for _, q in pairs} >= {"", "fp8", "awq", "gptq", "gguf"}, pairs
     return pairs
 
 
 def check_gguf_guidance_rides_the_pdf():
-    for token, quant in prec_tokens():
+    for token, quant in prec_quant_pairs():
         args = cli_args_for("llama31-8b")
         args.prec = token
         cfg = gr.from_cli_args(args)
@@ -2324,17 +2324,6 @@ def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
 
 test("the PDF prints the overhead compute() charges, in the words of the card's own runtime",
      check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words)
-
-
-def prec_quant_pairs():
-    """Every --prec value from_cli_args() knows, with the quantization it maps to,
-    read from its own table so a precision added there is covered here too."""
-    src = open(gr.__file__).read()
-    table = re.search(r'"quant": \{([^}]*)\}', src)
-    assert table, "from_cli_args() no longer has the --prec -> quant table this reads"
-    pairs = re.findall(r'"(\w+)":"(\w*)"', table.group(1))
-    assert {q for _, q in pairs} >= {"", "fp8", "awq", "gptq", "gguf"}, pairs
-    return pairs
 
 
 def check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need():
