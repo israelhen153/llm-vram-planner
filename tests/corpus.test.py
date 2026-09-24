@@ -14,6 +14,12 @@ priceSource broke JS_GETSPEC, and four sabotages with it, and nothing said so.
 This runs in under a second, and it fails in the pull request that moved the
 text — which is when whoever moved it still knows what it became.
 
+The excerpts are not the only way a driver reaches the engine: a driver can
+quote it inline, and three did (E20, Q5 and Q6), so a note rewritten on
+feat/rocm-guidance took them out while every excerpt here still matched. The
+last checks therefore apply every sabotage itself, in memory, as the harness
+would.
+
 Deliberately NOT one of the suites that judge a sabotage (harness.JUDGING_SUITES):
 every sabotage edits the engine, so this would go red under all of them and
 report each one as caught whatever the real suites said — the same reason
@@ -21,7 +27,9 @@ tests/assets.test.py is excluded.
 
 Run:  python3 tests/corpus.test.py
 """
+import importlib.util
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -122,6 +130,95 @@ def check_no_payload_part_is_already_in_the_engine():
         f"as payload parts to get past the check above")
 
 test("no payload part is already present in the engine", check_no_payload_part_is_already_in_the_engine)
+
+
+print("\nEvery sabotage still applies, wherever its excerpt is written")
+
+# The drivers, found the way chain.sh finds them.
+SABOTAGE_DIR = os.path.join(ROOT, "tests", "sabotage")
+DRIVERS = sorted(f for f in os.listdir(SABOTAGE_DIR) if re.fullmatch(r"(engine|workflow)_\w+\.(py|sh)", f))
+# A shell driver can't be read as data. The one there is gets a check of its own
+# below, and a second one fails that check until it has one too.
+SHELL_DRIVERS = ["engine_r1_perfkey_typo.sh"]
+
+
+def sabotages_of(driver):
+    """A driver's sabotages, read as data. Every driver builds S at import and ends
+    by handing it to run_driver(), which does nothing while this runs: nothing is
+    applied and no suite runs, for a driver another driver imports as well."""
+    import harness
+    real, harness.run_driver = harness.run_driver, lambda sabotages: None
+    try:
+        spec = importlib.util.spec_from_file_location(driver[:-3], os.path.join(SABOTAGE_DIR, driver))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        harness.run_driver = real
+    return module.S
+
+
+def why_it_would_not_apply(spec):
+    """What harness.apply_edits() would refuse this sabotage for on the tree as it
+    is, or None. The same count check, edit by edit and in order, on copies."""
+    import harness
+    files = {}
+    for f, old, new, count in harness.edits_of(spec):
+        if f not in files:
+            try:
+                files[f] = open(os.path.join(ROOT, f), encoding="utf-8").read()
+            except OSError as e:
+                return f"{f}: {e.strerror}"
+        n = files[f].count(old)
+        if n != count:
+            return f"{f}: expected {count} occurrence(s) of {old[:70]!r}, found {n}"
+        files[f] = files[f].replace(old, new)
+    return None
+
+
+PY_DRIVERS = {d: sabotages_of(d) for d in DRIVERS if d.endswith(".py")}
+
+
+def check_every_sabotage_still_applies():
+    """The check the excerpts can't give. Only a sabotage's edits are checked: the
+    catalog re-sync some of them run afterwards is not."""
+    empty = [d for d, sabotages in PY_DRIVERS.items() if not sabotages]
+    assert not empty, f"drivers with no sabotages, so nothing here checks them: {empty}"
+    stale = []
+    for d, sabotages in PY_DRIVERS.items():
+        for name, spec in sabotages.items():
+            why = why_it_would_not_apply(spec)
+            if why:
+                stale.append(f"{d}: {name}: {why}")
+    assert not stale, (
+        f"{len(stale)} sabotage(s) no longer apply, so the corpus would skip them:\n         "
+        + "\n         ".join(stale) +
+        "\n       Point each at the engine's new text in the pull request that moved it. An "
+        "excerpt more than one sabotage shares belongs in tests/sabotage/anchors.py.")
+
+test(f"every sabotage still applies to the tree as it is "
+     f"({sum(map(len, PY_DRIVERS.values()))} sabotages in {len(PY_DRIVERS)} Python drivers)",
+     check_every_sabotage_still_applies)
+
+
+def check_the_shell_driver_still_applies():
+    """engine_r1_perfkey_typo.sh edits data/gpus.json from a heredoc. What it needs
+    is read from the script: each catalog row its loop names carries the perfKey it
+    corrupts exactly once."""
+    shell = [d for d in DRIVERS if d.endswith(".sh")]
+    assert shell == SHELL_DRIVERS, (
+        f"shell drivers {shell}, where this file checks {SHELL_DRIVERS}: the new one's sabotages "
+        f"are invisible to the check above. Write it on run_driver() in Python, or check it here")
+    src = open(os.path.join(SABOTAGE_DIR, SHELL_DRIVERS[0]), encoding="utf-8").read()
+    loop = re.search(r"^for slug in ([\w .-]+); do$", src, re.M)
+    needs = re.search(r"assert line\.count\('([^']+)'\) == 1", src)
+    assert loop and needs, f"{SHELL_DRIVERS[0]} no longer has the loop and the precondition this reads"
+    rows = open(os.path.join(ROOT, "data", "gpus.json"), encoding="utf-8").read().splitlines()
+    for slug in loop.group(1).split():
+        line = [r for r in rows if r.strip().startswith(f'"{slug}":')]
+        assert len(line) == 1 and line[0].count(needs.group(1)) == 1, (
+            f"{SHELL_DRIVERS[0]}: catalog row {slug} does not carry {needs.group(1)} exactly once")
+
+test("the shell driver's catalog rows still carry what it corrupts", check_the_shell_driver_still_applies)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
