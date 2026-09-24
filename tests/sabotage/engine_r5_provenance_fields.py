@@ -58,7 +58,9 @@ S = {
       ],
     'C7 data: an invented spot priceSource for h100-80 (a tier SOURCE_MAP marks automatable, never confirmed)':
       [
-        (GPUS_JSON, '"spec": { "provider": "lambda", "sku": "NVIDIA H100 SXM (80 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 3.99 } } },', '"spec": { "provider": "lambda", "sku": "NVIDIA H100 SXM (80 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 3.99 }, "spot": { "provider": "vast", "sku": "H100 SXM (median of 9 verified offers)", "region": "global", "date": "2026-09-22", "price": 2.25 } } },', 1),
+        # Since feat/rocm-guidance the tier carries a note saying why it has no source, so the
+        # invented source replaces the note, as a reading landed without being confirmed would.
+        (GPUS_JSON, '"spec": { "provider": "lambda", "sku": "NVIDIA H100 SXM (80 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 3.99 } }, "priceNote": { "spot": { "reason": "In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly Vast.ai read on 2026-09-22 came back 42.5% higher, past the 40% a person has to approve, and is held for a second read.", "checked": "2026-09-23" } } },', '"spec": { "provider": "lambda", "sku": "NVIDIA H100 SXM (80 GB, 208 vCPU tier)", "region": "global", "date": "2026-09-22", "price": 3.99 }, "spot": { "provider": "vast", "sku": "H100 SXM (median of 9 verified offers)", "region": "global", "date": "2026-09-22", "price": 2.25 } } },', 1),
       ],
     'C8 data (control): h100-80/hyper sku is whitespace':
       [
