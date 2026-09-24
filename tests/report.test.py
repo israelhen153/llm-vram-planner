@@ -1880,6 +1880,62 @@ test("the PDF says when FP8 was asked for on silicon that cannot run it",
      check_fp8_note_rides_the_pdf)
 
 
+# The sentences are a contract, so they are literals here rather than read back
+# from gr.GGUF_GUIDANCE: an expectation taken from the engine follows any edit to it.
+GGUF_LINES = [
+    ("GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin.",
+     "https://github.com/vllm-project/vllm/releases/tag/v0.24.0"),
+    ("Install `vllm-gguf-plugin` before serving a GGUF model. Point the command at a GGUF "
+     "checkpoint, either a Hugging Face repo as `repo_id:quant_type` (for example "
+     "`unsloth/Qwen3-0.6B-GGUF:Q4_K_M`) or a local `.gguf` file, and pass the base model's "
+     "tokenizer with `--tokenizer`.",
+     "https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html"),
+    ('vLLM calls its GGUF support "highly experimental and under-optimized".',
+     "https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html"),
+    ("For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ "
+     "is the usual choice on vLLM.",
+     None),
+]
+
+
+def prec_tokens():
+    """Every --prec value from_cli_args() knows, with the quantization it maps to,
+    read from its own table so a GGUF level added there is covered here too."""
+    src = open(gr.__file__).read()
+    table = re.search(r'"quant": \{([^}]*)\}', src)
+    assert table, "from_cli_args() no longer has the --prec -> quant table this reads"
+    pairs = re.findall(r'"(\w+)":"(\w*)"', table.group(1))
+    assert any(q == "gguf" for _, q in pairs) and any(q != "gguf" for _, q in pairs), pairs
+    return pairs
+
+
+def check_gguf_guidance_rides_the_pdf():
+    for token, quant in prec_tokens():
+        args = cli_args_for("llama31-8b")
+        args.prec = token
+        cfg = gr.from_cli_args(args)
+        assert gr.compute(cfg)["fits"], f"--prec {token}: 8B should fit one H100, or this checks nothing"
+        blob = "\n".join(story_strings(cfg))
+        gguf = quant == "gguf"
+        for line, source in GGUF_LINES:
+            want = line.replace("`", "") + (f" (source: {source})" if source else "")
+            assert (want in blob) == gguf, (
+                f"--prec {token}: the PDF {'lacks' if gguf else 'shows'} {want!r}")
+        assert not re.search(r"not a repo|single \.?gguf file", blob, re.I), (
+            f"--prec {token}: the retired single-file claim is back")
+    # And no command, no guidance: a plan that does not fit prints none.
+    args = cli_args_for("llama31-70b")
+    args.prec, args.gpu = "q4km", "t4-16"
+    cfg = gr.from_cli_args(args)
+    assert not gr.compute(cfg)["fits"], "70B at Q4_K_M should not fit one T4, or this checks nothing"
+    blob = "\n".join(story_strings(cfg))
+    for line, _ in GGUF_LINES:
+        assert line.replace("`", "") not in blob, f"guidance for a command the PDF does not print: {line!r}"
+
+test("every GGUF level's PDF names the plugin with its sources, and nothing else does",
+     check_gguf_guidance_rides_the_pdf)
+
+
 test("tp and dp in a JSON config reach cfg and change nothing",
      check_tp_dp_json_keys_are_inert)
 
@@ -3207,6 +3263,9 @@ def golden_cases():
          cfg(h, 1, bpp=1, quant="fp8")),
         ("t4-16 x1 — fp8 weights on silicon that does not, so the caveat",
          cfg(t4, 1, bpp=1, quant="fp8", nvlink=False)),
+        ("h100-80 x1 — GGUF weights, so the plugin guidance under the command",
+         cfg(h, 1, bpp=0.63, quant="gguf")),
+        ("h100-80 x1 — AWQ weights, the CLI's default precision", cfg(h, 1, bpp=0.5, quant="awq")),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
         # ROCm: vLLM's own image, and the lines that apply to the plan.
         ("mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines",
@@ -3341,6 +3400,10 @@ def check_the_golden_records_the_shapes_that_matter():
         "a batch the KV cache cannot hold":
             lambda cs: any(comp(c)["batch_limited"] for c in cs),
         "a model imported by id": lambda cs: any(c.get("hf_model") for c in cs),
+        # The one quantization the report prints guidance for under the command,
+        # as the page golden records it under its command panel.
+        "GGUF weights": lambda cs: any(c.get("quant") == "gguf" and comp(c)["fits"] for c in cs),
+        "AWQ weights, the default": lambda cs: any(c.get("quant") == "awq" for c in cs),
         "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),
         "FP8 weights refused on a card vLLM has no FP8 kernel for":
             lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["vendor"] == "amd" and c["gpu"].get("gfx") != "gfx942"

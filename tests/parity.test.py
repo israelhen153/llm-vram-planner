@@ -1210,6 +1210,30 @@ else:
             print(f"  ok   emitted vllm command matches ({label})")
             passed += 1
 
+# The GGUF guidance is maintained twice, like the GPU tables: the page's banner and
+# copied report read index.html's GGUF_GUIDANCE, the PDF reads generate_report.py's.
+# Read the Python one from source, as compute() is above, so reportlab is not needed.
+_py_src = open(os.path.join(ROOT, "generate_report.py")).read()
+_py_gguf = next(ast.literal_eval(node.value) for node in ast.parse(_py_src).body
+                if isinstance(node, ast.Assign)
+                and any(getattr(t, "id", None) == "GGUF_GUIDANCE" for t in node.targets))
+_js_gguf = json.loads(subprocess.run(
+    ["node", "-e", """
+const h=require('fs').readFileSync(process.argv[1],'utf8');
+const m=h.match(/^const GGUF_GUIDANCE = \\[[\\s\\S]*?\\n\\];$/m);
+if(!m) throw new Error('GGUF_GUIDANCE not found in index.html');
+console.log(JSON.stringify(new Function(`${m[0]}; return GGUF_GUIDANCE;`)()));""",
+     os.path.join(ROOT, "index.html")],
+    capture_output=True, text=True, check=True).stdout)
+if [list(row) for row in _py_gguf] == _js_gguf and len(_js_gguf) >= 3:
+    print(f"  ok   both engines carry the same GGUF guidance ({len(_js_gguf)} sentences)")
+    passed += 1
+else:
+    print(f"  FAIL the GGUF guidance differs between the engines")
+    print(f"       py: {_py_gguf!r}")
+    print(f"       js: {_js_gguf!r}")
+    failed += 1
+
 # The ROCm table is maintained twice, like the GPU tables: index.html's ROCM drives
 # the page's command and lines, generate_report.py's the PDF's. And which lines
 # apply is decided twice, by rocmGuidance() and rocm_guidance(), over every AMD

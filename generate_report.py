@@ -730,6 +730,26 @@ def device_count_for(cfg):
     return cfg["n_gpu"] * ((cfg.get("gpu") or {}).get("devices", 1) or 1)
 
 
+# GGUF on vLLM, as vLLM's own pages state it for v0.30.0 (read 2026-09-23): each
+# sentence with the page that says so, or None where it is this tool's own advice.
+# index.html carries the same table under the same name, and tests/parity.test.py
+# holds the two equal. Backticks mark code; the PDF prints them as plain text.
+GGUF_GUIDANCE = [
+    ("GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin.",
+     "https://github.com/vllm-project/vllm/releases/tag/v0.24.0"),
+    ("Install `vllm-gguf-plugin` before serving a GGUF model. Point the command at a GGUF "
+     "checkpoint, either a Hugging Face repo as `repo_id:quant_type` (for example "
+     "`unsloth/Qwen3-0.6B-GGUF:Q4_K_M`) or a local `.gguf` file, and pass the base model's "
+     "tokenizer with `--tokenizer`.",
+     "https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html"),
+    ('vLLM calls its GGUF support "highly experimental and under-optimized".',
+     "https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html"),
+    ("For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ "
+     "is the usual choice on vLLM.",
+     None),
+]
+
+
 # vLLM on AMD, as vLLM v0.30.0 and AMD's own pages state it, read 2026-09-23;
 # docs/research/vllm-rocm.md has every line with its source. Keyed by the catalog's
 # gfx, the card's LLVM target, not by perfKey, which selects throughput constants.
@@ -1320,6 +1340,14 @@ class ReportCard:
         cmd = build_vllm_cmd(cfg, c)
         for line in cmd.split("\n"):
             story.append(Paragraph(line, self.styles["CmdCode"]))
+        # What the page shows beside a GGUF command, with each source as an address:
+        # a PDF is forwarded without the page, so the links have to be readable.
+        if c["fits"] and cfg.get("quant") == "gguf":
+            story.append(Spacer(1, 1.5*mm))
+            for text, source in GGUF_GUIDANCE:
+                story.append(Paragraph(text.replace("`", "")
+                                       + (f" (source: {source})" if source else ""),
+                                       self.styles["Small"]))
         # What else running this on ROCm needs, each line with its source as an
         # address: a PDF is forwarded without the page.
         rocm = rocm_guidance(cfg) if c["fits"] else []
