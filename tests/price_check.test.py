@@ -1750,5 +1750,31 @@ test("the tiers with no confirmed price are exactly the ones pinned here",
      check_the_tiers_with_no_confirmed_price_are_the_pinned_ones)
 
 
+def check_no_two_tiers_of_a_card_name_the_same_source():
+    """Two tiers of one card read off the same provider and SKU would print one
+    source name beside two prices, and a reader could not tell them apart. The
+    MI300X's Azure spot tier is the same VM as its hyperscaler tier, told apart
+    only by the "(Spot)" the Azure reader adds; with the marker taken out of the
+    catalog, only the goldens noticed (engine_r6_amd_rows C12). Every row, and
+    readings and hand records alike."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    clashes, shared = [], 0
+    for slug, row in rows.items():
+        seen, providers = {}, set()
+        for field in ("priceSource", "priceRecord"):
+            for tier, src in (row.get(field) or {}).items():
+                key = (src["provider"].strip().lower(), src["sku"].strip().lower())
+                if key in seen:
+                    clashes.append(f"{slug}: {seen[key]} and {tier} both name {src['provider']} {src['sku']!r}")
+                seen[key] = tier
+                shared += key[0] in providers
+                providers.add(key[0])
+    assert not clashes, "; ".join(clashes)
+    assert shared, "no card has two tiers from one provider, so this checked nothing"
+
+test("no two tiers of a card name the same provider and SKU", check_no_two_tiers_of_a_card_name_the_same_source)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)
