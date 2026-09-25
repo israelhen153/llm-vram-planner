@@ -19,6 +19,15 @@ catalog, and two bugs turned up without any sabotage at all:
 5. **Shapes the catalog refuses** (C1 to C4): a note beside a hand record, a lead
    on a priced tier or on the hyperscaler's, and an AMD target the table lacks.
 
+The same checker attacked the fixes at 8fd291d and found the next ring, the same
+gaps one step over, where a fix had listed cases rather than derived them: " fp8"
+with spaces round it (A4), wrong types (A5), the refusal swallowed above one board
+(A6), the per-device buffer (B14), AMD wording above three boards (B15), leads at
+five boards and at seventeen and more (B16), paths with a dot or deep nesting (B17,
+B18), --apply on the hyperscaler tier, a same-day reading or a row with a hand record
+(B19 to B21), the menu above one board (B22), an empty quantization (B23), note
+wordings the rule missed (B24, B25), and a board of four devices (C5).
+
 Each is kept here so the next change starts where this check ended.
 """
 import os, sys
@@ -119,6 +128,60 @@ S = {
                     '            for lead in price_leads(gpu, tier):',
                     '        for name, tier in (("Specialized", "spec"), ("Spot", "spot")):\n'
                     '            for lead in price_leads(gpu, tier):', 1)],
+    # ---- 6. the second round: the same gaps one step over ----
+    "A5 py: a wrong-typed quantization or width is no longer named": [
+        (REPORT_PY, '    "bpp": (int, float), "quant": (str, type(None)),\n', "", 1)],
+    "A6 py: from_json()'s preset branch swallows the FP8 refusal above one board": [
+        (REPORT_PY, '            "model_name": raw.get("model_name", pd["name"]),\n        })\n        return validate_arch(cfg)\n',
+                    '            "model_name": raw.get("model_name", pd["name"]),\n        })\n'
+                    '        try:\n            return validate_arch(cfg)\n        except PlanRefused:\n'
+                    '            if cfg["n_gpu"] > 1:\n                return cfg\n            raise\n', 1)],
+    "B14 both: each device's overhead charges 0.3 GB for peer buffers off NVLink": [
+        (INDEX_HTML, "    overhead: overheadPerGPU + peerBufferGB,", "    overhead: overheadPerGPU + (deviceCount > 1 ? 0.3 : 0),", 1),
+        (REPORT_PY, "    per_oh = oh_per_gpu + peer_buffer_gb", "    per_oh = oh_per_gpu + (0.3 if device_count > 1 else 0)", 1)],
+    "B15 py: the PDF's context note is CUDA's on AMD above three boards": [
+        (REPORT_PY, '        if cfg["gpu"].get("vendor") == "amd":\n            # The same allowance',
+                    '        if cfg["gpu"].get("vendor") == "amd" and cfg["n_gpu"] <= 3:\n            # The same allowance', 1)],
+    "B15 both: the notes name NCCL on AMD above three boards": [
+        (INDEX_HTML, "`${state.vendor === 'amd' ? 'RCCL' : 'NCCL'} buffers",
+                     "`${state.vendor === 'amd' && state.gpuCount <= 3 ? 'RCCL' : 'NCCL'} buffers", 1),
+        (REPORT_PY, 'library = "RCCL" if cfg["gpu"].get("vendor") == "amd" else "NCCL"',
+                    'library = "RCCL" if cfg["gpu"].get("vendor") == "amd" and cfg["n_gpu"] <= 3 else "NCCL"', 1)],
+    "B16 js: a lead's price becomes the per-board figure at exactly five boards": [
+        (INDEX_HTML, "${usd(state.gpuSpecCost, 2)}",
+                     "${usd(state.gpuSpecCost ?? (state.gpuCount === 5 && priceLeads(state, 'spec').length ? priceLeads(state, 'spec')[0].price : null), 2)}", 1)],
+    "B16 py: a lead's price becomes the per-board figure at seventeen boards and more": [
+        (REPORT_PY, "            [\"Specialized\",\n             usd(gpu['spec']),",
+                    "            [\"Specialized\",\n             usd(gpu['spec'] if gpu['spec'] is not None or cfg['n_gpu'] < 17 "
+                    "or not price_leads(gpu, 'spec') else price_leads(gpu, 'spec')[0]['price']),", 1)],
+    "B17 both: a local model path with a dot in it is not mounted": [
+        (INDEX_HTML, "(modelPath.startsWith('/') ? `", "(modelPath.startsWith('/') && !modelPath.includes('.') ? `", 1),
+        (REPORT_PY, 'if str(model or "").startswith("/"):', 'if str(model or "").startswith("/") and "." not in str(model):', 1)],
+    "B18 both: a local model path deeper than four levels is not mounted": [
+        (INDEX_HTML, "(modelPath.startsWith('/') ? `", "(modelPath.startsWith('/') && modelPath.split('/').length <= 5 ? `", 1),
+        (REPORT_PY, 'if str(model or "").startswith("/"):', 'if str(model or "").startswith("/") and str(model).count("/") <= 4:', 1)],
+    "B19 price: --apply keeps the note on a hyperscaler tier it reads": [
+        (PRICE_PY, "        if note and oc.tier in note:", '        if oc.tier != "hyper" and note and oc.tier in note:', 1)],
+    "B20 price: --apply keeps the note beside a reading dated the note's own day": [
+        (PRICE_PY, "        if note and oc.tier in note:",
+                   '        if note and oc.tier in note and str(oc.reading.date) > str(note[oc.tier].get("checked", "")):', 1)],
+    "B21 price: --apply keeps the note on a row that carries a hand record": [
+        (PRICE_PY, "        if note and oc.tier in note:", '        if "priceRecord" not in row and note and oc.tier in note:', 1)],
+    "B22 py: the interactive menu offers FP8 on a gated card above one board": [
+        (REPORT_PY, "    blocked = fp8_weights_blocked(gpu)\n", '    blocked = fp8_weights_blocked(gpu) if n_gpu == 1 else ""\n', 1)],
+    "B23 py: an empty quantization skips the one-byte FP8 fill": [
+        (REPORT_PY, 'if cfg.get("bpp") == 1 and not cfg.get("quant"):', 'if cfg.get("bpp") == 1 and "quant" not in cfg:', 1)],
+    "B24 data: a catalog note carries a rate over a slash": [
+        (GPUS_JSON, "\"reason\": \"The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.\"",
+                    "\"reason\": \"Runcrate's at 2/hour, which could not be confirmed; it is shown below as a lead.\"", 1)],
+    "B25 data: a catalog note carries a price in cents": [
+        (GPUS_JSON, "\"reason\": \"The one hourly rate found, Runcrate's, could not be confirmed; it is shown below as a lead.\"",
+                    "\"reason\": \"Runcrate lists it at 82¢, which could not be confirmed; it is shown below as a lead.\"", 1)],
+    "C5 both: the ROCm block drops its closing notes above two devices a board": [
+        (INDEX_HTML, "  out.push(L.more);\n  return out;", "  if (state.gpuDevices <= 2) out.push(L.more);\n  return out;", 1),
+        (REPORT_PY, '    out.append(lines["more"])\n    return out',
+                    '    if (cfg.get("gpu") or {}).get("devices", 1) <= 2:\n        out.append(lines["more"])\n    return out', 1)],
+
     "C4 both: FP8 allowed on an AMD target the ROCm table doesn't know": [
         (INDEX_HTML, "if (!gpu || gpu.vendor !== 'amd' || (ROCM.arch[gpu.gfx] || {}).fp8Weights) return '';",
                      "if (!gpu || gpu.vendor !== 'amd' || (ROCM.arch[gpu.gfx] || {}).fp8Weights || !Object.hasOwn(ROCM.arch, gpu.gfx || '')) return '';", 1),
