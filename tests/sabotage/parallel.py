@@ -119,10 +119,75 @@ def sabotages_of(harness, tree, driver):
     return sabotages
 
 
-def judge_one(harness, driver, name, spec):
+def golden_failures(harness, tree):
+    """The FAIL lines a suite prints when only the goldens are wrong, found by
+    emptying each file in tests/golden/ and running the judging suites, rather
+    than by matching test names: five of seventeen golden-looking names were not
+    golden comparisons when a classifier tried that on 2026-09-24. A catch made
+    only of these lines disappears the day the goldens are regenerated."""
+    gdir = os.path.join(tree, "tests", "golden")
+    if not os.path.isdir(gdir):
+        return set()
+    files = [os.path.join("tests", "golden", f) for f in sorted(os.listdir(gdir)) if not f.startswith(".")]
+    try:
+        for f in files:
+            with open(os.path.join(tree, f), "w") as fh:
+                fh.write("{}\n")
+        results = harness.run_judging_suites()
+    finally:
+        git("checkout", "--", *files, cwd=tree)
+    found = {line for rc, fails, errs, tally in results.values() if rc != 0 for line in fails}
+    if not found:
+        raise RuntimeError("emptying the goldens failed no test, so golden catches cannot be told apart")
+    return found
+
+
+# The order --early-exit runs suites in, which changes how long a run takes and
+# never what it finds: a suite missing here simply runs last. Chosen from the
+# serial run at d99f1b6 (2026-09-24), where of 565 caught sabotages model went red
+# on 318, report on 248, parity on 131, workflow on 61, price on 46 and sync on 3,
+# at 2.73, 7.19, 0.83, 0.10, 0.13 and 2.54 s a run. Of all 720 orders this one needs
+# the least judging for those catches: about 37 min, against 127 with every suite.
+ORDER_HINT = ["workflow", "price", "parity", "model", "report", "sync"]
+
+
+def install_judging(harness, golden, early_exit):
+    """Wrap the commit's run_judging_suites() so each sabotage's full results are
+    kept, and with --early-exit, stop at the first suite that fails on anything
+    but a golden. A red suite made only of golden failures does not stop the run:
+    the next suite may catch it for real, and if none does, the catch is
+    reported as golden-only, as it would be with every suite run."""
+    original, suites = harness.run_judging_suites, list(harness.JUDGING_SUITES)
+    order = sorted(suites, key=lambda s: ORDER_HINT.index(s[0]) if s[0] in ORDER_HINT else len(ORDER_HINT))
+    last = {}
+
+    def judging():
+        if not early_exit:
+            res = original()
+        else:
+            res = {}
+            try:
+                for suite in order:
+                    harness.JUDGING_SUITES = [suite]
+                    res.update(original())
+                    rc, fails, errs, tally = res[suite[0]]
+                    if rc != 0 and not (fails and set(fails) <= golden):
+                        break
+            finally:
+                harness.JUDGING_SUITES = suites
+        last.clear()
+        last.update(res)
+        return res
+
+    harness.run_judging_suites = judging
+    return last
+
+
+def judge_one(harness, driver, name, spec, last, golden):
     """One sabotage through the commit's own run_driver(): applied, re-synced if
-    it says so, judged by its six suites, restored. Only the green baseline is
+    it says so, judged by its suites, restored. Only the green baseline is
     skipped, because this worker proved it once before its first sabotage."""
+    last.clear()
     buf = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", newline="\n")
     saved = sys.stdout, sys.argv
     sys.stdout, sys.argv = buf, [driver]
@@ -145,7 +210,10 @@ def judge_one(harness, driver, name, spec):
     if (caught, survived, unapplied) != expected or (code == 2) != (status == "unapplied"):
         raise RuntimeError(f"{name!r}: its line says {status}, its summary says "
                            f"{summary.group(0)!r}, exit {code}")
-    return {"status": status, "block": [blocks[name][1], *blocks[name][2]]}
+    red = [r for r in last.values() if r[0] != 0]
+    return {"status": status, "block": [blocks[name][1], *blocks[name][2]],
+            "suites_run": list(last),
+            "golden_only": status == "caught" and bool(red) and all(r[1] and set(r[1]) <= golden for r in red)}
 
 
 def judge_shell(tree, driver):
@@ -156,7 +224,7 @@ def judge_shell(tree, driver):
     return {"status": "shell", "rc": p.returncode, "output": p.stdout}
 
 
-def worker_main(tree):
+def worker_main(tree, early_exit):
     # The task stream and the results travel on this process's own stdin and stdout.
     # Children inherit fd 0 and fd 1, so both are moved out of their reach first: a
     # suite reading stdin would eat tasks, and one printing would corrupt results.
@@ -171,10 +239,27 @@ def worker_main(tree):
         results_out.write(json.dumps(obj) + "\n")
         results_out.flush()
 
+    # No suite may run a stale .pyc of the commit's own code. A sabotage judged and
+    # restored inside one second, at the same size (one digit of a threshold in
+    # tools/price_check.py), left a .pyc of the sabotaged file whose timestamp and size
+    # matched the restored one, and Python went on trusting it: at d99f1b6 with
+    # --early-exit, one worker then failed 90 of its next 102 price runs for that
+    # sabotage's reason, and each read as a catch. So nothing writes bytecode here,
+    # and every .py the commit tracks gets a fresh timestamp before the first suite,
+    # which no .pyc already in this worker can match. Libraries keep their caches:
+    # turning bytecode off everywhere made the report suite nearly three times slower.
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    now = time.time()
+    for rel in git("ls-files", "*.py", cwd=tree).stdout.split():
+        os.utime(os.path.join(tree, rel), (now, now))
+
     started = time.monotonic()
     try:
         harness = load_harness(tree)
         harness.require_green_baseline()
+        golden = golden_failures(harness, tree)
+        if git("status", "--porcelain", cwd=tree).stdout.strip():
+            raise RuntimeError("the worker is not clean after finding the golden failures")
     except SystemExit as e:
         send({"ready": False, "error": str(e.code)})
         return 2
@@ -182,7 +267,8 @@ def worker_main(tree):
         send({"ready": False, "error": traceback.format_exc()})
         return 2
     harness.require_green_baseline = lambda: None
-    send({"ready": True, "baseline_s": round(time.monotonic() - started, 2)})
+    last = install_judging(harness, golden, early_exit)
+    send({"ready": True, "baseline_s": round(time.monotonic() - started, 2), "golden": sorted(golden)})
 
     cache = {}
     for line in tasks_in:
@@ -195,7 +281,7 @@ def worker_main(tree):
                 if task["driver"] not in cache:
                     cache[task["driver"]] = sabotages_of(harness, tree, task["driver"])
                 sabotages = cache[task["driver"]]
-                result = judge_one(harness, task["driver"], task["name"], sabotages[task["name"]])
+                result = judge_one(harness, task["driver"], task["name"], sabotages[task["name"]], last, golden)
         except Exception:
             result = {"status": "error", "error": traceback.format_exc()}
         # chain.sh checks between drivers; this checks between sabotages. A worker
@@ -399,10 +485,11 @@ def run(args):
     procs = []
     for i, w in enumerate(workers, 1):
         err = open(os.path.join(logdir, f"worker-w{i}.stderr"), "w")
-        procs.append(subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__), "--worker", w],
+        procs.append(subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__), "--worker", w,
+                                       *(["--early-exit"] if args.early_exit else [])],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
                                       text=True, bufsize=1, start_new_session=True))
-    baselines = []
+    baselines, goldens = [], []
     for i, p in enumerate(procs, 1):
         line = p.stdout.readline()
         msg = json.loads(line) if line else {"ready": False, "error": "exited before its baseline"}
@@ -411,6 +498,11 @@ def run(args):
                 q.stdin.close()
             sys.exit(f"w{i} refused to judge on {sha[:7]}: {msg.get('error')}")
         baselines.append(msg["baseline_s"])
+        goldens.append(msg["golden"])
+    if any(g != goldens[0] for g in goldens):
+        for q in procs:
+            q.stdin.close()
+        sys.exit("the workers disagree about which failures are golden ones, so no catch can be classified")
 
     todo = queue.Queue()
     for t in tasks:
@@ -501,8 +593,11 @@ def run(args):
 
     statuses = [r["status"] for r in results.values() if r["status"] != "shell"]
     judging = sum(r.get("seconds", 0) for r in results.values())
+    golden_only = sorted((f"{d}: {n}" for (d, n), r in results.items() if r.get("golden_only")), key=natural)
+    open(os.path.join(logdir, "golden-only.txt"), "w").write("".join(g + "\n" for g in golden_only))
     json.dump({"sha": sha, "jobs": jobs, "workers": workers, "wall_s": round(wall, 1),
                "judging_s": round(judging, 1), "baselines_s": baselines,
+               "early_exit": args.early_exit, "golden_failures": goldens[0],
                "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "results": [{"driver": d, "name": n, **r} for (d, n), r in results.items()]},
               open(os.path.join(logdir, "results.json"), "w"), indent=1)
@@ -512,7 +607,12 @@ def run(args):
           f"{statuses.count('caught')} caught, {statuses.count('survived')} survived, "
           f"{statuses.count('unapplied')} could not be applied, {statuses.count('error')} errored "
           f"(plus the shell driver above). {wall / 60:.1f} min wall clock on {jobs} workers, "
-          f"{judging / 60:.1f} min of judging.")
+          f"{judging / 60:.1f} min of judging"
+          + (", each sabotage stopped at its first real catch." if args.early_exit else ", every suite run for each."))
+    print(f"{len(golden_only)} caught only by a golden, which regenerating the goldens would hide"
+          + (":" if golden_only else "."))
+    for g in golden_only:
+        print("  " + g)
     dirty = [w for w in workers if git("status", "--porcelain", cwd=w).stdout.strip()]
     if dirty:
         failed = True
@@ -524,9 +624,13 @@ def run(args):
     return 1 if failed else 0
 
 
-def compare(serial_dir, parallel_dir):
+def compare(serial_dir, parallel_dir, subset=False):
     """Whether two runs judged every sabotage the same: status, and the suites and
-    first failures under it. Drivers missing on either side count as differences."""
+    first failures under it. Drivers missing on either side count as differences.
+    With subset, for an --early-exit second run, which runs fewer suites by design:
+    the statuses must match, and every red suite the second run records must appear
+    in the first run's record, with the same count and first failure. Statuses
+    alone passed a run in which 90 catches were made by a stale .pyc."""
     logs = lambda d: {f[:-4] for f in os.listdir(d) if f.endswith(".log") and not f.startswith("worker-")}
     a, b = logs(serial_dir), logs(parallel_dir)
     differences, same = [], 0
@@ -539,7 +643,7 @@ def compare(serial_dir, parallel_dir):
         for name in sorted(set(x) | set(y)):
             if name not in x or name not in y:
                 differences.append(f"{d}: {name}: only in {'the first' if name in x else 'the second'} run")
-            elif x[name] != y[name]:
+            elif (x[name][0] != y[name][0] or not set(y[name][2]) <= set(x[name][2])) if subset else (x[name] != y[name]):
                 differences.append(f"{d}: {name}:\n    first:  " + "\n            ".join([x[name][1], *x[name][2]])
                                    + "\n    second: " + "\n            ".join([y[name][1], *y[name][2]]))
             else:
@@ -553,18 +657,23 @@ def compare(serial_dir, parallel_dir):
 
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--worker":
-        return worker_main(sys.argv[2])
+        return worker_main(sys.argv[2], "--early-exit" in sys.argv[3:])
     if len(sys.argv) >= 3 and sys.argv[1] == "--list":
         return list_main(sys.argv[2], sys.argv[3:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--jobs", type=int, default=0, help="workers (default: the CPU count)")
     ap.add_argument("--ref", default="HEAD", help="the commit to judge (default: HEAD)")
+    ap.add_argument("--early-exit", action="store_true",
+                    help="stop judging a sabotage at the first suite that catches it for real")
     ap.add_argument("--compare", nargs=2, metavar=("FIRST_LOGDIR", "SECOND_LOGDIR"),
                     help="compare two runs' logs sabotage by sabotage, and run nothing")
+    ap.add_argument("--subset", action="store_true",
+                    help="with --compare, for an --early-exit second run: same statuses, and every red "
+                         "suite it records is in the first run's record")
     ap.add_argument("drivers", nargs="*", help="driver names, as chain.sh takes them")
     args = ap.parse_args()
     if args.compare:
-        return compare(*args.compare)
+        return compare(*args.compare, subset=args.subset)
     return run(args)
 
 
