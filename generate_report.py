@@ -1609,6 +1609,9 @@ ARCH_TYPES = {
     "mla_dim": (int, float), "max_ctx": (int, float),
     "shared_prefix": (int, float), "prefix_caching": bool,
     "ctx": (int, float), "conc": (int, float), "n_gpu": (int, float),
+    # The weights: a JSON config's "quant": 1, true or ["fp8"], or "bpp": "1", died
+    # several frames deep with a TypeError that named nothing.
+    "bpp": (int, float), "quant": (str, type(None)),
 }
 
 def validate_arch(cfg):
@@ -1664,10 +1667,11 @@ def validate_arch(cfg):
 
     # vLLM names its quantizations in lowercase, and every comparison here does too:
     # "FP8" in a JSON config got past the FP8 refusal and printed --quantization FP8,
-    # which vLLM rejects, on a card that can't run FP8 weights at all. A config's
-    # quantization is read in any case and written in vLLM's.
+    # which vLLM rejects, on a card that can't run FP8 weights at all, and so did
+    # " fp8". A config's quantization is read in any case and with any spaces round
+    # it, and written in vLLM's.
     if isinstance(cfg.get("quant"), str):
-        cfg["quant"] = cfg["quant"].lower()
+        cfg["quant"] = cfg["quant"].strip().lower()
 
     # One byte per parameter is FP8, the same test compute() uses, so a config that
     # says so without naming a quantization gets --quantization fp8 in its command.

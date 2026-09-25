@@ -30,7 +30,9 @@ from anchors import INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON
 S = {
     # ---- 1. the two bugs, put back ----
     "A1 py: a config's quantization is compared as written, so 'FP8' gets past the refusal": [
-        (REPORT_PY, '    if isinstance(cfg.get("quant"), str):\n        cfg["quant"] = cfg["quant"].lower()\n', "", 1)],
+        (REPORT_PY, '    if isinstance(cfg.get("quant"), str):\n        cfg["quant"] = cfg["quant"].strip().lower()\n', "", 1)],
+    "A4 py: a config's quantization is lowered but not stripped, so ' fp8' gets past the refusal": [
+        (REPORT_PY, 'cfg["quant"] = cfg["quant"].strip().lower()', 'cfg["quant"] = cfg["quant"].lower()', 1)],
     "A2 py: from_cli_args() plans a --prec it doesn't know as AWQ": [
         (REPORT_PY, '    if args.prec not in PRECISIONS:\n'
                     '        raise ValueError(f"Unknown precision: {args.prec}. Available: {\', \'.join(PRECISIONS)}")\n', "", 1),

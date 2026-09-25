@@ -2558,6 +2558,49 @@ test("FP8 weights are refused, with the reason, on every card vLLM has no FP8 we
      check_fp8_weights_are_refused_where_vllm_cannot_run_them)
 
 
+def check_fp8_is_refused_however_a_config_spells_it():
+    """"FP8" got past the refusal, and after that was fixed so did " fp8": the
+    refusal compares against vLLM's own spelling, so a config's is read in any case
+    and with any spaces round it. Every such spelling, generated, through both of
+    from_json()'s branches, at one board and two, on every gated card."""
+    spellings = [f"{left}{word}{right}" for word in ("fp8", "FP8", "Fp8")
+                 for left in ("", " ", "\t") for right in ("", " ", "\n")]
+    for slug in sorted(FP8_GATED):
+        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+            for quant in spellings:
+                for n_gpu in (1, 2):
+                    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                        json.dump(dict(base, gpu=slug, quant=quant, bpp=2, n_gpu=n_gpu), f)
+                    try:
+                        gr.from_json(f.name)
+                    except gr.PlanRefused:
+                        continue
+                    finally:
+                        os.unlink(f.name)
+                    raise AssertionError(f"{slug} x{n_gpu}: quant {quant!r} was planned, not refused")
+
+test("FP8 is refused on a gated card however a JSON config spells it, in either branch, at one board or more",
+     check_fp8_is_refused_however_a_config_spells_it)
+
+
+def check_a_wrong_typed_quantization_is_named():
+    """"quant": 1, true or ["fp8"], or "bpp": "1", died several frames deep with a
+    TypeError that named no key. validate_arch() names the key and what it got."""
+    for bad in ({"quant": 1}, {"quant": True}, {"quant": ["fp8"]}, {"bpp": "1"}):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(dict({"preset": "llama31-8b", "gpu": "h100-80"}, **bad), f)
+        try:
+            gr.from_json(f.name)
+        except TypeError as e:
+            assert f"cfg[{next(iter(bad))!r}]" in str(e), (bad, str(e))
+        else:
+            raise AssertionError(f"{bad} was planned")
+        finally:
+            os.unlink(f.name)
+
+test("a wrong-typed quantization or width is refused by name", check_a_wrong_typed_quantization_is_named)
+
+
 def check_the_cli_exits_2_with_the_reason():
     """The command line itself: the reason on stderr, exit status 2, and no PDF."""
     with tempfile.TemporaryDirectory() as d:
@@ -2719,6 +2762,12 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
         assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
         cfg, cmd = plan({"bpp": 0.5, "quant": "AWQ"})
         assert cfg["quant"] == "awq" and "    --quantization awq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        # An empty quantization is no quantization: the fill applies to it as it does
+        # to a missing one. Once it checked for the key alone and every test passed.
+        cfg, cmd = plan({"bpp": 1, "quant": ""})
+        assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 0.5, "quant": " gptq "})
+        assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
 
 test("a JSON config at one byte per parameter is FP8 in the command; other widths are left as given",
      check_a_one_byte_json_config_is_fp8_in_the_command)
