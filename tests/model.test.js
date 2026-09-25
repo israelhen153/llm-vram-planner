@@ -4652,7 +4652,10 @@ test('the ROCm lines under the command are the ones that apply, each with its so
   };
   const pageLine = ([text, source]) => `<div>${text.replace(/`([^`]+)`/g, '<code>$1</code>')} (<a href="${source}" target="_blank" style="color:var(--accent-text)">source</a>)</div>`;
   let shown = 0;
-  for (const [key, card] of Object.entries(GPU_TABLE)) {
+  /* Every catalog card, and a board of four devices, which no catalog row has: a block
+     that dropped its closing notes above two devices passed every card that exists. */
+  const fourDevices = ['mi300x-192 (four devices a board)', { ...GPU_TABLE['mi300x-192'], devices: 4 }];
+  for (const [key, card] of [...Object.entries(GPU_TABLE), fourDevices]) {
     for (const opt of WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2]) {
       const h = renderHarness();
       const st = asState(card, boards, { ...dense8BPlan, ...opt, kvBytesPerValue: kv });

@@ -2555,6 +2555,31 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
      check_a_local_model_is_mounted_wherever_it_lives)
 
 
+def check_the_rocm_block_holds_on_a_board_of_four_devices():
+    """No catalog board has more than two devices, so a ROCm block that dropped its
+    closing notes above two passed every card that exists. A board of four, built
+    here, at one board and two: the GCD line, and the notes last."""
+    L = gr.ROCM["lines"]
+    line = lambda key: L[key][0].replace("`", "") + f" (source: {L[key][1]})"
+    card = dict(gr.GPUS["mi300x-192"], devices=4)
+    for ngpu in (1, 2):
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.prec, args.ngpu = "mi300x-192", "bf16", ngpu
+        cfg = dict(gr.from_cli_args(args), gpu=card)
+        strings = story_strings(cfg)
+        at = strings.index("<b>Running on ROCm</b>")
+        block = []
+        for s in strings[at + 1:]:
+            if "(source: " not in s:
+                break
+            block.append(s)
+        assert line("gcd") in block, f"x{ngpu}: four devices a board, and no GCD line"
+        assert block and block[-1] == line("more"), f"x{ngpu}: the ROCm block does not end with the notes: {block[-1:]}"
+
+test("the ROCm block holds on a board of four devices, the GCD line in and the notes last",
+     check_the_rocm_block_holds_on_a_board_of_four_devices)
+
+
 # The cards vLLM v0.30.0 has no FP8 weight kernel for, read off the catalog: AMD rows
 # whose LLVM target is not CDNA3's. Written out rather than taken from the engine's
 # table, so a change to the table shows up here as a disagreement.
