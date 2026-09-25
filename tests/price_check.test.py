@@ -17,6 +17,7 @@ import contextlib
 import copy
 import json
 import os
+import re
 import sys
 import urllib.parse
 
@@ -910,6 +911,75 @@ test("--apply refreshes one tier's provenance and keeps another tier's hand reco
      check_apply_keeps_a_hand_record_intact)
 
 
+def check_apply_replaces_a_note_with_the_reading():
+    """A note says why a tier has no source. When --apply records a reading for
+    that tier, the note has to go: a tier carries exactly one of priceSource,
+    priceRecord and priceNote, and h100-80's spot tier is automated and noted
+    today, so the first weekly run that confirms it would otherwise leave the
+    catalog breaking that rule, and the page showing a reason that is no
+    longer true beside a price that now has a source. A note on another tier
+    stays, and a row's last note going takes the empty key with it."""
+    note = lambda reason: {"reason": reason, "checked": "2026-09-23"}
+    raw = ('{\n  "_meta": {\n    "last_updated": "2026-09-22"\n  },\n  "data": {\n'
+           '    "x": { "hyper": 6.0, "spec": 2.39, "spot": 1.11, "priceNote": { "spot": '
+           + json.dumps(note("Held for a second read.")) + ', "spec": ' + json.dumps(note("No reader for this provider.")) + ' } }\n  }\n}\n')
+    gpus = json.loads(raw)["data"]
+    read = pc.Outcome("x", "spot", "CONFIRMED", current=1.11, proposed=1.11,
+                      reading=_reading(price=1.11, date="2026-09-28"))
+    assert pc.apply_outcomes(gpus, [read]), "a CONFIRMED outcome changed nothing"
+    row = json.loads(pc.apply_to_text(raw, gpus, ["x"], "2026-09-28"))["data"]["x"]
+    assert "spot" in row.get("priceSource", {}), "the tier that was read gained no provenance"
+    assert row.get("priceNote") == {"spec": note("No reader for this provider.")}, (
+        f"the read tier's note should be gone and the other kept: {row.get('priceNote')}")
+    last = pc.Outcome("x", "spec", "CONFIRMED", current=2.39, proposed=2.39,
+                      reading=_reading(price=2.39, date="2026-09-28"))
+    pc.apply_outcomes(gpus, [last])
+    assert "priceNote" not in gpus["x"], f"an empty priceNote was left behind: {gpus['x'].get('priceNote')}"
+
+test("--apply replaces a tier's note with the reading it records, and keeps the others",
+     check_apply_replaces_a_note_with_the_reading)
+
+
+def check_a_note_goes_exactly_when_a_reading_is_recorded():
+    """Whatever an outcome's status, --apply leaves a noted tier with exactly one
+    answer: the reading if it recorded one, the note if it did not. Only CONFIRMED
+    was tested once, and a note kept beside a MOVED reading passed; then only the
+    spot tier, on a row with nothing else, read days after the note, and a note kept
+    on the hyperscaler tier, beside a same-day reading, or on a row with a hand record
+    passed. Every status the tool can give, read off its own source, on every tier,
+    on a row with nothing else, a hand record or a reading on another tier, read on
+    the note's own day and after it."""
+    src = open(pc.__file__, encoding="utf-8").read()
+    statuses = set(re.findall(r'return "([A-Z]+)"', src)) | set(re.findall(r'Outcome\([^()]*?"([A-Z]+)"', src))
+    assert {"CONFIRMED", "MOVED", "FLAGGED", "MANUAL", "ABORTED"} <= statuses, statuses
+    tiers = ("hyper", "spec", "spot")
+    record = {"provider": "RunPod", "sku": "X", "region": "global", "date": "2026-09-23", "price": 2.39,
+              "url": "https://www.runpod.io/gpu-models/x"}
+    source = {"provider": "aws", "sku": "g6e.xlarge", "region": "us-east-1", "date": "2026-09-22", "price": 1.86}
+    checked = 0
+    for status in sorted(statuses):
+        for i, tier in enumerate(tiers):
+            other = tiers[(i + 1) % len(tiers)]
+            for extra in ({}, {"priceRecord": {other: dict(record)}}, {"priceSource": {other: dict(source)}}):
+                for date in ("2026-09-23", "2026-09-28"):
+                    gpus = {"x": {"hyper": 6.0, "spec": 2.39, "spot": 1.11,
+                                  "priceNote": {tier: {"reason": "Held for a second read.", "checked": "2026-09-23"}},
+                                  **extra}}
+                    price = gpus["x"][tier] + 0.14 if status == "MOVED" else gpus["x"][tier]
+                    pc.apply_outcomes(gpus, [pc.Outcome("x", tier, status, current=gpus["x"][tier], proposed=price,
+                                                        reading=_reading(price=price, date=date))])
+                    read = tier in gpus["x"].get("priceSource", {})
+                    noted = tier in gpus["x"].get("priceNote", {})
+                    assert read != noted, (f"{status} on {tier}, {sorted(extra) or 'nothing else'} on the row, read "
+                                           f"{date}: the tier ends with "
+                                           f"{'both a reading and a note' if read else 'neither a reading nor a note'}")
+                    checked += 1
+    assert checked == len(statuses) * 3 * 3 * 2, checked
+
+test("whatever the outcome, --apply leaves a noted tier with exactly one of the reading and the note",
+     check_a_note_goes_exactly_when_a_reading_is_recorded)
+
+
 # ===========================================================================
 # Cross-check disagreement: two live sources for one run, not catalog-vs-live
 # ===========================================================================
@@ -1419,6 +1489,349 @@ def check_every_real_price_record_follows_the_rules():
 
 
 test("every real priceRecord follows the rules", check_every_real_price_record_follows_the_rules)
+
+
+PRICE_NOTE_FIELDS = {"reason", "checked"}
+# Words the suites' leak checks read as a value that escaped into the text: the
+# PDF refuses "none" for a Python None, the page "null", "undefined" and "NaN".
+# A note is prose, and a note using one of them would read to those checks as
+# a leak (one did, "none in the Azure API", and it was reworded).
+NOTE_LEAK_WORDS = re.compile(r"\b(none|null|undefined|nan)\b", re.I)
+# What in a note reads as a price: any currency sign, a bare decimal that is not a
+# percentage, a version or part of a name, an amount named in words, or a rate by the
+# hour however it is written. The rule was a dollar sign alone, and "Runcrate lists
+# 0.82 an hour." passed it; then "2/hour", "2 each hour", "82¢" and "2 hourly" passed
+# the next one. Only the golden noticed any of them.
+NOTE_PRICE = re.compile(r"[$€£¢]"
+                        r"|(?<![\w.])\d+\.\d+(?![\w.%])"
+                        r"|\b(?:cents?|dollars?|USD|EUR|GBP)\b"
+                        r"|/\s*h(?:ou)?rs?\b|/h\b"
+                        r"|\d\s*hourly\b"
+                        r"|\b(?:per|an|a|each|every)\s+hour\b", re.I)
+
+
+def price_note_problems(rows, today):
+    """Every rule a price note must satisfy, and the one rule over every tier.
+
+    The note is the third provenance kind: why a tier has neither an automated
+    reading nor a hand record. That means where its figure came from and why
+    no weekly reader covers it, or, on a null tier, why no hourly price
+    qualified. Every tier of every row carries exactly one of the three, so no
+    figure, and no missing figure, reaches a reader without saying how it got
+    there. A note carries no dollar figure, because one beside the tier's own
+    would read as a price. It ends as a sentence ends, because both engines
+    print "Checked <date>." straight after it."""
+    import datetime as _dt
+    bad = []
+    for slug, row in rows.items():
+        notes = row.get("priceNote") or {}
+        for tier in notes:
+            if tier not in ("hyper", "spec", "spot"):
+                bad.append(f"{slug}/{tier}: not a price tier")
+        for tier in ("hyper", "spec", "spot"):
+            where = f"{slug}/{tier}"
+            kinds = [k for k in ("priceSource", "priceRecord", "priceNote") if tier in (row.get(k) or {})]
+            if len(kinds) != 1:
+                bad.append(f"{where}: carries {kinds or 'no provenance at all'} — every tier carries exactly one "
+                           "of priceSource, priceRecord and priceNote")
+            note = notes.get(tier)
+            if note is None:
+                continue
+            if not isinstance(note, dict) or set(note) != PRICE_NOTE_FIELDS:
+                bad.append(f"{where}: note fields {sorted(note) if isinstance(note, dict) else note!r}, "
+                           f"expected exactly {sorted(PRICE_NOTE_FIELDS)}")
+                continue
+            reason = note["reason"]
+            if not isinstance(reason, str) or not reason.strip():
+                bad.append(f"{where}.reason: {reason!r} — must be a non-empty sentence")
+            else:
+                if NOTE_PRICE.search(reason):
+                    bad.append(f"{where}.reason: carries {NOTE_PRICE.search(reason).group(0)!r}, a figure that "
+                               "beside the tier's own would read as a price")
+                if not reason.rstrip().endswith("."):
+                    bad.append(f"{where}.reason: must end as a sentence ends — both engines print "
+                               "'Checked <date>.' straight after it")
+                if NOTE_LEAK_WORDS.search(reason):
+                    bad.append(f"{where}.reason: uses {NOTE_LEAK_WORDS.search(reason).group(0)!r}, one of the "
+                               "words the suites' leak checks read as an escaped value")
+            try:
+                checked = _dt.datetime.strptime(str(note["checked"]), "%Y-%m-%d").date()
+                if checked > today:
+                    bad.append(f"{where}.checked: {note['checked']} is after today ({today})")
+            except ValueError:
+                bad.append(f"{where}.checked: {note['checked']!r} is not YYYY-MM-DD")
+    return bad
+
+
+def check_every_price_note_rule_is_exercised():
+    """Each rule, broken on its own by one fixture, must be the one reported,
+    and a row that breaks none reports nothing, so no rule passes by being
+    unreachable."""
+    import datetime as _dt
+    today = _dt.date(2026, 9, 23)
+    good = {"reason": "No hyperscaler rents this card.", "checked": "2026-09-23"}
+    source = {"provider": "aws", "sku": "g6e.xlarge", "region": "US East (N. Virginia)",
+              "date": "2026-09-22", "price": 1.86}
+    record = {"provider": "RunPod", "sku": "X", "region": "global", "date": "2026-09-23",
+              "price": 2.39, "url": "https://www.runpod.io/gpu-models/x"}
+
+    def rows_with(note=good, **row):
+        # One of each kind, so the one-per-tier rule holds unless a fixture breaks it.
+        base = {"hyper": None, "spec": 2.39, "spot": 1.86, "priceNote": {"hyper": note},
+                "priceRecord": {"spec": record}, "priceSource": {"spot": source}}
+        base.update(row)
+        return {"x": base}
+
+    assert price_note_problems(rows_with(), today) == [], (
+        f"a valid note was refused: {price_note_problems(rows_with(), today)}")
+    breaks = {
+        "a missing field": (rows_with({"reason": good["reason"]}), "expected exactly"),
+        "an extra field": (rows_with(dict(good, price=2.0)), "expected exactly"),
+        "a blank reason": (rows_with(dict(good, reason="  ")), "non-empty sentence"),
+        "a dollar figure": (rows_with(dict(good, reason="Runcrate advertises $0.82/hr.")), "read as a price"),
+        "a bare decimal": (rows_with(dict(good, reason="Runcrate lists 0.82 an hour.")), "read as a price"),
+        "a per-hour amount": (rows_with(dict(good, reason="Runcrate lists 1 per hour.")), "read as a price"),
+        "a rate over a slash": (rows_with(dict(good, reason="Runcrate's at 2/hour.")), "read as a price"),
+        "each hour": (rows_with(dict(good, reason="It charges 2 each hour.")), "read as a price"),
+        "a cent sign": (rows_with(dict(good, reason="Runcrate lists it at 82¢.")), "read as a price"),
+        "hourly after a figure": (rows_with(dict(good, reason="Runcrate lists it at 2 hourly.")), "read as a price"),
+        "another currency": (rows_with(dict(good, reason="It lists it at €2.")), "read as a price"),
+        "no closing period": (rows_with(dict(good, reason="No hyperscaler rents this card")), "sentence ends"),
+        "a leak word": (rows_with(dict(good, reason="There are none in the Azure API.")), "leak checks"),
+        "a date after today": (rows_with(dict(good, checked="2026-09-24")), "after today"),
+        "a malformed date": (rows_with(dict(good, checked="23/09/2026")), "not YYYY-MM-DD"),
+        "a note beside a reading": (rows_with(priceNote={"hyper": good, "spot": good}), "exactly one"),
+        "a tier with nothing": (rows_with(priceSource={}), "no provenance at all"),
+        "a note on no tier": (rows_with(priceNote={"hyper": good, "total": good}), "not a price tier"),
+    }
+    for what, (rows, words) in breaks.items():
+        found = price_note_problems(rows, today)
+        assert any(words in f for f in found), f"{what} was not reported by its own rule: {found}"
+
+test("every priceNote rule is reached by a fixture that breaks it, and a valid note passes",
+     check_every_price_note_rule_is_exercised)
+
+
+def check_every_real_tier_says_how_its_figure_was_reached():
+    """The real catalog, held to the same rules: every tier of every row carries
+    exactly one of priceSource, priceRecord and priceNote, and every note
+    follows the note's rules."""
+    import datetime as _dt
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad = price_note_problems(rows, _dt.datetime.now(_dt.timezone.utc).date())
+    assert not bad, "a tier does not say how its figure was reached:\n       " + "\n       ".join(bad)
+    # A floor, so the rules above cannot pass by having nothing to read.
+    held = sum(len(r.get("priceNote") or {}) for r in rows.values())
+    assert held >= 20, f"only {held} real priceNote(s) — the rules above checked almost nothing"
+
+test("every real tier carries exactly one of priceSource, priceRecord and priceNote, and every note follows the rules",
+     check_every_real_tier_says_how_its_figure_was_reached)
+
+
+PRICE_LEAD_FIELDS = {"provider", "price", "url", "date", "why"}
+PRICE_LEAD_OPTIONAL = {"about"}
+
+
+def price_lead_problems(rows, today):
+    """Every rule a lead must satisfy. A lead is an hourly price someone lists for a
+    tier that has no confirmed price, and that could not be confirmed: shown, with
+    why and where, and used in no figure. Only on a null tier, because a priced
+    tier's answer is its price. It carries the page it was read on (https, the
+    page itself, not a site's front page), the day it was read, and why it could
+    not be confirmed. The why is a sentence with no dollar figure; the lead's own
+    price is its price field, printed once."""
+    import datetime as _dt
+    bad = []
+    for slug, row in rows.items():
+        for tier, leads in (row.get("priceLead") or {}).items():
+            where = f"{slug}/{tier}"
+            if tier not in ("hyper", "spec", "spot"):
+                bad.append(f"{where}: not a price tier")
+                continue
+            if row.get(tier) is not None:
+                bad.append(f"{where}: the tier has a price — a lead goes only where there is none")
+            if not isinstance(leads, list) or not leads:
+                bad.append(f"{where}: must be a non-empty list of leads")
+                continue
+            for i, lead in enumerate(leads):
+                at = f"{where}[{i}]"
+                if not isinstance(lead, dict) or not (PRICE_LEAD_FIELDS <= set(lead) <= PRICE_LEAD_FIELDS | PRICE_LEAD_OPTIONAL):
+                    bad.append(f"{at}: fields {sorted(lead) if isinstance(lead, dict) else lead!r}, expected "
+                               f"{sorted(PRICE_LEAD_FIELDS)} and optionally {sorted(PRICE_LEAD_OPTIONAL)}")
+                    continue
+                if not isinstance(lead["provider"], str) or not lead["provider"].strip():
+                    bad.append(f"{at}.provider: {lead['provider']!r} — must be a non-empty name")
+                if not isinstance(lead["price"], (int, float)) or isinstance(lead["price"], bool) or lead["price"] <= 0:
+                    bad.append(f"{at}.price: {lead['price']!r} — must be a positive number")
+                for field in ("url", "about"):
+                    if field not in lead:
+                        continue
+                    url = lead[field]
+                    if not isinstance(url, str) or not url.startswith("https://"):
+                        bad.append(f"{at}.{field}: {url!r} — must be a page, over https")
+                    elif urllib.parse.urlparse(url).path in ("", "/"):
+                        bad.append(f"{at}.{field}: {url!r} names a site, not the page")
+                try:
+                    read = _dt.datetime.strptime(str(lead["date"]), "%Y-%m-%d").date()
+                    if read > today:
+                        bad.append(f"{at}.date: {lead['date']} is after today ({today})")
+                except ValueError:
+                    bad.append(f"{at}.date: {lead['date']!r} is not YYYY-MM-DD")
+                why = lead["why"]
+                if not isinstance(why, str) or not why.strip():
+                    bad.append(f"{at}.why: {why!r} — must say why the lead is not used")
+                else:
+                    if "$" in why:
+                        bad.append(f"{at}.why: carries a dollar figure — the lead's price is its price field")
+                    if not why.rstrip().endswith("."):
+                        bad.append(f"{at}.why: must end as a sentence ends")
+                    if NOTE_LEAK_WORDS.search(why):
+                        bad.append(f"{at}.why: uses {NOTE_LEAK_WORDS.search(why).group(0)!r}, a word the leak checks read as an escaped value")
+    return bad
+
+
+def check_every_price_lead_rule_is_exercised():
+    """Each rule, broken on its own by one fixture, must be the one reported, and a
+    valid lead reports nothing."""
+    import datetime as _dt
+    today = _dt.date(2026, 9, 23)
+    good = {"provider": "Runcrate", "price": 0.82, "url": "https://www.runcrate.ai/pricing/gpu/mi210",
+            "date": "2026-09-23", "why": "Its own pricing page lists no AMD GPU.",
+            "about": "https://github.com/x/y/blob/HEAD/docs/research/runcrate-due-diligence.md"}
+
+    def rows_with(lead=good, tier="spec", **row):
+        base = {"hyper": None, "spec": None, "spot": 1.0, "priceLead": {tier: [lead]}}
+        base.update(row)
+        return {"x": base}
+
+    assert price_lead_problems(rows_with(), today) == [], f"a valid lead was refused: {price_lead_problems(rows_with(), today)}"
+    no_about = {k: v for k, v in good.items() if k != "about"}
+    assert price_lead_problems(rows_with(no_about), today) == [], "a lead without an about link was refused"
+    breaks = {
+        "a priced tier": (rows_with(tier="spot"), "the tier has a price"),
+        "not a list": (rows_with(priceLead={"spec": good}), "non-empty list"),
+        "an empty list": (rows_with(priceLead={"spec": []}), "non-empty list"),
+        "a missing field": (rows_with({k: v for k, v in good.items() if k != "url"}), "expected"),
+        "an extra field": (rows_with(dict(good, region="global")), "expected"),
+        "a blank provider": (rows_with(dict(good, provider=" ")), ".provider:"),
+        "a zero price": (rows_with(dict(good, price=0)), "positive number"),
+        "a string price": (rows_with(dict(good, price="0.82")), "positive number"),
+        "a plain-http url": (rows_with(dict(good, url="http://www.runcrate.ai/pricing/gpu/mi210")), "over https"),
+        "a front-page url": (rows_with(dict(good, url="https://www.runcrate.ai/")), "names a site"),
+        "a front-page about": (rows_with(dict(good, about="https://github.com/")), "names a site"),
+        "a date after today": (rows_with(dict(good, date="2026-09-24")), "after today"),
+        "a malformed date": (rows_with(dict(good, date="23/09/2026")), "not YYYY-MM-DD"),
+        "a blank why": (rows_with(dict(good, why="")), "why the lead is not used"),
+        "a figure in the why": (rows_with(dict(good, why="It says $0.82 only.")), "dollar figure"),
+        "no closing period": (rows_with(dict(good, why="Unconfirmed")), "sentence ends"),
+        "a leak word": (rows_with(dict(good, why="There is none elsewhere.")), "leak checks"),
+        "a lead on no tier": (rows_with(priceLead={"total": [good]}), "not a price tier"),
+    }
+    for what, (rows, words) in breaks.items():
+        found = price_lead_problems(rows, today)
+        assert any(words in f for f in found), f"{what} was not reported by its own rule: {found}"
+
+test("every priceLead rule is reached by a fixture that breaks it, and a valid lead passes",
+     check_every_price_lead_rule_is_exercised)
+
+
+def check_every_real_price_lead_follows_the_rules():
+    import datetime as _dt
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    bad = price_lead_problems(rows, _dt.datetime.now(_dt.timezone.utc).date())
+    assert not bad, "priceLead breaks a rule:\n       " + "\n       ".join(bad)
+    held = sum(len(ls) for r in rows.values() for ls in (r.get("priceLead") or {}).values())
+    assert held >= 3, f"only {held} real lead(s) — the rules above checked almost nothing"
+
+test("every real priceLead follows the rules", check_every_real_price_lead_follows_the_rules)
+
+
+def check_a_tier_nobody_offers_has_no_price():
+    """Tier honesty's sharpest case: a price shown for an offer that doesn't exist.
+    Until 2026-09-23 the price map said "no hyperscaler rents this card" for
+    rtx4090-24, rtx5090-32 and rtx6000ada-48 while the catalog priced their
+    hyperscaler tiers. A re-check against AWS, Azure, Google Cloud and Oracle
+    (docs/research/unsourced-prices.md) settled all four. Two rules:
+    - a tier whose own note says no hyperscaler rents the card has no price;
+    - the four the re-check settled stay as it settled them until a new check
+      says otherwise: three null, and rtxpro-96's read from AWS g7e.2xlarge.
+    Only the goldens saw a price put back on one of the three, and a golden
+    regenerated in the same pull request would have let it through."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    said = 0
+    for slug, row in rows.items():
+        for tier, note in (row.get("priceNote") or {}).items():
+            if note["reason"].startswith("No hyperscaler rents this card"):
+                said += 1
+                assert row[tier] is None, (
+                    f"{slug}/{tier}: its note says no hyperscaler rents the card, and the tier has a price")
+    assert said >= 6, f"only {said} notes say no hyperscaler rents the card; the rule above checked almost nothing"
+    for slug in ("rtx4090-24", "rtx5090-32", "rtx6000ada-48"):
+        assert rows[slug]["hyper"] is None, f"{slug}: the re-check found no hyperscaler renting it, and it has a price"
+    src = (rows["rtxpro-96"].get("priceSource") or {}).get("hyper") or {}
+    assert (src.get("provider"), src.get("sku")) == ("aws", "g7e.2xlarge"), (
+        f"rtxpro-96's hyperscaler tier is no longer read from AWS g7e.2xlarge: {src}")
+
+test("a tier nobody offers has no price, and the four hyperscaler tiers the re-check settled stay settled",
+     check_a_tier_nobody_offers_has_no_price)
+
+
+# Every tier the catalog holds with no confirmed hourly price. Each one tells a
+# reader "no confirmed hourly price" and its note says why. The rule above
+# covers the notes that say no hyperscaler rents the card; a price put on any
+# other empty tier (the RX 7900 XTX's specialized tier, a spot tier nobody
+# offers) passed everything but the goldens (engine_r6_amd_rows C4). A tier
+# leaves this set only when a reading or a hand record lands for it, which
+# changes what the page tells people, so it has to be changed here as well.
+NO_CONFIRMED_PRICE = {
+    "rtx4090-24": ["hyper"], "rtx5090-32": ["hyper"], "rtx6000ada-48": ["hyper"],
+    "rx7900xtx-24": ["hyper", "spec", "spot"], "mi210-64": ["hyper", "spec", "spot"],
+    "mi250x-128": ["hyper", "spec", "spot"], "mi325x-256": ["hyper", "spot"],
+}
+
+
+def check_the_tiers_with_no_confirmed_price_are_the_pinned_ones():
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    empty = {(slug, t) for slug, row in rows.items() for t in ("hyper", "spec", "spot") if row[t] is None}
+    pinned = {(slug, t) for slug, tiers in NO_CONFIRMED_PRICE.items() for t in tiers}
+    priced = sorted(f"{slug}/{t}" for slug, t in pinned - empty)
+    unpinned = sorted(f"{slug}/{t}" for slug, t in empty - pinned)
+    assert not priced and not unpinned, (
+        f"priced, though pinned as having no confirmed price: {priced or 'none'}; "
+        f"empty, though not pinned: {unpinned or 'none'}")
+
+test("the tiers with no confirmed price are exactly the ones pinned here",
+     check_the_tiers_with_no_confirmed_price_are_the_pinned_ones)
+
+
+def check_no_two_tiers_of_a_card_name_the_same_source():
+    """Two tiers of one card read off the same provider and SKU would print one
+    source name beside two prices, and a reader could not tell them apart. The
+    MI300X's Azure spot tier is the same VM as its hyperscaler tier, told apart
+    only by the "(Spot)" the Azure reader adds; with the marker taken out of the
+    catalog, only the goldens noticed (engine_r6_amd_rows C12). Every row, and
+    readings and hand records alike."""
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    clashes, shared = [], 0
+    for slug, row in rows.items():
+        seen, providers = {}, set()
+        for field in ("priceSource", "priceRecord"):
+            for tier, src in (row.get(field) or {}).items():
+                key = (src["provider"].strip().lower(), src["sku"].strip().lower())
+                if key in seen:
+                    clashes.append(f"{slug}: {seen[key]} and {tier} both name {src['provider']} {src['sku']!r}")
+                seen[key] = tier
+                shared += key[0] in providers
+                providers.add(key[0])
+    assert not clashes, "; ".join(clashes)
+    assert shared, "no card has two tiers from one provider, so this checked nothing"
+
+test("no two tiers of a card name the same provider and SKU", check_no_two_tiers_of_a_card_name_the_same_source)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")

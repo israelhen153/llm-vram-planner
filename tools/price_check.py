@@ -558,13 +558,13 @@ SOURCE_MAP = {
         "spot": {"manual": "Vast gpu_name for L4 not verified against a live query in this build"},
     },
     "rtx4090-24": {
-        "hyper": {"manual": "no hyperscaler rents this card"},
+        "hyper": {"manual": "no hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer (checked 2026-09-23)"},
         "spec": {"manual": "not on Lambda's or CoreWeave's current lineup (checked 2026-09-16)"},
         "spot": {"primary": {"kind": "vast", "gpuName": "RTX 4090", "divisor": 1,
                               "minSample": 5, "numGpus": 1}},
     },
     "rtx5090-32": {
-        "hyper": {"manual": "no hyperscaler rents this card"},
+        "hyper": {"manual": "no hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer (checked 2026-09-23)"},
         "spec": {"manual": "not on Lambda's or CoreWeave's current lineup (checked 2026-09-16)"},
         "spot": {"manual": "Vast gpu_name for RTX 5090 not verified against a live query in this build"},
     },
@@ -578,7 +578,7 @@ SOURCE_MAP = {
         "spot": {"manual": "Vast gpu_name for A100 40GB not verified against a live query in this build"},
     },
     "rtx6000ada-48": {
-        "hyper": {"manual": "no hyperscaler rents this card"},
+        "hyper": {"manual": "no hyperscaler rents this card: AWS, Azure, Google Cloud and Oracle list no offer (checked 2026-09-23)"},
         # Lambda's "A6000" and CoreWeave's "rtx-a6000" are both the Ampere-generation
         # RTX A6000, a different card from the Ada-generation RTX 6000 Ada this slug
         # names — checked live 2026-09-16, do not conflate on the name substring alone.
@@ -665,7 +665,10 @@ SOURCE_MAP = {
                            "(checked 2026-09-23)"},
     },
     "rtxpro-96": {
-        "hyper": {"manual": "no hyperscaler rents this card"},
+        # All four hyperscalers rent it (2026-09-23): AWS g7e, Google Cloud G4, Oracle
+        # BM.GPU.RTXPRO.8, Azure NCv6 (docs/research/unsourced-prices.md). AWS's
+        # one-GPU size is the one this check can read, the same shape as l40s-48's g6e.xlarge.
+        "hyper": {"primary": {"kind": "aws", "instanceType": "g7e.2xlarge", "divisor": 1}},
         "spec": {"primary": {"kind": "coreweave", "productSlug": "nvidia-rtx-pro-6000-blackwell-server-edition",
                               "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory)",
                               "vram": "96", "divisor": 8}},
@@ -911,6 +914,14 @@ def apply_outcomes(gpus_data, outcomes):
             "region": oc.reading.region, "date": oc.reading.date,
             "price": round(oc.reading.price_per_gpu, 2),
         }
+        # The note said why this tier had no source. It has one now, and a tier
+        # carries exactly one of priceSource, priceRecord and priceNote, so the
+        # reading replaces the note rather than sitting beside a stale one.
+        note = row.get("priceNote")
+        if note and oc.tier in note:
+            del note[oc.tier]
+            if not note:
+                del row["priceNote"]
         changed = True
     return changed
 

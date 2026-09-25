@@ -5,7 +5,7 @@ sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import run_driver
 from anchors import (INDEX_HTML, REPORT_PY, JS_TP_TILE, JS_EXEC_UNKNOWN, JS_CMP_UNKNOWN, JS_MD_UNKNOWN, JS_NOTES_UNKNOWN,
-                 JS_BADGE, JS_TP_RETURN, JS_UNMODELLED_NOTE, PY_EXPLAIN, PY_NOTMOD_ROW)
+                 JS_BADGE, JS_TP_RETURN, JS_UNMODELLED_NOTE, PY_EXPLAIN, PY_NOTMOD_ROW, PY_R10_CONTEXT_AMD)
 
 JS_DECODE_ESTIMATE = "Math.round(computed.deviceBandwidth * 0.7 / (state.params * state.bytesPerParam))"  # borrowed 0.7 MBU, no PERF read
 CAP_CARD = '<div class="reverse-card"><p class="label">Max concurrent @ 8K</p>'
@@ -68,12 +68,13 @@ S["Q3 py: explanation ends 'Expect roughly forty tokens each second per user.'"]
     (REPORT_PY, "                \"depend on them.\",\n                self.styles[\"Small\"]\n", "                \"depend on them. Expect roughly forty tokens each second per user.\",\n                self.styles[\"Small\"]\n", 1)]
 S["Q4 py: throughput table gains a row 'Rough per-user decode: about forty tokens each second'"] = [
     (REPORT_PY, PY_NOTMOD_ROW, PY_NOTMOD_ROW + "                [\"Rough per-user decode\", \"about forty tokens each second\"],\n", 1)]
+# Both go in ahead of the runtime-context note, which feat/rocm-guidance split by vendor.
 S["Q5 py: notes gain 'Cards of this class typically manage about forty tokens each second per user.'"] = [
-    (REPORT_PY, "        notes.append(\"VRAM estimates include ~1.5 GB CUDA context overhead per device.\")\n",
-     "        notes.append(\"VRAM estimates include ~1.5 GB CUDA context overhead per device.\")\n        if not c[\"throughput_modelled\"]:\n            notes.append(\"Cards of this class typically manage about forty tokens each second per user.\")\n", 1)]
+    (REPORT_PY, PY_R10_CONTEXT_AMD,
+     "        if not c[\"throughput_modelled\"]:\n            notes.append(\"Cards of this class typically manage about forty tokens each second per user.\")\n" + PY_R10_CONTEXT_AMD, 1)]
 S["Q6 py: notes gain 'This card should be fast enough for interactive chat.'"] = [
-    (REPORT_PY, "        notes.append(\"VRAM estimates include ~1.5 GB CUDA context overhead per device.\")\n",
-     "        notes.append(\"VRAM estimates include ~1.5 GB CUDA context overhead per device.\")\n        if not c[\"throughput_modelled\"]:\n            notes.append(\"This card should be fast enough for interactive chat.\")\n", 1)]
+    (REPORT_PY, PY_R10_CONTEXT_AMD,
+     "        if not c[\"throughput_modelled\"]:\n            notes.append(\"This card should be fast enough for interactive chat.\")\n" + PY_R10_CONTEXT_AMD, 1)]
 S["Q7 py (control): throughput table row '~<n> tokens per minute'"] = [
     (REPORT_PY, PY_NOTMOD_ROW, PY_NOTMOD_ROW + "                [\"Rough per-user decode\", f\"~{(c['single_tok'] or 12) * 60} tokens per minute\"],\n", 1)]
 S["Q8 py (control): figure in a list-of-flowables table cell"] = [

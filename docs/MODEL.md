@@ -64,7 +64,9 @@ A flat 1% heuristic, floored at 0.1 GiB. Real activation memory depends on batch
 
 ### Overhead
 
-1.5 GiB per GPU for the CUDA context, plus 0.2–0.3 GiB per additional GPU for NCCL buffers. Also heuristic. Real CUDA context is roughly 0.3–0.8 GiB; the rest is headroom for allocator fragmentation and the framework itself.
+1.5 GiB per GPU for the CUDA context, plus 0.2–0.3 GiB per additional GPU for NCCL buffers: 0.3 over NVLink, 0.2 otherwise, and the notes print whichever one was charged. Also heuristic. Real CUDA context is roughly 0.3–0.8 GiB; the rest is headroom for allocator fragmentation and the framework itself.
+
+On AMD cards the same two allowances stand in for the HIP runtime's context and RCCL's buffers, and the PDF says so. Neither figure has been measured on ROCm.
 
 ### Units: GiB, not GB
 

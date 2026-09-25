@@ -4,7 +4,7 @@
    command and the board advice on a strided sample of it. Also runs each
    version's own readInputState() through a DOM stub, card by card.
 
-   Run: node tmp/nochange.js [stride]   (stride defaults to 13) */
+   Run: node tests/sabotage/compare/nochange.js [base-ref] [stride]   (stride defaults to 13) */
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
