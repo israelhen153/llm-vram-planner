@@ -19,14 +19,26 @@ gone and invisible to anyone who cloned the repo.
 ## Running it
 
 ```
-tests/sabotage/chain.sh                 # every driver
+tests/sabotage/parallel.py              # every driver, split across worker worktrees
+tests/sabotage/parallel.py --ref <commit> engine_r10_rocm_guidance   # another commit's corpus, named drivers
+tests/sabotage/parallel.py --compare <logdir> <logdir>   # two runs, sabotage by sabotage
+tests/sabotage/chain.sh                 # every driver, one after another, in this checkout
 tests/sabotage/chain.sh engine_r3_fixed_assumptions engine_r3_identical_estimate_and_href   # named drivers
 LOGDIR=path tests/sabotage/chain.sh     # logs elsewhere (default: tmp/sabotage, gitignored)
 python3 tests/sabotage/engine_r1_throughput_leaks.py W11     # one sabotage, by name substring
 python3 tests/sabotage/engine_r1_throughput_leaks.py --from H8   # from one sabotage onwards
 ```
 
-**Commit before running.** The drivers restore with `git checkout -- <file>`, which restores
+**`parallel.py` changes where a sabotage runs, not how it is judged.** Each worker is a git
+worktree detached at the commit under test, and every sabotage goes through that commit's own
+`run_driver()` and its six suites. Only the green baseline is proved once per worker instead of
+once per driver. Its logs have `chain.sh`'s shape, so `--compare` can hold a parallel run to a
+serial one. It never touches your checkout, so it needs no clean tree, and uncommitted work is
+not judged. The workers live in `tmp/corpus-workers/` and are reused from run to run. **The
+script never deletes one:** a worker that is dirty, locked or missing stops the run and is
+listed, and removing them is the owner's call.
+
+**Commit before running `chain.sh`.** The drivers restore with `git checkout -- <file>`, which restores
 the index and not unsaved edits. Running one over work in progress has destroyed work on this
 project twice. `chain.sh` refuses to start on a dirty tree for that reason; the individual
 drivers assert the tree is clean when they finish.
