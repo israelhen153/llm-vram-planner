@@ -43,6 +43,9 @@ the index and not unsaved edits. Running one over work in progress has destroyed
 project twice. `chain.sh` refuses to start on a dirty tree for that reason; the individual
 drivers assert the tree is clean when they finish.
 
+Both runners hold a sleep lock for the whole run where systemd provides one. A suspend
+stretched one driver from 3.6 min to 86 on 2026-09-24. Closing the lid still suspends.
+
 ## The corpus
 
 Each driver applies a list of exact-string edits to committed files, refusing if a target
