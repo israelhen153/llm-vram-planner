@@ -4442,6 +4442,7 @@ test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, f
       picked: () => options.find(o => o.selected).dataset.q,
       card: (slug) => { els['gpu-model'].value = slug; api.syncPrecision(); },
       fp8,
+      options,
     };
   };
   const gated = Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd' && !ROCM_ARCH[g.gfx].fp8Weights).map(([k]) => k);
@@ -4458,10 +4459,18 @@ test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, f
     p.card('h100-80');
     assert.strictEqual(p.picked(), 'fp8', `${slug}: FP8 was not given back on a card that runs it`);
     assert.ok(!p.fp8.disabled, `${slug}: FP8 still disabled on a card that runs it`);
-    // BF16 chosen by the reader is left alone, both ways.
-    const q = page();
-    q.pick(''); q.card('h100-80'); q.card(slug); q.card('h100-80');
-    assert.strictEqual(q.picked(), '', `${slug}: the reader's own BF16 was turned into FP8`);
+    /* Every other option the reader chose is left alone, both ways: BF16 and each
+       quantized one, each GGUF level its own option. Only BF16 was checked once, and
+       a gate that sent AWQ, GPTQ or GGUF to BF16 on a card that can't run FP8 passed. */
+    for (const [i, o] of page().options.entries()) {
+      if (o.dataset.q === 'fp8') continue;
+      const q = page();
+      const what = `${slug}: the reader's own ${o.dataset.q || 'bf16'} at ${o.value} B/param`;
+      q.options[i].selected = true; q.card('h100-80'); q.card(slug);
+      assert.ok(q.options[i].selected, `${what} was changed on the way to this card`);
+      q.card('h100-80');
+      assert.ok(q.options[i].selected, `${what} was changed on the way back`);
+    }
     // Forced to BF16, then the reader picks AWQ there: AWQ stays when FP8 would come back.
     if (blocked) {
       const r = page();
