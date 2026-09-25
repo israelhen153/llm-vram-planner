@@ -2395,6 +2395,12 @@ def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
                     charged = round((c["total_oh"] - 1.5 * dc) / (dc - 1), 1)
                     want = f"{lib} buffers add ~{charged} GB per device peer connection."
                     assert want in blob, f"{where}: the math charges {charged} GB per extra device; wanted {want!r}"
+                    # And the charge itself, as the contract: both engines charging 0.3 off
+                    # NVLink, alike, agreed with each other and with their notes.
+                    link = cfg["nvlink"] and gr.supports_nvlink(card)
+                    assert charged == (0.3 if link else 0.2), (
+                        f"{where}: compute() charges {charged} GB per extra device; the contract is "
+                        f"{0.3 if link else 0.2} {'over NVLink' if link else 'off NVLink'}")
                     checked += 1
                 else:
                     assert "buffers add" not in blob, f"{where}: one device, and the PDF describes peer buffers"

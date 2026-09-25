@@ -2712,6 +2712,12 @@ test("the notes print the peer-buffer figure the math charges, in the card's own
           const charged = Math.round(((c.totalOverhead - 1.5 * c.deviceCount) / (c.deviceCount - 1)) * 10) / 10;
           assert.ok(notes.includes(`${lib} buffers ~${charged} GB/peer.`),
             `${where}: the math charges ${charged} GB per extra device, the notes say ${JSON.stringify((notes.match(/\w+ buffers ~[\d.]+ GB\/peer/) || ['nothing'])[0])}`);
+          /* And the charge itself, as the contract: 0.3 GB over NVLink, 0.2 over any other
+             link. Both engines charging 0.3 on PCIe or Infinity Fabric, alike, agreed with
+             each other and with their notes, and only the goldens saw it. */
+          const link = nvlink && supportsNVLink(card);
+          assert.strictEqual(charged, link ? 0.3 : 0.2,
+            `${where}: the math charges ${charged} GB per extra device ${link ? 'over NVLink' : 'off NVLink'}`);
           checked++;
         } else {
           assert.ok(!/buffers ~/.test(notes), `${where}: one device, and the notes still describe peer buffers`);
