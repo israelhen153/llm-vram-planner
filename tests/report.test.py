@@ -2733,21 +2733,24 @@ test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn
 def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
     """After a gated card is chosen, the precision menu leaves FP8 out and says why,
     and its default is still INT4/AWQ. On every other card, FP8 is offered and the
-    default is the same."""
+    default is the same. At every one of BOARD_SAMPLE's counts: the test answered one
+    GPU, and a menu offering FP8 on a gated card above one board passed."""
     for slug, row in gr.GPUS.items():
-        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index(slug) + 1), "1",
-                   "", "n", "8192", "1"]
-        out = io.StringIO()
-        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(out):
-            cfg = gr.interactive_mode()
-        menu = out.getvalue().split("Precision options:")[1]
-        gated = slug in FP8_GATED
-        assert ("FP8 (1.0 B/param)" in menu) == (not gated), f"{slug}: FP8 {'offered' if gated else 'missing'}"
-        if gated:
-            assert f"FP8 is not offered: {fp8_reason(row)}" in out.getvalue(), f"{slug}: the reason is missing"
-        else:
-            assert "FP8 is not offered" not in out.getvalue(), f"{slug}: FP8 said to be withheld on a card that runs it"
-        assert cfg["bpp"] == 0.5, f"{slug}: the default precision is {cfg['bpp']}, not INT4/AWQ"
+        for n_gpu in BOARD_SAMPLE:
+            asks_nvlink = n_gpu * (row.get("devices", 1) or 1) > 1 and gr.supports_nvlink(row)
+            answers = ([str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index(slug) + 1), str(n_gpu)]
+                       + (["y"] if asks_nvlink else []) + ["", "n", "8192", "1"])
+            out = io.StringIO()
+            with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(out):
+                cfg = gr.interactive_mode()
+            menu = out.getvalue().split("Precision options:")[1]
+            gated, where = slug in FP8_GATED, f"{slug} x{n_gpu}"
+            assert ("FP8 (1.0 B/param)" in menu) == (not gated), f"{where}: FP8 {'offered' if gated else 'missing'}"
+            if gated:
+                assert f"FP8 is not offered: {fp8_reason(row)}" in out.getvalue(), f"{where}: the reason is missing"
+            else:
+                assert "FP8 is not offered" not in out.getvalue(), f"{where}: FP8 said to be withheld on a card that runs it"
+            assert cfg["bpp"] == 0.5, f"{where}: the default precision is {cfg['bpp']}, not INT4/AWQ"
 
 test("the interactive menu offers no FP8 on a gated card, says why, and keeps INT4/AWQ as its default",
      check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it)
