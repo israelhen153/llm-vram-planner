@@ -2266,6 +2266,15 @@ EVERY_TIER_LEADS = ("mi210-64 (a lead on every tier)", dict(gr.GPUS["mi210-64"],
 # reached the per-board cell at exactly two, and only the golden saw it), odd, four
 # (and at four and above, which a sweep of one and three missed), and odd above eight.
 LEAD_BOARDS = (1, 2, 3, 4, 9)
+# Board counts a PDF check samples from the page's own range, since a PDF per count
+# is too slow to sweep all of them: every count from one to nine (one board, and past
+# the eight where the cluster changes), each power of two and the count after it, and
+# the page's maximum. A check on the page's side sweeps every count.
+PAGE_MAX_BOARDS = int(re.search(r'max="(\d+)"[^>]*id="gpu-count"',
+                                open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()).group(1))
+BOARD_SAMPLE = sorted(({*range(1, 10), PAGE_MAX_BOARDS}
+                       | {2 ** k + extra for k in range(4, PAGE_MAX_BOARDS.bit_length()) for extra in (0, 1)})
+                      & set(range(1, PAGE_MAX_BOARDS + 1)))
 
 
 def check_a_lead_changes_no_figure_in_the_pdf():
@@ -2401,10 +2410,37 @@ def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
                     assert charged == (0.3 if link else 0.2), (
                         f"{where}: compute() charges {charged} GB per extra device; the contract is "
                         f"{0.3 if link else 0.2} {'over NVLink' if link else 'off NVLink'}")
+                    # Each device's own overhead charges the same buffer. It carried its own
+                    # copy of the constants once, and 0.3 there off NVLink passed.
+                    per_device = round(c["per_oh"] - 1.5, 1)
+                    assert per_device == (0.3 if link else 0.2), (
+                        f"{where}: each device's overhead charges {per_device} GB for peer buffers")
                     checked += 1
                 else:
                     assert "buffers add" not in blob, f"{where}: one device, and the PDF describes peer buffers"
+                    assert c["per_oh"] == 1.5, f"{where}: one device, and its overhead charges peer buffers"
     assert checked >= 30, f"only {checked} multi-device reports were checked"
+    # And every AMD card at BOARD_SAMPLE's counts: the AMD wording once held only up to
+    # three boards, where the loop above stops.
+    swept = 0
+    for slug, card in gr.GPUS.items():
+        if card["vendor"] != "amd":
+            continue
+        for boards in BOARD_SAMPLE:
+            cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), ctx=8192, conc=16, n_gpu=boards, gpu=card,
+                       nvlink=False, kv_bpp=2, vendor="amd", perfKey=card["perfKey"], hf_model="m",
+                       model_name="M", bpp=2)
+            blob = "\n".join(story_strings(cfg))
+            dc = gr.device_count_for(cfg)
+            where = f"{slug} x{boards}"
+            assert ("VRAM estimates include ~1.5 GB per device for the runtime context: an allowance set "
+                    "for CUDA, not measured on ROCm.") in blob and "CUDA context" not in blob, (
+                f"{where}: the context note is not the ROCm one")
+            assert "NCCL" not in blob, f"{where}: the PDF names NCCL on an AMD card"
+            assert ("RCCL buffers add ~0.2 GB per device peer connection." in blob) == (dc > 1), (
+                f"{where}: the PDF's RCCL line, over {dc} device(s)")
+            swept += 1
+    assert swept == len(BOARD_SAMPLE) * sum(c["vendor"] == "amd" for c in gr.GPUS.values()), swept
 
 test("the PDF prints the overhead compute() charges, in the words of the card's own runtime",
      check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words)

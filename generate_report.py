@@ -433,7 +433,7 @@ def compute(cfg):
     per_w = weights_gb / shard_divisor
     per_kv = kv_gb / device_count
     per_a = act_gb / shard_divisor
-    per_oh = oh_per_gpu + ((0.3 if nvlink else 0.2) if device_count > 1 else 0)
+    per_oh = oh_per_gpu + peer_buffer_gb
     per_total = per_w + per_kv + per_a + per_oh
 
     # Cluster-wide footprint, and the same statement as the per-device

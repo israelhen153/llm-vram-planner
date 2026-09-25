@@ -1187,7 +1187,7 @@ function computeInference(state) {
     weights: weightsGB / shardDivisor,
     kvCache: kvCacheGB / deviceCount,
     activations: activationsGB / shardDivisor,
-    overhead: overheadPerGPU + (deviceCount > 1 ? (hasNVLink ? 0.3 : 0.2) : 0),
+    overhead: overheadPerGPU + peerBufferGB,
   };
   perGPU.total = perGPU.weights + perGPU.kvCache + perGPU.activations + perGPU.overhead;
 

@@ -2718,14 +2718,39 @@ test("the notes print the peer-buffer figure the math charges, in the card's own
           const link = nvlink && supportsNVLink(card);
           assert.strictEqual(charged, link ? 0.3 : 0.2,
             `${where}: the math charges ${charged} GB per extra device ${link ? 'over NVLink' : 'off NVLink'}`);
+          /* Each device's own overhead charges the same buffer. It carried its own copy of
+             the constants once, and 0.3 there off NVLink passed with only the goldens red. */
+          const perDevice = Math.round((c.perGPU.overhead - 1.5) * 10) / 10;
+          assert.strictEqual(perDevice, link ? 0.3 : 0.2,
+            `${where}: each device's overhead charges ${perDevice} GB for peer buffers ${link ? 'over NVLink' : 'off NVLink'}`);
           checked++;
         } else {
           assert.ok(!/buffers ~/.test(notes), `${where}: one device, and the notes still describe peer buffers`);
+          assert.strictEqual(c.perGPU.overhead, 1.5, `${where}: one device, and its overhead charges peer buffers`);
         }
       }
     }
   }
   assert.ok(checked >= 30, `only ${checked} multi-device plans were checked`);
+  /* And every AMD card at every board count the page offers, read off its own control:
+     the AMD wording once held only up to three boards, where the loop above stops. */
+  const maxBoards = Number((html.match(/max="(\d+)"[^>]*id="gpu-count"/) || [])[1]);
+  assert.ok(maxBoards >= 16, `the page's board control no longer reads as a range up to ${maxBoards}`);
+  let swept = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd')) {
+    const h = renderHarness();
+    for (let boards = 1; boards <= maxBoards; boards++) {
+      const st = asState(card, boards, { params: 8, layers: 32, hasNVLink: false });
+      const c = h.computeInference(st);
+      h.renderNotes(st, c);
+      const notes = (h.out['notes-output'] || '').replace(/<[^>]*>/g, ' ');
+      assert.ok(!notes.includes('NCCL'), `${key} x${boards}: the notes name NCCL on an AMD card`);
+      assert.strictEqual(notes.includes('RCCL buffers ~0.2 GB/peer.'), c.deviceCount > 1,
+        `${key} x${boards}: the notes' RCCL line, over ${c.deviceCount} device(s)`);
+      swept++;
+    }
+  }
+  assert.strictEqual(swept, maxBoards * Object.values(GPU_TABLE).filter(g => g.vendor === 'amd').length);
 });
 
 test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
