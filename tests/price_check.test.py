@@ -940,6 +940,29 @@ test("--apply replaces a tier's note with the reading it records, and keeps the 
      check_apply_replaces_a_note_with_the_reading)
 
 
+def check_a_note_goes_exactly_when_a_reading_is_recorded():
+    """Whatever an outcome's status, --apply leaves a noted tier with exactly one
+    answer: the reading if it recorded one, the note if it did not. Only CONFIRMED
+    was tested, and a note kept beside a MOVED reading passed. Every status the
+    tool can give, read off its own source."""
+    src = open(pc.__file__, encoding="utf-8").read()
+    statuses = set(re.findall(r'return "([A-Z]+)"', src)) | set(re.findall(r'Outcome\([^()]*?"([A-Z]+)"', src))
+    assert {"CONFIRMED", "MOVED", "FLAGGED", "MANUAL", "ABORTED"} <= statuses, statuses
+    for status in sorted(statuses):
+        gpus = {"x": {"hyper": 6.0, "spec": 2.39, "spot": 1.11,
+                      "priceNote": {"spot": {"reason": "Held for a second read.", "checked": "2026-09-23"}}}}
+        price = 1.25 if status == "MOVED" else 1.11
+        pc.apply_outcomes(gpus, [pc.Outcome("x", "spot", status, current=1.11, proposed=price,
+                                            reading=_reading(price=price, date="2026-09-28"))])
+        read = "spot" in gpus["x"].get("priceSource", {})
+        noted = "spot" in gpus["x"].get("priceNote", {})
+        assert read != noted, (f"{status}: the tier ends with "
+                               f"{'both a reading and a note' if read else 'neither a reading nor a note'}")
+
+test("whatever the outcome, --apply leaves a noted tier with exactly one of the reading and the note",
+     check_a_note_goes_exactly_when_a_reading_is_recorded)
+
+
 # ===========================================================================
 # Cross-check disagreement: two live sources for one run, not catalog-vs-live
 # ===========================================================================
