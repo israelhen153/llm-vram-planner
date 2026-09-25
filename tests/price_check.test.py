@@ -943,21 +943,38 @@ test("--apply replaces a tier's note with the reading it records, and keeps the 
 def check_a_note_goes_exactly_when_a_reading_is_recorded():
     """Whatever an outcome's status, --apply leaves a noted tier with exactly one
     answer: the reading if it recorded one, the note if it did not. Only CONFIRMED
-    was tested, and a note kept beside a MOVED reading passed. Every status the
-    tool can give, read off its own source."""
+    was tested once, and a note kept beside a MOVED reading passed; then only the
+    spot tier, on a row with nothing else, read days after the note, and a note kept
+    on the hyperscaler tier, beside a same-day reading, or on a row with a hand record
+    passed. Every status the tool can give, read off its own source, on every tier,
+    on a row with nothing else, a hand record or a reading on another tier, read on
+    the note's own day and after it."""
     src = open(pc.__file__, encoding="utf-8").read()
     statuses = set(re.findall(r'return "([A-Z]+)"', src)) | set(re.findall(r'Outcome\([^()]*?"([A-Z]+)"', src))
     assert {"CONFIRMED", "MOVED", "FLAGGED", "MANUAL", "ABORTED"} <= statuses, statuses
+    tiers = ("hyper", "spec", "spot")
+    record = {"provider": "RunPod", "sku": "X", "region": "global", "date": "2026-09-23", "price": 2.39,
+              "url": "https://www.runpod.io/gpu-models/x"}
+    source = {"provider": "aws", "sku": "g6e.xlarge", "region": "us-east-1", "date": "2026-09-22", "price": 1.86}
+    checked = 0
     for status in sorted(statuses):
-        gpus = {"x": {"hyper": 6.0, "spec": 2.39, "spot": 1.11,
-                      "priceNote": {"spot": {"reason": "Held for a second read.", "checked": "2026-09-23"}}}}
-        price = 1.25 if status == "MOVED" else 1.11
-        pc.apply_outcomes(gpus, [pc.Outcome("x", "spot", status, current=1.11, proposed=price,
-                                            reading=_reading(price=price, date="2026-09-28"))])
-        read = "spot" in gpus["x"].get("priceSource", {})
-        noted = "spot" in gpus["x"].get("priceNote", {})
-        assert read != noted, (f"{status}: the tier ends with "
-                               f"{'both a reading and a note' if read else 'neither a reading nor a note'}")
+        for i, tier in enumerate(tiers):
+            other = tiers[(i + 1) % len(tiers)]
+            for extra in ({}, {"priceRecord": {other: dict(record)}}, {"priceSource": {other: dict(source)}}):
+                for date in ("2026-09-23", "2026-09-28"):
+                    gpus = {"x": {"hyper": 6.0, "spec": 2.39, "spot": 1.11,
+                                  "priceNote": {tier: {"reason": "Held for a second read.", "checked": "2026-09-23"}},
+                                  **extra}}
+                    price = gpus["x"][tier] + 0.14 if status == "MOVED" else gpus["x"][tier]
+                    pc.apply_outcomes(gpus, [pc.Outcome("x", tier, status, current=gpus["x"][tier], proposed=price,
+                                                        reading=_reading(price=price, date=date))])
+                    read = tier in gpus["x"].get("priceSource", {})
+                    noted = tier in gpus["x"].get("priceNote", {})
+                    assert read != noted, (f"{status} on {tier}, {sorted(extra) or 'nothing else'} on the row, read "
+                                           f"{date}: the tier ends with "
+                                           f"{'both a reading and a note' if read else 'neither a reading nor a note'}")
+                    checked += 1
+    assert checked == len(statuses) * 3 * 3 * 2, checked
 
 test("whatever the outcome, --apply leaves a noted tier with exactly one of the reading and the note",
      check_a_note_goes_exactly_when_a_reading_is_recorded)
