@@ -1662,6 +1662,13 @@ def validate_arch(cfg):
     if isinstance(n_gpu, (int, float)) and not isinstance(n_gpu, bool) and n_gpu != int(n_gpu):
         raise TypeError(f"cfg['n_gpu'] must be a whole number, got {n_gpu!r}")
 
+    # vLLM names its quantizations in lowercase, and every comparison here does too:
+    # "FP8" in a JSON config got past the FP8 refusal and printed --quantization FP8,
+    # which vLLM rejects, on a card that can't run FP8 weights at all. A config's
+    # quantization is read in any case and written in vLLM's.
+    if isinstance(cfg.get("quant"), str):
+        cfg["quant"] = cfg["quant"].lower()
+
     # One byte per parameter is FP8, the same test compute() uses, so a config that
     # says so without naming a quantization gets --quantization fp8 in its command.
     # Without it the command loaded BF16 weights, twice what the report sized. Other

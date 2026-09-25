@@ -2417,8 +2417,13 @@ def check_fp8_weights_are_refused_where_vllm_cannot_run_them():
         except gr.PlanRefused as refused:
             assert gated, f"{slug}: --prec fp8 was refused on a card that runs it"
             assert str(refused) == fp8_reason(row) + " Choose --prec bf16, awq or gptq.", str(refused)
-        for raw in ({"preset": "llama31-8b", "gpu": slug, "quant": "fp8", "bpp": 1},
-                    {"preset": "llama31-8b", "gpu": slug, "bpp": 1}):
+        # Both of from_json()'s branches, a preset's and a config's own fields, and the
+        # quantization in any case: "FP8" got past the refusal once, and a refusal tested
+        # only in the preset branch could be swallowed in the other without a sound.
+        for raw in ({**base, "gpu": slug, **extra}
+                    for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"]))
+                    for extra in ({"quant": "fp8", "bpp": 1}, {"bpp": 1}, {"quant": "FP8", "bpp": 1},
+                                  {"quant": "Fp8"})):
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
                 json.dump(raw, f)
             try:
@@ -2556,23 +2561,30 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
     while the command named no quantization, so it loaded BF16. One byte per
     parameter is FP8, by compute()'s own test, so the command now says so. A width
     that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is left as the config
-    gave it, and an explicit quant is never overridden."""
-    def plan(raw):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump(dict({"preset": "llama31-8b", "gpu": "h100-80"}, **raw), f)
-        try:
-            cfg = gr.from_json(f.name)
-        finally:
-            os.unlink(f.name)
-        return cfg, gr.build_vllm_cmd(cfg, gr.compute(cfg))
-    cfg, cmd = plan({"bpp": 1})
-    assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (cfg.get("quant"), cmd)
-    cfg, cmd = plan({"bpp": 0.5})
-    assert not cfg.get("quant") and "--quantization" not in cmd, (cfg.get("quant"), cmd)
-    cfg, cmd = plan({"bpp": 1, "quant": "fp8"})
-    assert cfg["quant"] == "fp8", cfg.get("quant")
-    cfg, cmd = plan({"bpp": 0.5, "quant": "gptq"})
-    assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (cfg.get("quant"), cmd)
+    gave it, and an explicit quant is never overridden. Both of from_json()'s
+    branches, a preset's and a config's own fields: the fill once moved into the
+    preset branch alone and every test passed. A quantization in another case is
+    written in vLLM's."""
+    for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+        def plan(raw):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(dict(base, gpu="h100-80", **raw), f)
+            try:
+                cfg = gr.from_json(f.name)
+            finally:
+                os.unlink(f.name)
+            return cfg, gr.build_vllm_cmd(cfg, gr.compute(cfg))
+        branch = "preset" if "preset" in base else "own fields"
+        cfg, cmd = plan({"bpp": 1})
+        assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 0.5})
+        assert not cfg.get("quant") and "--quantization" not in cmd, (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 1, "quant": "fp8"})
+        assert cfg["quant"] == "fp8", (branch, cfg.get("quant"))
+        cfg, cmd = plan({"bpp": 0.5, "quant": "gptq"})
+        assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 0.5, "quant": "AWQ"})
+        assert cfg["quant"] == "awq" and "    --quantization awq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
 
 test("a JSON config at one byte per parameter is FP8 in the command; other widths are left as given",
      check_a_one_byte_json_config_is_fp8_in_the_command)
