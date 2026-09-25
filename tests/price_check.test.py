@@ -1497,11 +1497,17 @@ PRICE_NOTE_FIELDS = {"reason", "checked"}
 # A note is prose, and a note using one of them would read to those checks as
 # a leak (one did, "none in the Azure API", and it was reworded).
 NOTE_LEAK_WORDS = re.compile(r"\b(none|null|undefined|nan)\b", re.I)
-# What in a note reads as a price: a dollar sign, a bare decimal that is not a
-# percentage, a version or part of a name, or an amount in cents, dollars or USD, or
-# per hour. The rule was a dollar sign alone, and "Runcrate lists 0.82 an hour."
-# passed it; only the golden noticed.
-NOTE_PRICE = re.compile(r"\$|(?<![\w.])\d+\.\d+(?![\w.%])|\b(?:cents?|dollars?|USD)\b|/hr\b|/h\b|\bper hour\b|\ban hour\b", re.I)
+# What in a note reads as a price: any currency sign, a bare decimal that is not a
+# percentage, a version or part of a name, an amount named in words, or a rate by the
+# hour however it is written. The rule was a dollar sign alone, and "Runcrate lists
+# 0.82 an hour." passed it; then "2/hour", "2 each hour", "82¢" and "2 hourly" passed
+# the next one. Only the golden noticed any of them.
+NOTE_PRICE = re.compile(r"[$€£¢]"
+                        r"|(?<![\w.])\d+\.\d+(?![\w.%])"
+                        r"|\b(?:cents?|dollars?|USD|EUR|GBP)\b"
+                        r"|/\s*h(?:ou)?rs?\b|/h\b"
+                        r"|\d\s*hourly\b"
+                        r"|\b(?:per|an|a|each|every)\s+hour\b", re.I)
 
 
 def price_note_problems(rows, today):
@@ -1585,6 +1591,11 @@ def check_every_price_note_rule_is_exercised():
         "a dollar figure": (rows_with(dict(good, reason="Runcrate advertises $0.82/hr.")), "read as a price"),
         "a bare decimal": (rows_with(dict(good, reason="Runcrate lists 0.82 an hour.")), "read as a price"),
         "a per-hour amount": (rows_with(dict(good, reason="Runcrate lists 1 per hour.")), "read as a price"),
+        "a rate over a slash": (rows_with(dict(good, reason="Runcrate's at 2/hour.")), "read as a price"),
+        "each hour": (rows_with(dict(good, reason="It charges 2 each hour.")), "read as a price"),
+        "a cent sign": (rows_with(dict(good, reason="Runcrate lists it at 82¢.")), "read as a price"),
+        "hourly after a figure": (rows_with(dict(good, reason="Runcrate lists it at 2 hourly.")), "read as a price"),
+        "another currency": (rows_with(dict(good, reason="It lists it at €2.")), "read as a price"),
         "no closing period": (rows_with(dict(good, reason="No hyperscaler rents this card")), "sentence ends"),
         "a leak word": (rows_with(dict(good, reason="There are none in the Azure API.")), "leak checks"),
         "a date after today": (rows_with(dict(good, checked="2026-09-24")), "after today"),
