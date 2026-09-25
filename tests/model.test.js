@@ -2631,6 +2631,36 @@ test('a lead changes no figure: every row with one renders identically without i
   }
 });
 
+test('a lead reaches no cost figure at any board count the page offers', () => {
+  /* The check above renders every view at LEAD_BOARDS, and a lead's price in the
+     per-board cell at exactly five boards, or at seventeen and more, passed it. The
+     two surfaces that print a tier's figures, the cost table and the copied report,
+     at every count the page's control offers, read off the page. */
+  const maxBoards = Number((html.match(/max="(\d+)"[^>]*id="gpu-count"/) || [])[1]);
+  assert.ok(maxBoards >= 16, `the page's board control no longer reads as a range up to ${maxBoards}`);
+  for (const [key, gpu] of [...ROWS_WITH_LEADS, EVERY_TIER_LEADS]) {
+    const bare = { ...gpu }; delete bare.priceLead;
+    const h = renderHarness();
+    const render = (card, boards) => {
+      const st = asState(card, boards, { params: 8, layers: 32 });
+      const c = h.computeInference(st);
+      h.renderCost(st, c);
+      return { cost: h.out['cost-output'] || '', report: h.exportSummary(st, c) };
+    };
+    for (let boards = 1; boards <= maxBoards; boards++) {
+      const withLead = render(gpu, boards), without = render(bare, boards);
+      let { cost, report } = withLead;
+      for (const leads of Object.values(gpu.priceLead)) for (const l of leads) {
+        cost = cost.split(leadHtml(l)).join('');
+        report = report.split(leadLine(l)).join('');
+      }
+      report = report.split(LEAD_SENTENCE).join('');
+      assert.strictEqual(cost, without.cost, `${key} x${boards}: the cost table differs beyond the lead's own lines`);
+      assert.strictEqual(report, without.report, `${key} x${boards}: the copied report differs beyond the lead's own lines`);
+    }
+  }
+});
+
 test('each lead sits under its own tier, after the note, and only where the tier has no price', () => {
   const ROWS = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot / marketplace' };
   const LINES = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot' };

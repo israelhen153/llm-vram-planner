@@ -2281,14 +2281,16 @@ def check_a_lead_changes_no_figure_in_the_pdf():
     """The owner's rule for Runcrate, and for every lead since: shown, never used as
     a price. Take a lead out of the catalog and compute() returns exactly what it
     did, and the PDF loses the lead's own lines and its sentence in the notes, and
-    nothing else. Every catalog row that carries a lead, and a card with a lead on
-    every tier, at each of LEAD_BOARDS."""
+    nothing else. Every catalog row that carries a lead at each of LEAD_BOARDS, and a
+    card with a lead on every tier at each of BOARD_SAMPLE's counts: a lead's price in
+    the per-board cell at exactly five boards, or at seventeen and more, passed a sweep
+    of LEAD_BOARDS alone."""
     names = {"hyper": "Hyperscaler", "spec": "Specialized", "spot": "Spot"}
     rows = [(slug, card) for slug, card in gr.GPUS.items() if card.get("priceLead")]
     assert len(rows) >= 3, f"only {len(rows)} catalog rows carry a lead — this checks too little"
     for slug, card in rows + [EVERY_TIER_LEADS]:
         bare = {k: v for k, v in card.items() if k != "priceLead"}
-        for boards in LEAD_BOARDS:
+        for boards in (BOARD_SAMPLE if slug == EVERY_TIER_LEADS[0] else LEAD_BOARDS):
             cfg_lead, with_lead = report_strings(card, boards, bpp=2)
             cfg_bare, without = report_strings(bare, boards, bpp=2)
             assert gr.compute(cfg_lead) == gr.compute(cfg_bare), f"{slug} x{boards}: a lead changed what compute() returns"
