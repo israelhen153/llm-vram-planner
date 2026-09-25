@@ -2342,6 +2342,29 @@ test("the PDF's notes explain leads on every card that shows one, and on no othe
      check_the_pdf_explains_leads_on_every_card_that_shows_one)
 
 
+def check_the_pdf_shows_no_note_beside_a_reading_or_a_hand_record():
+    """A tier with an automated reading or a hand record has its answer, and a note
+    beside it would contradict it. The catalog tests refuse the shape, so it is
+    built here: every answered tier in the catalog, with a note slipped in. The
+    page tested a reading once, and the PDF neither."""
+    note = {"reason": "A note that should not show.", "checked": "2026-09-23"}
+    kinds = set()
+    for slug, card in gr.GPUS.items():
+        for tier in ("hyper", "spec", "spot"):
+            kind = ("reading" if (card.get("priceSource") or {}).get(tier)
+                    else "hand record" if (card.get("priceRecord") or {}).get(tier) else None)
+            if not kind:
+                continue
+            kinds.add(kind)
+            noted = dict(card, priceNote=dict(card.get("priceNote") or {}, **{tier: note}))
+            assert gr.price_note_text(noted, tier) == "", f"{slug}/{tier}: a note beside a {kind}"
+            cfg, strings = report_strings(noted, 1, bpp=2)
+            assert not any(note["reason"] in s for s in strings), f"{slug}/{tier}: the PDF shows a note beside a {kind}"
+    assert kinds == {"reading", "hand record"}, f"the catalog no longer has both kinds of answered tier: {kinds}"
+
+test("the PDF shows no note beside a reading or a hand record", check_the_pdf_shows_no_note_beside_a_reading_or_a_hand_record)
+
+
 def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
     """The PDF's two overhead notes, held to the figures compute() charges and to
     the card's own runtime. The context allowance is "CUDA context" on NVIDIA,

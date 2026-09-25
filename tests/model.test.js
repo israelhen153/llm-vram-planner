@@ -2552,16 +2552,23 @@ test("every tier the catalog notes says why, under its own label, in the cost ta
 test('a tier with a reading or a hand record shows that, not a note that slipped in beside it', () => {
   /* The catalog tests refuse a note beside either, but the page is the last line:
      the reading or the record is the answer, and a stale note next to it would
-     contradict it. */
-  const note = { reason: 'No hyperscaler rents this card.', checked: '2026-09-23' };
-  const withSource = { ...GPU_TABLE['h100-80'], priceNote: { hyper: note } };
-  const h = renderHarness();
-  const st = asState(withSource, 1, { params: 8, layers: 32 });
-  const c = h.computeInference(st);
-  h.renderCost(st, c);
-  assert.ok(st.priceSource && st.priceSource.hyper, 'h100-80 no longer has an automated hyper reading; pick another row');
-  assert.ok(!(h.out['cost-output'] || '').includes(note.reason), 'the cost table shows a note beside a reading');
-  assert.ok(!h.exportSummary(st, c).includes(note.reason), 'the copied report shows a note beside a reading');
+     contradict it. Every tier in the catalog that has either, with a note slipped
+     in: only a reading was tested once, and a note shown beside a hand record
+     passed. */
+  const note = { reason: 'A note that should not show.', checked: '2026-09-23' };
+  const kinds = new Set();
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) for (const tier of ['hyper', 'spec', 'spot']) {
+    const kind = (gpu.priceSource || {})[tier] ? 'reading' : (gpu.priceRecord || {})[tier] ? 'hand record' : null;
+    if (!kind) continue;
+    kinds.add(kind);
+    const h = renderHarness();
+    const st = asState({ ...gpu, priceNote: { ...(gpu.priceNote || {}), [tier]: note } }, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.renderCost(st, c);
+    assert.ok(!(h.out['cost-output'] || '').includes(note.reason), `${key}/${tier}: the cost table shows a note beside a ${kind}`);
+    assert.ok(!h.exportSummary(st, c).includes(note.reason), `${key}/${tier}: the copied report shows a note beside a ${kind}`);
+  }
+  assert.deepStrictEqual([...kinds].sort(), ['hand record', 'reading'], 'the catalog no longer has both kinds of answered tier');
 });
 
 /* A lead as the page prints it, written out here as the contract: in the cost table
