@@ -20,8 +20,10 @@ gone and invisible to anyone who cloned the repo.
 
 ```
 tests/sabotage/parallel.py              # every driver, split across worker worktrees
+tests/sabotage/parallel.py --early-exit # the same, each sabotage stopped at its first real catch
 tests/sabotage/parallel.py --ref <commit> engine_r10_rocm_guidance   # another commit's corpus, named drivers
 tests/sabotage/parallel.py --compare <logdir> <logdir>   # two runs, sabotage by sabotage
+tests/sabotage/parallel.py --subset --compare <serial logdir> <early-exit logdir>   # the same, for early exit
 tests/sabotage/chain.sh                 # every driver, one after another, in this checkout
 tests/sabotage/chain.sh engine_r3_fixed_assumptions engine_r3_identical_estimate_and_href   # named drivers
 LOGDIR=path tests/sabotage/chain.sh     # logs elsewhere (default: tmp/sabotage, gitignored)
@@ -36,7 +38,15 @@ once per driver. Its logs have `chain.sh`'s shape, so `--compare` can hold a par
 serial one. It never touches your checkout, so it needs no clean tree, and uncommitted work is
 not judged. The workers live in `tmp/corpus-workers/` and are reused from run to run. **The
 script never deletes one:** a worker that is dirty, locked or missing stops the run and is
-listed, and removing them is the owner's call.
+listed, and removing them is the owner's call. One run holds the workers at a time.
+
+**`--early-exit` stops at the first failure that isn't a golden's.** Suites run cheapest and most
+often red first, and a sabotage whose failures so far are all golden comparisons keeps going, so
+the run still reports it: every run lists the catches only a golden made in `golden-only.txt`,
+since regenerating the goldens would hide them. Which failures are golden ones is found by
+emptying the goldens and running the suites, not from test names. Workers write no bytecode and
+refresh every tracked `.py`'s timestamp first: a sabotage restored inside a second once left a
+`.pyc` that turned 90 later runs on one worker into false catches.
 
 **Commit before running `chain.sh`.** The drivers restore with `git checkout -- <file>`, which restores
 the index and not unsaved edits. Running one over work in progress has destroyed work on this
