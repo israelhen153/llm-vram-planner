@@ -4579,6 +4579,31 @@ test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, f
   }
 });
 
+test('a local model is mounted into the ROCm container wherever it lives, and a hub id is not', () => {
+  /* The command test's own models held only /opt once, then three listed paths, and a
+     mount skipping any path with a dot, or deeper than four levels, passed. Paths
+     generated as the PDF's test generates them: roots in and out of /opt, crossed with
+     tails carrying dots, dashes, underscores, a hidden directory and deep nesting. */
+  const roots = ['/opt', '/mnt/nfs', '/data', '/home/user/.cache/huggingface/hub', '/srv/models.d', ''];
+  const tails = ['llama-8b', 'llama-3.1-8b', 'checkpoint_v2.1', 'models--meta-llama--Llama-3.1-8B/snapshots/0123abc',
+                 'Llama-3.1-8B-Instruct-Q4_K_M.gguf', 'a/b/c/d/e/f'];
+  const local = roots.flatMap(root => tails.map(tail => `${root}/${tail}`));
+  const hub = ['meta-llama/Llama-3.1-8B-Instruct', 'org/model.v2', 'Qwen/Qwen3-8B'];
+  let mounted = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd')) {
+    const h = renderHarness();
+    const st = asState(card, 1, { ...dense8BPlan });
+    const c = h.computeInference(st);
+    if (!c.fits) continue;
+    for (const model of [...local, ...hub]) {
+      const lines = h.buildVllmCommand(st, c, model).split('\n');
+      assert.strictEqual(lines.includes(`    -v ${model}:${model} \\`), model.startsWith('/'), `${key}: ${model}`);
+      mounted += model.startsWith('/');
+    }
+  }
+  assert.ok(mounted >= 3 * local.length, `only ${mounted} local paths reached a command`);
+});
+
 test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn't know", () => {
   /* No catalog row has such a target today, so a gate that let FP8 through there
      passed every test. A target the table lacks, and no target at all. */

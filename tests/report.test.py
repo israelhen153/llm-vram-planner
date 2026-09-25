@@ -48,6 +48,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -2513,31 +2514,42 @@ test("an AMD card's PDF runs vLLM's own ROCm image and says what else it needs, 
      check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need)
 
 
+# Local model paths, generated rather than listed: roots in and out of /opt, crossed
+# with tails that carry dots, dashes, underscores, a hidden directory and deep nesting.
+# Three listed paths let a mount skip any path with a dot, or deeper than four levels.
+LOCAL_MODEL_PATHS = [f"{root}/{tail}"
+                     for root in ("/opt", "/mnt/nfs", "/data", "/home/user/.cache/huggingface/hub", "/srv/models.d", "")
+                     for tail in ("llama-8b", "llama-3.1-8b", "checkpoint_v2.1", "models--meta-llama--Llama-3.1-8B/snapshots/0123abc",
+                                  "Llama-3.1-8B-Instruct-Q4_K_M.gguf", "a/b/c/d/e/f")]
+HUB_MODEL_IDS = ["meta-llama/Llama-3.1-8B-Instruct", "org/model.v2", "Qwen/Qwen3-8B"]
+
+
 def check_a_local_model_is_mounted_wherever_it_lives():
     """The ROCm command mounts a local model path at the same path, so the container
     can read the weights: the air-gapped case a JSON config's hf_model exists for.
-    The tests used only /opt/models/..., and a mount made only under /opt passed all
-    of them. Every AMD card, local paths in and out of /opt, and a hub id, through
-    the JSON path a local model arrives by."""
+    The tests used only /opt/models/..., and a mount made only under /opt passed;
+    then three listed paths, and a mount skipping paths with a dot passed. Every AMD
+    card, through the JSON path a local model arrives by, with every generated local
+    path and every hub id."""
     mounted = 0
     for slug, row in gr.GPUS.items():
         if row["vendor"] != "amd":
             continue
-        for path in ("/opt/models/YourModel", "/mnt/models/llama-8b", "/data/checkpoints/llama-8b",
-                     "meta-llama/Llama-3.1-8B-Instruct"):
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-                json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": path, "bpp": 2}, f)
-            try:
-                cfg = gr.from_json(f.name)
-            finally:
-                os.unlink(f.name)
-            cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg)).split("\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": "/opt/models/YourModel", "bpp": 2}, f)
+        try:
+            cfg = gr.from_json(f.name)
+        finally:
+            os.unlink(f.name)
+        comp = gr.compute(cfg)
+        for path in LOCAL_MODEL_PATHS + HUB_MODEL_IDS:
+            cmd = gr.build_vllm_cmd(dict(cfg, hf_model=path), comp).split("\n")
             if cmd[0].startswith("#"):
-                continue
-            local = path.startswith("/")
-            assert (f"    -v {path}:{path} \\" in cmd) == local, (slug, path, cmd)
+                break
+            local, q = path.startswith("/"), shlex.quote(path)
+            assert (f"    -v {q}:{q} \\" in cmd) == local, (slug, path, cmd)
             mounted += local
-    assert mounted >= 8, f"only {mounted} local paths reached a command"
+    assert mounted >= 3 * len(LOCAL_MODEL_PATHS), f"only {mounted} local paths reached a command"
 
 test("a local model is mounted into the ROCm container wherever it lives, and a hub id is not",
      check_a_local_model_is_mounted_wherever_it_lives)
