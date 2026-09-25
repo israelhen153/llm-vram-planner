@@ -267,6 +267,26 @@ def registered_worktrees(root):
     return trees
 
 
+def hold_the_workers(root):
+    """One run at a time. A second run would check the same workers out at its own
+    commit underneath the first, and both would judge a tree neither chose. The
+    lock is released when this process exits, however it exits."""
+    import fcntl
+    base = os.path.join(root, WORKERS_DIR)
+    os.makedirs(base, exist_ok=True)
+    fh = open(os.path.join(base, ".lock"), "a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.seek(0)
+        sys.exit(f"refusing to run: another run holds the workers ({fh.read().strip() or 'pid unknown'})")
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid {os.getpid()}, since {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n")
+    fh.flush()
+    return fh
+
+
 def prepare_workers(root, sha, jobs):
     """Reuse clean workers, create missing ones, and refuse on anything else, all
     before any worker is touched."""
@@ -360,6 +380,7 @@ def run(args):
     os.makedirs(logdir, exist_ok=True)
 
     jobs = args.jobs or os.cpu_count() or 2
+    lock = hold_the_workers(root)  # noqa: F841 — held until exit
     workers = prepare_workers(root, sha, jobs)
     drivers = discover(workers[0], args.drivers)
     py = [d for d, kind in drivers if kind == "py"]
