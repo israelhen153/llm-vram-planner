@@ -4074,7 +4074,7 @@ test('the sabotage README names every driver, and no driver it does not have', (
      script here must be a named support file. Without the second half, a driver
      misnamed out of the pattern would drop out of every check below in silence,
      which is the failure this whole corpus exists to catch in other code. */
-  const SUPPORT = ['harness.py', 'anchors.py', 'chain.sh', 'suites.sh'];
+  const SUPPORT = ['harness.py', 'anchors.py', 'chain.sh', 'suites.sh', 'parallel.py'];
   const scripts = fs.readdirSync(dir).filter(f => /\.(py|sh)$/.test(f));
   const onDisk = scripts.filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f)).sort();
   const stray = scripts.filter(f => !onDisk.includes(f) && !SUPPORT.includes(f));
