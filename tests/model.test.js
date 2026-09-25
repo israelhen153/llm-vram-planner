@@ -2571,6 +2571,16 @@ const leadLine = (l) => `  - Lead, not used: ${l.provider} lists $${l.price.toFi
   (l.about ? ` About ${l.provider}: ${l.about}` : '') + '\n';
 const LEAD_SENTENCE = 'A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. ';
 const ROWS_WITH_LEADS = Object.entries(GPU_TABLE).filter(([, g]) => g.priceLead && Object.keys(g.priceLead).length);
+/* A card with a lead on every tier, which the catalog doesn't have: its leads sit on
+   spec and spot, so a surface that dropped the hyperscaler's leads passed. A card
+   with no price in any tier, each lead at its own figure. */
+const EVERY_TIER_LEADS = ['mi210-64 (a lead on every tier)', { ...GPU_TABLE['mi210-64'],
+  priceLead: Object.fromEntries(['hyper', 'spec', 'spot'].map((tier, i) => [tier,
+    [{ provider: `Lead${i}`, price: 1.51 + i / 100, url: `https://lead${i}.example/p`, date: '2026-09-23', why: `Not confirmed (${tier}).` }]])) }];
+/* Board counts a lead is held out of the figures at: one board, two (a lead once
+   reached the per-board cell at exactly two, and only the golden saw it), odd, four
+   (and at four and above, which a sweep of one and three missed), and odd above eight. */
+const LEAD_BOARDS = [1, 2, 3, 4, 9];
 
 test('a lead changes no figure: every row with one renders identically without it, but for the lead itself', () => {
   /* The owner's rule for Runcrate, and for every lead since: shown, never used as a
@@ -2589,9 +2599,9 @@ test('a lead changes no figure: every row with one renders identically without i
     }
     return { c, out: { ...h.out, '(copied report)': h.exportSummary(st, c) } };
   };
-  for (const [key, gpu] of ROWS_WITH_LEADS) {
+  for (const [key, gpu] of [...ROWS_WITH_LEADS, EVERY_TIER_LEADS]) {
     const bare = { ...gpu }; delete bare.priceLead;
-    for (const boards of [1, 3]) {
+    for (const boards of LEAD_BOARDS) {
       const withLead = renderAll(gpu, boards), without = renderAll(bare, boards);
       assert.deepStrictEqual(withLead.c, without.c, `${key} x${boards}: a lead changed what the page computes`);
       let removed = 0;
@@ -2617,7 +2627,7 @@ test('a lead changes no figure: every row with one renders identically without i
 test('each lead sits under its own tier, after the note, and only where the tier has no price', () => {
   const ROWS = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot / marketplace' };
   const LINES = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot' };
-  for (const [key, gpu] of ROWS_WITH_LEADS) {
+  for (const [key, gpu] of [...ROWS_WITH_LEADS, EVERY_TIER_LEADS]) {
     const h = renderHarness();
     const st = asState(gpu, 1, { params: 8, layers: 32 });
     const c = h.computeInference(st);
@@ -2648,6 +2658,27 @@ test('each lead sits under its own tier, after the note, and only where the tier
   h.renderCost(st, c);
   assert.ok(!(h.out['cost-output'] || '').includes('Lead, not used') && !h.exportSummary(st, c).includes('Lead, not used'),
     'a lead on a priced tier is shown');
+});
+
+test('the notes explain leads on every card that shows one, and on no other', () => {
+  /* The sentence was once gated on the specialized tier's leads alone, and only the
+     golden saw a card whose leads sit on spot lose it. Every catalog row, and a card
+     with a single lead on each tier in turn. */
+  const lead = { provider: 'L', price: 1.5, url: 'https://l.example/p', date: '2026-09-23', why: 'Not confirmed.' };
+  const cases = [...Object.entries(GPU_TABLE), ...['hyper', 'spec', 'spot'].map(tier =>
+    [`mi210-64 (a lead on ${tier} only)`, { ...GPU_TABLE['mi210-64'], priceLead: { [tier]: [lead] } }])];
+  let shown = 0;
+  for (const [key, gpu] of cases) {
+    const h = renderHarness();
+    const st = asState(gpu, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.renderNotes(st, c);
+    const shows = ['hyper', 'spec', 'spot'].some(tier => gpu[tier] === null && ((gpu.priceLead || {})[tier] || []).length);
+    assert.strictEqual((h.out['notes-output'] || '').includes(LEAD_SENTENCE), shows,
+      `${key}: the notes ${shows ? 'lack' : 'carry'} the sentence explaining leads`);
+    shown += shows;
+  }
+  assert.ok(shown >= 5, `only ${shown} cards showed a lead`);
 });
 
 test("the notes print the peer-buffer figure the math charges, in the card's own library's name", () => {

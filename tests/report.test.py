@@ -2255,17 +2255,31 @@ def lead_line(name, lead):
             f"{lead['url']}). {lead['why']}" + (f" About {lead['provider']}: {lead['about']}" if lead.get("about") else ""))
 
 
+# A card with a lead on every tier, which the catalog doesn't have: its leads sit on
+# spec and spot, so a PDF that dropped the hyperscaler's leads passed. A card with no
+# price in any tier, each lead at its own figure.
+EVERY_TIER_LEADS = ("mi210-64 (a lead on every tier)", dict(gr.GPUS["mi210-64"], priceLead={
+    tier: [{"provider": f"Lead{i}", "price": 1.51 + i / 100, "url": f"https://lead{i}.example/p",
+            "date": "2026-09-23", "why": f"Not confirmed ({tier})."}]
+    for i, tier in enumerate(("hyper", "spec", "spot"))}))
+# Board counts a lead is held out of the figures at: one board, two (a lead once
+# reached the per-board cell at exactly two, and only the golden saw it), odd, four
+# (and at four and above, which a sweep of one and three missed), and odd above eight.
+LEAD_BOARDS = (1, 2, 3, 4, 9)
+
+
 def check_a_lead_changes_no_figure_in_the_pdf():
     """The owner's rule for Runcrate, and for every lead since: shown, never used as
     a price. Take a lead out of the catalog and compute() returns exactly what it
     did, and the PDF loses the lead's own lines and its sentence in the notes, and
-    nothing else. Every catalog row that carries a lead, at one board and three."""
+    nothing else. Every catalog row that carries a lead, and a card with a lead on
+    every tier, at each of LEAD_BOARDS."""
     names = {"hyper": "Hyperscaler", "spec": "Specialized", "spot": "Spot"}
     rows = [(slug, card) for slug, card in gr.GPUS.items() if card.get("priceLead")]
     assert len(rows) >= 3, f"only {len(rows)} catalog rows carry a lead — this checks too little"
-    for slug, card in rows:
+    for slug, card in rows + [EVERY_TIER_LEADS]:
         bare = {k: v for k, v in card.items() if k != "priceLead"}
-        for boards in (1, 3):
+        for boards in LEAD_BOARDS:
             cfg_lead, with_lead = report_strings(card, boards, bpp=2)
             cfg_bare, without = report_strings(bare, boards, bpp=2)
             assert gr.compute(cfg_lead) == gr.compute(cfg_bare), f"{slug} x{boards}: a lead changed what compute() returns"
@@ -2284,6 +2298,48 @@ def check_a_lead_changes_no_figure_in_the_pdf():
 
 test("a lead changes no figure in the PDF: every row with one reports identically without it, but for the lead",
      check_a_lead_changes_no_figure_in_the_pdf)
+
+
+def check_the_pdf_shows_leads_only_on_tiers_with_no_price():
+    """A lead stands beside a tier that has no price, and a price is the answer
+    wherever there is one. The page's tests held that and the PDF's didn't: its
+    lead list lost the no-price gate and nothing noticed. A lead put on a priced
+    tier of each card that has one, which the catalog tests refuse."""
+    checked = 0
+    for slug, card in gr.GPUS.items():
+        for tier in ("hyper", "spec", "spot"):
+            if card[tier] is None:
+                continue
+            lead = {"provider": "X", "price": 9.87, "url": "https://x.example/p", "date": "2026-09-23", "why": "Test."}
+            priced = dict(card, priceLead={tier: [lead]})
+            assert gr.price_leads(priced, tier) == [], f"{slug}/{tier}: a lead on a priced tier is listed"
+            cfg, strings = report_strings(priced, 1, bpp=2)
+            assert not any("Lead, not used" in s or "$9.87" in s for s in strings), (
+                f"{slug}/{tier}: the PDF shows a lead beside a price")
+            checked += 1
+    assert checked >= 20, f"only {checked} priced tiers checked"
+
+test("the PDF shows a lead only beside a tier with no price", check_the_pdf_shows_leads_only_on_tiers_with_no_price)
+
+
+def check_the_pdf_explains_leads_on_every_card_that_shows_one():
+    """The notes' sentence on leads, exactly where a tier shows one: every catalog
+    row, and a card with a single lead on each tier in turn. On the page it was
+    once gated on the specialized tier alone, and only the golden saw it."""
+    lead = {"provider": "L", "price": 1.5, "url": "https://l.example/p", "date": "2026-09-23", "why": "Not confirmed."}
+    cases = list(gr.GPUS.items()) + [(f"mi210-64 (a lead on {tier} only)", dict(gr.GPUS["mi210-64"], priceLead={tier: [lead]}))
+                                     for tier in ("hyper", "spec", "spot")]
+    shown = 0
+    for slug, card in cases:
+        cfg, strings = report_strings(card, 1, bpp=2)
+        shows = any(card[tier] is None and (card.get("priceLead") or {}).get(tier) for tier in ("hyper", "spec", "spot"))
+        assert any(LEAD_SENTENCE in s for s in strings) == shows, (
+            f"{slug}: the PDF's notes {'lack' if shows else 'carry'} the sentence explaining leads")
+        shown += shows
+    assert shown >= 5, f"only {shown} cards showed a lead"
+
+test("the PDF's notes explain leads on every card that shows one, and on no other",
+     check_the_pdf_explains_leads_on_every_card_that_shows_one)
 
 
 def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
