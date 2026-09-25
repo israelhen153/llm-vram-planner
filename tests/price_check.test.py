@@ -1480,6 +1480,11 @@ PRICE_NOTE_FIELDS = {"reason", "checked"}
 # A note is prose, and a note using one of them would read to those checks as
 # a leak (one did, "none in the Azure API", and it was reworded).
 NOTE_LEAK_WORDS = re.compile(r"\b(none|null|undefined|nan)\b", re.I)
+# What in a note reads as a price: a dollar sign, a bare decimal that is not a
+# percentage, a version or part of a name, or an amount in cents, dollars or USD, or
+# per hour. The rule was a dollar sign alone, and "Runcrate lists 0.82 an hour."
+# passed it; only the golden noticed.
+NOTE_PRICE = re.compile(r"\$|(?<![\w.])\d+\.\d+(?![\w.%])|\b(?:cents?|dollars?|USD)\b|/hr\b|/h\b|\bper hour\b|\ban hour\b", re.I)
 
 
 def price_note_problems(rows, today):
@@ -1517,9 +1522,9 @@ def price_note_problems(rows, today):
             if not isinstance(reason, str) or not reason.strip():
                 bad.append(f"{where}.reason: {reason!r} — must be a non-empty sentence")
             else:
-                if "$" in reason:
-                    bad.append(f"{where}.reason: carries a dollar figure, which beside the tier's own would "
-                               "read as a price")
+                if NOTE_PRICE.search(reason):
+                    bad.append(f"{where}.reason: carries {NOTE_PRICE.search(reason).group(0)!r}, a figure that "
+                               "beside the tier's own would read as a price")
                 if not reason.rstrip().endswith("."):
                     bad.append(f"{where}.reason: must end as a sentence ends — both engines print "
                                "'Checked <date>.' straight after it")
@@ -1560,7 +1565,9 @@ def check_every_price_note_rule_is_exercised():
         "a missing field": (rows_with({"reason": good["reason"]}), "expected exactly"),
         "an extra field": (rows_with(dict(good, price=2.0)), "expected exactly"),
         "a blank reason": (rows_with(dict(good, reason="  ")), "non-empty sentence"),
-        "a dollar figure": (rows_with(dict(good, reason="Runcrate advertises $0.82/hr.")), "dollar figure"),
+        "a dollar figure": (rows_with(dict(good, reason="Runcrate advertises $0.82/hr.")), "read as a price"),
+        "a bare decimal": (rows_with(dict(good, reason="Runcrate lists 0.82 an hour.")), "read as a price"),
+        "a per-hour amount": (rows_with(dict(good, reason="Runcrate lists 1 per hour.")), "read as a price"),
         "no closing period": (rows_with(dict(good, reason="No hyperscaler rents this card")), "sentence ends"),
         "a leak word": (rows_with(dict(good, reason="There are none in the Azure API.")), "leak checks"),
         "a date after today": (rows_with(dict(good, checked="2026-09-24")), "after today"),
