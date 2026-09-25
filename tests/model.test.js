@@ -4372,14 +4372,15 @@ test("an AMD card's command is vLLM's ROCm image with the same serve arguments; 
   /* The property: the launcher differs, the plan does not. The arguments after the
      image are exactly the ones `vllm serve` gets for the same plan, since the image's
      entrypoint is `vllm serve`. Every catalog card, every weight option the page
-     offers, both KV types, one to three boards, a local path and a hub id. */
+     offers, both KV types, one to three boards, local paths in and out of /opt, and
+     a hub id: with only /opt in the list, a mount made only for /opt passed. */
   let amd = 0, nvidia = 0;
   for (const [key, card] of Object.entries(GPU_TABLE)) {
     for (const opt of WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2, 3]) {
       const h = renderHarness();
       const st = asState(card, boards, { ...dense8BPlan, ...opt, kvBytesPerValue: kv });
       const c = h.computeInference(st);
-      for (const model of ['/opt/models/YourModel', 'meta-llama/Llama-3.1-8B-Instruct']) {
+      for (const model of ['/opt/models/YourModel', '/mnt/models/llama-8b', 'meta-llama/Llama-3.1-8B-Instruct']) {
         const cmd = h.buildVllmCommand(st, c, model);
         const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}, ${model}`;
         if (!c.fits) { assert.ok(cmd.startsWith('# Does not fit'), `${where}: no fit, and a command`); continue; }

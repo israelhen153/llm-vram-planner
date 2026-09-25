@@ -2390,6 +2390,36 @@ test("an AMD card's PDF runs vLLM's own ROCm image and says what else it needs, 
      check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need)
 
 
+def check_a_local_model_is_mounted_wherever_it_lives():
+    """The ROCm command mounts a local model path at the same path, so the container
+    can read the weights: the air-gapped case a JSON config's hf_model exists for.
+    The tests used only /opt/models/..., and a mount made only under /opt passed all
+    of them. Every AMD card, local paths in and out of /opt, and a hub id, through
+    the JSON path a local model arrives by."""
+    mounted = 0
+    for slug, row in gr.GPUS.items():
+        if row["vendor"] != "amd":
+            continue
+        for path in ("/opt/models/YourModel", "/mnt/models/llama-8b", "/data/checkpoints/llama-8b",
+                     "meta-llama/Llama-3.1-8B-Instruct"):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": path, "bpp": 2}, f)
+            try:
+                cfg = gr.from_json(f.name)
+            finally:
+                os.unlink(f.name)
+            cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg)).split("\n")
+            if cmd[0].startswith("#"):
+                continue
+            local = path.startswith("/")
+            assert (f"    -v {path}:{path} \\" in cmd) == local, (slug, path, cmd)
+            mounted += local
+    assert mounted >= 8, f"only {mounted} local paths reached a command"
+
+test("a local model is mounted into the ROCm container wherever it lives, and a hub id is not",
+     check_a_local_model_is_mounted_wherever_it_lives)
+
+
 # The cards vLLM v0.30.0 has no FP8 weight kernel for, read off the catalog: AMD rows
 # whose LLVM target is not CDNA3's. Written out rather than taken from the engine's
 # table, so a change to the table shows up here as a disagreement.
