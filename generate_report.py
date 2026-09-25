@@ -1735,15 +1735,24 @@ def from_json(path):
     return validate_arch(cfg)
 
 
+# What each --prec means: the weights' bytes per parameter, and the --quantization
+# vLLM loads them with ("" for none). The command line takes these and nothing
+# else: an unknown value, a typo included, used to be planned as AWQ 4-bit without
+# a word.
+PRECISIONS = {"bf16": (2, ""), "fp8": (1, "fp8"), "int4": (0.5, "awq"), "awq": (0.5, "awq"),
+              "gptq": (0.5, "gptq"), "q4km": (0.63, "gguf"), "q6k": (0.82, "gguf"), "q8": (1.1, "gguf")}
+
+
 def from_cli_args(args):
+    if args.prec not in PRECISIONS:
+        raise ValueError(f"Unknown precision: {args.prec}. Available: {', '.join(PRECISIONS)}")
     preset = PRESETS.get(args.preset)
     gpu = GPUS.get(args.gpu, GPUS[DEFAULT_GPU_KEY])
     if preset:
         cfg = arch_fields(preset)
+        bpp, quant = PRECISIONS[args.prec]
         cfg.update({
-            "bpp": {"bf16":2,"fp8":1,"int4":0.5,"awq":0.5,"gptq":0.5,"q4km":0.63,"q6k":0.82,"q8":1.1}.get(args.prec, 0.5),
-            "quant": {"bf16":"","fp8":"fp8","int4":"awq","awq":"awq","gptq":"gptq",
-                      "q4km":"gguf","q6k":"gguf","q8":"gguf"}.get(args.prec, "awq"),
+            "bpp": bpp, "quant": quant,
             "ctx": args.ctx, "conc": args.conc,
             "n_gpu": args.ngpu, "gpu": gpu,
             "nvlink": nvlink_for(gpu, not args.no_nvlink),
@@ -1764,7 +1773,8 @@ if __name__ == "__main__":
     parser.add_argument("--preset", help=f"Model preset: {', '.join(PRESETS.keys())}")
     parser.add_argument("--gpu", default=DEFAULT_GPU_KEY, help=f"GPU: {', '.join(GPUS.keys())}")
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs")
-    parser.add_argument("--prec", default="awq", help="Precision: bf16, fp8, awq, gptq, q4km, q6k, q8")
+    parser.add_argument("--prec", default="awq", choices=list(PRECISIONS),
+                        help=f"Precision: {', '.join(PRECISIONS)}")
     parser.add_argument("--fp8-kv", action="store_true", help="Use FP8 KV cache")
     parser.add_argument("--no-nvlink", action="store_true", help="PCIe only (no NVLink)")
     parser.add_argument("--ctx", type=int, default=8192, help="Context length")

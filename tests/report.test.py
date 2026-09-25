@@ -1899,12 +1899,11 @@ GGUF_LINES = [
 
 
 def prec_quant_pairs():
-    """Every --prec value from_cli_args() knows, with the quantization it maps to,
-    read from its own table so a precision added there is covered here too."""
-    src = open(gr.__file__).read()
-    table = re.search(r'"quant": \{([^}]*)\}', src)
-    assert table, "from_cli_args() no longer has the --prec -> quant table this reads"
-    pairs = re.findall(r'"(\w+)":"(\w*)"', table.group(1))
+    """Every --prec value from_cli_args() knows, with the quantization it maps to:
+    its PRECISIONS table, so a precision added there is covered here too. What the
+    table says is pinned separately, against PRECISIONS_CONTRACT: expectations read
+    from the table follow any change made to it."""
+    pairs = [(token, quant) for token, (bpp, quant) in gr.PRECISIONS.items()]
     assert {q for _, q in pairs} >= {"", "fp8", "awq", "gptq", "gguf"}, pairs
     return pairs
 
@@ -2451,6 +2450,52 @@ def check_the_cli_exits_2_with_the_reason():
 
 test("the CLI refuses --prec fp8 on a gated card with the reason and exit status 2, and writes no PDF",
      check_the_cli_exits_2_with_the_reason)
+
+
+# What each --prec means, as a literal. The sweeps read their expectations from
+# gr.PRECISIONS, so a change to the table carries them along with it: --prec q8
+# losing --quantization gguf, and --prec fp8 sized as BF16, both passed every one.
+PRECISIONS_CONTRACT = {"bf16": (2, ""), "fp8": (1, "fp8"), "int4": (0.5, "awq"), "awq": (0.5, "awq"),
+                       "gptq": (0.5, "gptq"), "q4km": (0.63, "gguf"), "q6k": (0.82, "gguf"), "q8": (1.1, "gguf")}
+
+
+def check_every_prec_means_what_its_contract_says():
+    """The table as a whole, then each entry read back through from_cli_args() on a
+    card that runs FP8, so nothing is refused on the way."""
+    assert gr.PRECISIONS == PRECISIONS_CONTRACT, (
+        f"--prec's table is now {gr.PRECISIONS}; a deliberate change updates PRECISIONS_CONTRACT with it")
+    for token, (bpp, quant) in PRECISIONS_CONTRACT.items():
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.prec = "h100-80", token
+        cfg = gr.from_cli_args(args)
+        assert (cfg["bpp"], cfg["quant"]) == (bpp, quant), (token, cfg["bpp"], cfg["quant"])
+
+test("every --prec means the bytes per parameter and the quantization its contract says",
+     check_every_prec_means_what_its_contract_says)
+
+
+def check_an_unknown_prec_is_refused():
+    """--prec int8, or any typo, exited 0 with a plan for AWQ 4-bit. The command line
+    refuses it now, naming the precisions it knows, with exit status 2 and no PDF,
+    and from_cli_args() refuses it too."""
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "r.pdf")
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--preset", "llama31-8b",
+                              "--gpu", "h100-80", "--prec", "int8", "-o", out], capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert "int8" in run.stderr and all(p in run.stderr for p in PRECISIONS_CONTRACT), run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a precision nobody defined"
+    args = cli_args_for("llama31-8b")
+    args.prec = "int8"
+    try:
+        gr.from_cli_args(args)
+    except ValueError as e:
+        assert "int8" in str(e) and all(p in str(e) for p in PRECISIONS_CONTRACT), str(e)
+    else:
+        raise AssertionError("from_cli_args() planned --prec int8")
+
+test("an unknown --prec is refused, naming the precisions the CLI knows, not planned as AWQ",
+     check_an_unknown_prec_is_refused)
 
 
 def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
