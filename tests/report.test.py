@@ -2618,6 +2618,25 @@ test("an unknown --prec is refused, naming the precisions the CLI knows, not pla
      check_an_unknown_prec_is_refused)
 
 
+def check_fp8_is_refused_on_an_amd_target_the_planner_does_not_know():
+    """No catalog row has such a target today, so a gate that let FP8 through there
+    passed every test. A target the table lacks, and no target at all."""
+    base = dict(gr.GPUS["mi300x-192"], name="Unknown-target card")
+    want = ("vLLM v0.30.0 loads FP8 weights only on CDNA3 or newer, or RDNA4, and Unknown-target card's LLVM "
+            "target is not one this planner knows.")
+    for row in (dict(base, gfx="gfx000"), {k: v for k, v in base.items() if k != "gfx"}):
+        assert gr.fp8_weights_blocked(row) == want, (row.get("gfx"), gr.fp8_weights_blocked(row))
+        try:
+            gr.refuse_fp8_where_vllm_cannot({"gpu": row, "quant": "fp8", "bpp": 1})
+        except gr.PlanRefused as refused:
+            assert str(refused) == want + " Choose --prec bf16, awq or gptq.", str(refused)
+        else:
+            raise AssertionError(f"gfx {row.get('gfx')}: FP8 weights were planned")
+
+test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn't know",
+     check_fp8_is_refused_on_an_amd_target_the_planner_does_not_know)
+
+
 def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
     """After a gated card is chosen, the precision menu leaves FP8 out and says why,
     and its default is still INT4/AWQ. On every other card, FP8 is offered and the

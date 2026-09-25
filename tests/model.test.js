@@ -4524,6 +4524,21 @@ test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, f
   }
 });
 
+test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn't know", () => {
+  /* No catalog row has such a target today, so a gate that let FP8 through there
+     passed every test. A target the table lacks, and no target at all. */
+  const h = renderHarness();
+  for (const gfx of ['gfx000', undefined]) {
+    const card = { ...GPU_TABLE['mi300x-192'], gfx, name: 'Unknown-target card' };
+    const st = asState(card, 1, { ...dense8BPlan, quantMethod: 'fp8', bytesPerParam: 1 });
+    const c = h.computeInference(st);
+    assert.ok(c.fits, 'an 8B plan should fit one MI300X, or this checks nothing');
+    assert.strictEqual(h.buildVllmCommand(st, c, 'm'),
+      "# vLLM v0.30.0 loads FP8 weights only on CDNA3 or newer, or RDNA4, and Unknown-target card's LLVM target is not one this planner knows. Choose BF16, AWQ or GPTQ.",
+      `gfx ${gfx}: FP8 weights were not refused`);
+  }
+});
+
 test('recalculate() syncs the interconnect and the precision controls before it reads the state', () => {
   /* The two gates above are tested by calling them. What makes them reach the page is
      the call in recalculate(), before readInputState(), so the state it reads, and
