@@ -292,6 +292,17 @@ PRICE_DUMP_VALUE = ("        return \"{ \" + \", \".join(f\"{json.dumps(k)}: {_d
 PRICE_APPLY_MOVED = "        if oc.status == \"MOVED\":\n            row[oc.tier] = oc.proposed\n"
 
 INDEX_HTML = "index.html"
+# The model-path refusal (fix/refuse-relative-model-paths, engine_r12).
+PY_PATH_VARIABLE = '    if "$" in model:\n'
+PY_PATH_ABSOLUTE = '    if not model or model.startswith("/"):\n'
+PY_PATH_TILDE = '    if model.startswith("~"):\n'
+PY_PATH_RELATIVE = '    if model in (".", "..") or model.startswith(("./", "../")) or model.count("/") >= 2:\n'
+PY_PATH_REASON = '    reason = unresolvable_model_path(cfg.get("hf_model"))\n'
+PY_PATH_REFUSE_JSON = '    refuse_model_path_the_server_cannot_resolve(cfg)\n'
+PY_PATH_REFUSE_MENU = '        refuse_model_path_the_server_cannot_resolve({"hf_model": hf_model})\n'
+PY_MENU_NAME = '        model_name = input("  Display name: ").strip() or f"{arch[\'params\']}B model"\n'
+PY_PATH_REFUSAL = '        raise PlanRefused(f"The model path {cfg[\'hf_model\']!r} {reason}. Give its absolute path on "\n                          f"the GPU server instead, for example /opt/models/<name>.")\n'
+
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
 PRICE_PY = "tools/price_check.py"
