@@ -303,6 +303,11 @@ PY_PATH_REFUSE_MENU = '        refuse_model_path_the_server_cannot_resolve({"hf_
 PY_MENU_NAME = '        model_name = input("  Display name: ").strip() or f"{arch[\'params\']}B model"\n'
 PY_PATH_REFUSAL = '        raise PlanRefused(f"The model path {cfg[\'hf_model\']!r} {reason}. Give its absolute path on "\n                          f"the GPU server instead, for example /opt/models/<name>.")\n'
 
+# The model path's type, emptiness and leading dash (fix/hf-model-input, engine_r18).
+PY_HF_TYPE = '    "hf_model": str,\n'
+PY_PATH_EMPTY = '    if not model:\n        return "is empty"\n'
+PY_PATH_DASH = '    if model.startswith("-"):\n'
+
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
 PRICE_PY = "tools/price_check.py"
