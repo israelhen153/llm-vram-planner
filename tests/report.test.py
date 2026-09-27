@@ -2555,14 +2555,17 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
      check_a_local_model_is_mounted_wherever_it_lives)
 
 
-# Model paths the GPU server can't resolve, generated: every prefix that needs a shell
-# or a working directory, crossed with tails like the local ones, plus the bare
-# relative forms. Every path the mount test above plans must still be planned.
-UNRESOLVABLE_PREFIXES = ("~/", "~", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
-UNRESOLVABLE_MODEL_PATHS = ([prefix + tail for prefix in UNRESOLVABLE_PREFIXES
-                             for tail in ("llama-8b", "checkpoint_v2.1", "a/b/c/d/e/f")]
-                            + [".", "..", "models/llama/v2", "a/b/c/d/e/f"])
-RESOLVABLE_MODEL_PATHS = LOCAL_MODEL_PATHS + HUB_MODEL_IDS + ["gpt2"]
+# Model paths, generated from their parts: every start a path can have, crossed with
+# bodies that carry a dot, a dash, a space, a ~ inside, a hidden directory and deep
+# nesting, plus the bare forms, and every path the mount test plans. A cold check
+# found five shapes a listed set had left out: a bare ~, $MODEL with no /, a dotted
+# relative path of three parts, and absolute paths with a ~ or a space inside.
+PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
+PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
+               "models/llama/x.gguf", "a/b/c/d/e/f")
+BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "gpt2", "org/model.v2", "models/")
+MODEL_PATHS = sorted({start + body for start in PATH_STARTS for body in PATH_BODIES}
+                     | set(BARE_PATHS) | set(LOCAL_MODEL_PATHS) | set(HUB_MODEL_IDS))
 # The refusal's words, as the contract: why, by kind of path, and the fix.
 MODEL_PATH_REASONS = {
     "variable": "names a shell variable, which the printed command quotes, so the GPU server never expands it",
@@ -2573,9 +2576,38 @@ MODEL_PATH_REASONS = {
 MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
 
 
+def path_kind(path):
+    """The requirement, restated: the reason a path is refused for, or None when it is
+    planned. A shell variable anywhere, a leading ~, or a relative path (., .., ./ or
+    ../ first, or three or more parts) is refused; an absolute path, or a name with at
+    most one / (a Hugging Face id's shape), is planned."""
+    if "$" in path:
+        return "variable"
+    if path.startswith("/"):
+        return None
+    if path.startswith("~"):
+        return "tilde"
+    if path in (".", "..") or path.startswith(("./", "../")) or path.count("/") >= 2:
+        return "relative"
+    return None
+
+
 def model_path_refusal(path):
-    kind = "variable" if "$" in path else "tilde" if path.startswith("~") else "relative"
-    return f"The model path {path!r} {MODEL_PATH_REASONS[kind]}. {MODEL_PATH_FIX}"
+    kind = path_kind(path)
+    return f"The model path {path!r} {MODEL_PATH_REASONS[kind]}. {MODEL_PATH_FIX}" if kind else None
+
+
+def check_the_generated_model_paths_cover_every_kind():
+    """The generated set holds each kind many times over, and every shape a past
+    round found missing."""
+    counts = {kind: sum(path_kind(p) == kind for p in MODEL_PATHS) for kind in (*MODEL_PATH_REASONS, None)}
+    assert all(n >= 5 for n in counts.values()), counts
+    for shape in ("~", "$MODEL", "models/llama/x.gguf", "/opt/a~b/c", "/opt/my models/llama", ".", "..",
+                  "~user/m", "/data/$USER/m"):
+        assert shape in MODEL_PATHS, shape
+
+test("the generated model paths hold every kind, and every shape a past round found missing",
+     check_the_generated_model_paths_cover_every_kind)
 
 
 def refusal_of(plan):
@@ -2587,71 +2619,122 @@ def refusal_of(plan):
     return None
 
 
-def check_a_model_path_the_server_cannot_resolve_is_refused():
-    """The printed command runs on the GPU server. A model path starting with ~, or
-    naming a shell variable, stayed literal there because the command quotes it, so
-    vLLM took it for a Hugging Face id and failed at startup; a relative one depends
-    on where the command runs, and inside the ROCm container that is /vllm-workspace.
-    Each is refused with its reason and the fix, through both of from_json()'s
-    branches, on a card of every vendor in the catalog. Every path the mount test
-    plans is still planned."""
-    cards = {}
+def json_plan(raw):
+    """from_json() on raw, without the interconnect notes it prints for each plan."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(raw, f)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return gr.from_json(f.name)
+    finally:
+        os.unlink(f.name)
+
+
+def check_a_json_model_path_is_judged_by_its_kind_with_any_spaces_round_it():
+    """Through both of from_json()'s branches, every generated path, bare and with a
+    space or a tab round it, is refused with its kind's reason and the fix, or planned
+    with the spaces trimmed. The menu always trimmed; a JSON config didn't, so
+    " ~/models" got the reason for a relative path and " /opt/models/x" was refused."""
+    slug = next(iter(gr.GPUS))
+    for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+        for path in MODEL_PATHS:
+            for written in (path, f" {path}", f"{path}\t"):
+                cfg = {}
+                got = refusal_of(lambda: cfg.update(json_plan(dict(base, gpu=slug, hf_model=written, bpp=2))))
+                assert got == model_path_refusal(path), ("preset" in base, written, got)
+                assert got or cfg["hf_model"] == path, (written, cfg.get("hf_model"))
+
+test("a JSON config's model path is refused or planned by its kind alone, with any spaces round it trimmed",
+     check_a_json_model_path_is_judged_by_its_kind_with_any_spaces_round_it)
+
+
+def model_path_configs():
+    """Every card in the catalog, at one board and two, with a dense preset and a MoE
+    one, in BF16 and, where the card runs it, FP8: every shape a refusal gated on
+    anything but the path would differ on."""
+    dense = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100)
+    moe = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100)
     for slug, row in gr.GPUS.items():
-        cards.setdefault(row["vendor"], slug)
-    assert len(cards) >= 2, cards
-    for slug in cards.values():
-        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
-            for path in UNRESOLVABLE_MODEL_PATHS + RESOLVABLE_MODEL_PATHS:
-                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-                    json.dump(dict(base, gpu=slug, hf_model=path, bpp=2), f)
-                try:
-                    got = refusal_of(lambda: gr.from_json(f.name))
-                finally:
-                    os.unlink(f.name)
-                want = model_path_refusal(path) if path in UNRESOLVABLE_MODEL_PATHS else None
-                assert got == want, (slug, "preset" in base, path, got)
-
-test("a model path the GPU server can't resolve is refused with its reason and the fix, on every vendor, "
-     "and absolute paths and hub ids are still planned", check_a_model_path_the_server_cannot_resolve_is_refused)
+        for n_gpu in (1, 2):
+            for preset in (dense, moe):
+                for prec in ({"bpp": 2}, {"bpp": 1, "quant": "fp8"}):
+                    if prec["bpp"] == 1 and gr.fp8_weights_blocked(row):
+                        continue
+                    yield {"preset": preset, "gpu": slug, "n_gpu": n_gpu, **prec}
+                    yield dict(gr.arch_fields(gr.PRESETS[preset]), gpu=slug, n_gpu=n_gpu, **prec)
 
 
-def check_the_menu_refuses_a_model_path_the_server_cannot_resolve():
-    """The menu's custom model took any text as its HuggingFace ID, so ~/models went
-    into the command. Every unresolvable form is refused as soon as it is typed, with
-    the same words; an absolute path and a hub id go on to a plan that keeps them."""
-    custom = ["custom", "8", "100", "32", "8", "128", "0"]
-    rest = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
-    for path in UNRESOLVABLE_MODEL_PATHS + ["/opt/models/llama-8b", "meta-llama/Llama-3.1-8B-Instruct"]:
-        answers = unittest.mock.Mock(side_effect=custom + [path] + rest)
-        cfg = {}
-        with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
-            got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
-        if path in UNRESOLVABLE_MODEL_PATHS:
-            assert got == model_path_refusal(path), (path, got)
-            assert answers.call_count == len(custom) + 1, f"{path!r}: refused only after {answers.call_count} answers"
-        else:
-            assert got is None and cfg.get("hf_model") == path, (path, got, cfg.get("hf_model"))
+def check_a_model_path_is_judged_the_same_on_every_card_board_count_precision_and_model():
+    """A cold check kept the refusal to one card of each vendor, one board, BF16 and a
+    dense model, and a refusal skipped on a two-device board, on the MI300X, at two
+    boards, over NVLink, on FP8 or on a MoE model passed. One path of each kind, and
+    two that must be planned, on every derived configuration; the configurations
+    cover every card, and both board counts, presets and precisions."""
+    samples = [next(p for p in MODEL_PATHS if path_kind(p) == kind) for kind in MODEL_PATH_REASONS]
+    samples += ["/opt/my models/llama", "org/model.v2"]
+    configs = list(model_path_configs())
+    assert {c["gpu"] for c in configs} == set(gr.GPUS), "a card is missing from the sweep"
+    assert {(c["n_gpu"], c["bpp"], "preset" in c) for c in configs} >= {(n, b, p) for n in (1, 2) for b in (1, 2)
+                                                                          for p in (True, False)}
+    assert len({c.get("preset") or c["params"] for c in configs}) >= 2, "one model only"
+    for config in configs:
+        for path in samples:
+            got = refusal_of(lambda: json_plan(dict(config, hf_model=path)))
+            assert got == model_path_refusal(path), (config["gpu"], config["n_gpu"], config["bpp"], path, got)
 
-test("the interactive menu refuses a model path the GPU server can't resolve as soon as it is typed",
-     check_the_menu_refuses_a_model_path_the_server_cannot_resolve)
+test("a model path is refused or planned the same on every card, board count, precision and model",
+     check_a_model_path_is_judged_the_same_on_every_card_board_count_precision_and_model)
 
 
-def check_the_cli_refuses_a_model_path_with_exit_2():
-    """The command line itself, for a JSON config on an AMD card: the reason on
-    stderr, exit status 2, and no PDF."""
+MENU_CUSTOM = ["custom", "8", "100", "32", "8", "128", "0"]
+MENU_REST = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
+
+
+def check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed():
+    """The menu's custom model took any text as its HuggingFace ID. Every generated
+    path, typed bare or with spaces round it, is refused right after it is typed with
+    its kind's reason, or planned trimmed; a refusal that read the untrimmed answer let
+    "  ~/llama" through."""
+    for path in MODEL_PATHS:
+        for typed in (path, f"  {path}", f"{path} "):
+            answers = unittest.mock.Mock(side_effect=MENU_CUSTOM + [typed] + MENU_REST)
+            cfg = {}
+            with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
+                got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
+            assert got == model_path_refusal(path), (typed, got)
+            if got:
+                assert answers.call_count == len(MENU_CUSTOM) + 1, f"{typed!r}: refused after {answers.call_count} answers"
+            else:
+                assert cfg.get("hf_model") == path, (typed, cfg.get("hf_model"))
+
+test("the interactive menu refuses or plans a model path by its kind as soon as it is typed, spaces trimmed",
+     check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed)
+
+
+def check_the_cli_refuses_a_model_path_with_exit_2_by_either_route():
+    """The command line itself, by both routes a model path arrives: a JSON config on
+    an AMD card, and the menu fed on stdin. The reason on stderr, exit status 2, no PDF.
+    The menu was driven only in-process, so a menu refusal that escaped main()'s
+    handler, with a traceback and exit 1, passed."""
     slug = next(s for s, row in gr.GPUS.items() if row["vendor"] == "amd")
     with tempfile.TemporaryDirectory() as d:
         config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
         with open(config, "w") as f:
             json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": "~/models/llama", "bpp": 2}, f)
-        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
-                             capture_output=True, text=True)
-        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
-        assert f"error: {model_path_refusal('~/models/llama')}" in run.stderr, run.stderr[-400:]
-        assert not os.path.exists(out), "a PDF was written for a refused plan"
+        runs = {
+            "json": subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config,
+                                    "-o", out], capture_output=True, text=True),
+            "menu": subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "-o", out],
+                                   input="\n".join(MENU_CUSTOM + ["  ~/models/llama"]) + "\n",
+                                   capture_output=True, text=True),
+        }
+        for route, run in runs.items():
+            assert run.returncode == 2, (route, run.returncode, run.stderr[-300:])
+            assert f"error: {model_path_refusal('~/models/llama')}" in run.stderr, (route, run.stderr[-400:])
+            assert not os.path.exists(out), f"{route}: a PDF was written for a refused plan"
 
-test("the CLI refuses a JSON config's unresolvable model path with the reason and exit status 2, and writes no PDF",
-     check_the_cli_refuses_a_model_path_with_exit_2)
+test("the CLI refuses an unresolvable model path from a JSON config or the menu, with the reason and exit status 2",
+     check_the_cli_refuses_a_model_path_with_exit_2_by_either_route)
 
 
 def check_the_rocm_block_holds_on_a_board_of_four_devices():

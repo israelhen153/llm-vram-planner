@@ -1712,6 +1712,11 @@ def validate_arch(cfg):
     # can say which.
     if cfg.get("bpp") == 1 and not cfg.get("quant"):
         cfg["quant"] = "fp8"
+    # A model path is read with the spaces round it trimmed, as the menu reads it: a
+    # JSON config's " ~/models" got the reason for a relative path, and " /opt/models/x"
+    # was refused outright.
+    if isinstance(cfg.get("hf_model"), str):
+        cfg["hf_model"] = cfg["hf_model"].strip()
     # A model path the GPU server can't resolve (~, a shell variable, a relative
     # path): refused, with the fix, not printed into a command that fails at startup.
     refuse_model_path_the_server_cannot_resolve(cfg)
