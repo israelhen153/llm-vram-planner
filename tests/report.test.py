@@ -3052,6 +3052,87 @@ test("the CLI refuses a JSON config's width with the reason and exit status 2, a
      check_the_cli_refuses_a_json_width_with_exit_2)
 
 
+# JSON's non-finite literals as Python's json reads them, and a number too large for a
+# float, which it reads as Infinity: each with what the refusal shows.
+NON_FINITE_JSON = {"NaN": "NaN", "Infinity": "Infinity", "-Infinity": "-Infinity", "1e400": "Infinity",
+                   "-1e400": "-Infinity"}
+
+
+def non_finite_refusal(label, shown):
+    return f"{label}: {shown} isn't a finite number, so the plan can't be sized from it. Give a number."
+
+
+def check_a_non_finite_json_number_is_refused_by_name():
+    """A JSON config's NaN or Infinity crashed the sizing with a traceback (bpp beside
+    gguf, ctx, conc, n_gpu, kv_bpp), and as "nvlink" planned NVLink. Every key a config
+    can carry, and one the planner has never heard of, given each non-finite literal
+    through both of from_json()'s branches, with the cards rotating, is refused naming
+    the key."""
+    keys = sorted(set(gr.ARCH_TYPES) | gr.REQUEST_KEYS | {"not_a_field"})
+    cards = list(gr.GPUS)
+    bases = {"preset": {"preset": "llama31-8b"}, "raw": gr.arch_fields(gr.PRESETS["llama31-8b"])}
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for k, key in enumerate(keys):
+            for branch, base in bases.items():
+                for literal, shown in NON_FINITE_JSON.items():
+                    raw = dict(base, gpu=cards[k % len(cards)])
+                    raw[key] = "@NUMBER@"
+                    with open(config, "w") as f:
+                        f.write(json.dumps(raw).replace('"@NUMBER@"', literal))
+                    try:
+                        gr.from_json(config)
+                        got = None
+                    except gr.PlanRefused as refused:
+                        got = str(refused)
+                    assert got == non_finite_refusal(json.dumps(key), shown), (key, branch, literal, got)
+
+test("a JSON config's NaN or Infinity is refused, naming its key, on every key and both branches",
+     check_a_non_finite_json_number_is_refused_by_name)
+
+
+def check_the_menu_refuses_a_non_finite_number_when_it_is_typed():
+    """The menu's two float answers, the parameter count and the MoE active share, took
+    "nan" and "inf" and crashed the sizing. Each spelling float() reads as NaN or
+    Infinity, typed at either, is refused before the model id is asked for."""
+    rest = ["/opt/models/m", "", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
+    for at, label in ((1, "Parameters (B)"), (2, "MoE active %")):
+        for typed in ("nan", "NaN", "inf", "-inf", "Infinity", "1e400"):
+            custom = ["custom", "8", "100", "32", "8", "128", "0"]
+            custom[at] = typed
+            answers = unittest.mock.Mock(side_effect=custom + rest)
+            try:
+                with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
+                    gr.interactive_mode()
+                got = None
+            except gr.PlanRefused as refused:
+                got = str(refused)
+            assert got == non_finite_refusal(label, json.dumps(float(typed))), (label, typed, got)
+            assert answers.call_count == len(custom), f"{label} {typed!r}: refused after {answers.call_count} answers"
+
+test("the interactive menu refuses a NaN or Infinity as soon as it is typed",
+     check_the_menu_refuses_a_non_finite_number_when_it_is_typed)
+
+
+def check_the_cli_refuses_a_non_finite_json_number_with_exit_2():
+    """The command line itself, with the cold check's own reproduction: GGUF on an AMD
+    card at "bpp": NaN, which ended in a ValueError traceback and exit 1. The reason on
+    stderr, exit status 2, no PDF."""
+    slug = next(s for s, row in gr.GPUS.items() if row["vendor"] == "amd")
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            f.write(json.dumps({"preset": "llama31-8b", "gpu": slug, "quant": "gguf", "bpp": "@"}).replace('"@"', "NaN"))
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert f"error: {non_finite_refusal(json.dumps('bpp'), 'NaN')}" in run.stderr, run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses a JSON config's NaN with the reason and exit status 2, and writes no PDF",
+     check_the_cli_refuses_a_non_finite_json_number_with_exit_2)
+
+
 test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
 
