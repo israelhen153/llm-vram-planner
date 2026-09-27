@@ -1679,6 +1679,10 @@ def validate_arch(cfg):
     # half the weights its command loads, and a config naming nothing planned a
     # quarter of the BF16 checkpoint its command loads.
     quant, bpp = cfg.get("quant") or "", cfg.get("bpp")
+    # A width of 0 or less sized the weights at 0 GB or below whenever a method took any
+    # width (GGUF, or one the planner doesn't know), and wrote a PDF for it.
+    if bpp is not None and bpp <= 0:
+        raise PlanRefused(f'"bpp": {bpp} can\'t be a width: a weight takes more than 0 bytes per parameter.')
     if bpp is None:
         if quant and quant not in METHOD_WIDTH:
             raise PlanRefused(

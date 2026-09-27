@@ -2872,6 +2872,8 @@ def json_precision(quant, bpp):
             widths.setdefault(q, set()).add(b)
     fixed = {q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1}
     q = (quant or "").strip().lower()
+    if bpp is not None and bpp <= 0:
+        return f'"bpp": {bpp} can\'t be a width: a weight takes more than 0 bytes per parameter.'
     if bpp is None:
         if q and q not in fixed:
             return (f'"quant": {q!r} has no single width, so the plan can\'t size the weights without "bpp", '
@@ -2890,47 +2892,89 @@ def json_precision(quant, bpp):
 def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
     """A JSON config without "bpp" was sized at 0.5 whatever it named: {"quant": "fp8"}
     planned half the weights its command loads, and a config naming nothing a quarter
-    of its BF16 checkpoint. Every quantization (none, empty, each method --prec knows,
-    another spelling, one it doesn't) crossed with every width (none, and each the
-    report can label), through both of from_json()'s branches on every card, is
-    planned at the width and with the --quantization the owner's rules give, or
-    refused with their words; FP8 on a card that can't run it gets the FP8 refusal."""
-    quants = [None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors"]
-    widths = [None, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
-    planned, commanded = set(), set()
-    for n, (slug, row) in enumerate(gr.GPUS.items()):
-        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
-            for quant in quants:
-                for bpp in widths:
-                    raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[n % len(BOARD_SAMPLE)])
-                    if quant is not None:
-                        raw["quant"] = quant
-                    if bpp is not None:
-                        raw["bpp"] = bpp
-                    want = json_precision(quant, bpp)
-                    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
-                        want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
-                    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-                        json.dump(raw, f)
-                    try:
-                        with contextlib.redirect_stdout(io.StringIO()):
-                            cfg = gr.from_json(f.name)
-                        got = (cfg["bpp"], cfg.get("quant") or "")
+    of its BF16 checkpoint. Each quantization (none, empty, each method --prec knows,
+    another spelling, --prec's own tokens that aren't methods, one it doesn't know)
+    meets every card, both of from_json()'s branches, every width (none, 0, a negative,
+    and each the report can label), a dense model and a MoE one, and both KV caches. It
+    is planned at the width and with the --quantization the owner's rules give, or
+    refused with their words; FP8 on a card that can't run it gets the FP8 refusal. A
+    cold check kept a refusal to dense models, a default read off the KV cache, 0 read
+    as no width and --prec's tokens taken for methods green, because the sweep held
+    those fixed; it asserts now that each quantization met every value."""
+    methods = {q for _, q in PRECISIONS_CONTRACT.values() if q}
+    tokens = sorted(t for t in PRECISIONS_CONTRACT if t not in methods)
+    quants = [None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors", *tokens]
+    widths = [None, -1, 0, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
+    sizes = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
+    dense = min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=sizes.get)
+    moe = min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=sizes.get)
+    cards = list(gr.GPUS.items())
+    planned, commanded, met = set(), set(), {}
+    for qi, quant in enumerate(quants):
+        for turn in range(4):
+            model = dense if turn < 2 else moe  # the dense turns meet every width on the smallest model
+            for ci, (slug, row) in enumerate(cards):
+                bpp = widths[(ci + qi + 5 * turn) % len(widths)]
+                branch = (ci + turn) % 2
+                kv = (ci + qi + turn) % 2
+                met.setdefault(quant, set()).update({("card", slug), ("branch", branch), ("width", bpp),
+                                                     ("model", model), ("kv", kv)})
+                base = {"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model])
+                raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
+                if kv:
+                    raw["kv_bpp"] = 1
+                if quant is not None:
+                    raw["quant"] = quant
+                if bpp is not None:
+                    raw["bpp"] = bpp
+                want = json_precision(quant, bpp)
+                if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+                    want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                    json.dump(raw, f)
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        cfg = gr.from_json(f.name)
+                    got = (cfg["bpp"], cfg.get("quant") or "")
+                    if model == dense:
                         planned.add((quant, bpp))
-                        comp = gr.compute(cfg)
-                        if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
-                            flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
-                            assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                    comp = gr.compute(cfg)
+                    if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
+                        flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
+                        assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                        if model == dense:
                             commanded.add((quant, bpp))
-                    except gr.PlanRefused as refused:
-                        got = str(refused)
-                    finally:
-                        os.unlink(f.name)
-                    assert got == want, (slug, "preset" in base, quant, bpp, got, want)
-    assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)}"
+                except gr.PlanRefused as refused:
+                    got = str(refused)
+                finally:
+                    os.unlink(f.name)
+                assert got == want, (slug, branch, model, kv, quant, bpp, got, want)
+    everything = ({("card", s) for s, _ in cards} | {("branch", 0), ("branch", 1)} | {("width", w) for w in widths}
+                  | {("model", dense), ("model", moe)} | {("kv", 0), ("kv", 1)})
+    missed = {q: sorted(everything - seen, key=str)[:3] for q, seen in met.items() if everything - seen}
+    assert not missed, f"quantizations that missed a value: {missed}"
+    assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"
 
 test("a JSON config's precision is the width its method fixes, BF16 when it names nothing, or refused",
      check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
+
+
+def check_the_cli_refuses_a_json_width_with_exit_2():
+    """The command line itself, for a JSON config the width rules refuse: the reason on
+    stderr, exit status 2, and no PDF. Only --preset had been driven to a refusal, so a
+    --json refusal on stdout with exit 1 passed."""
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            json.dump({"preset": "llama31-8b", "gpu": "h100-80", "quant": "gguf"}, f)
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert f"error: {json_precision('gguf', None)}" in run.stderr, run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses a JSON config's width with the reason and exit status 2, and writes no PDF",
+     check_the_cli_refuses_a_json_width_with_exit_2)
 
 
 test("the PDF cost table's tier names carry no provider parenthetical",
