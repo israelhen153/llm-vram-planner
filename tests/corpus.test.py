@@ -221,5 +221,50 @@ def check_the_shell_driver_still_applies():
 test("the shell driver's catalog rows still carry what it corrupts", check_the_shell_driver_still_applies)
 
 
+def check_a_worker_judges_only_at_the_commit_the_run_proved():
+    """parallel.py proves a commit once per run, on the first worker; every other
+    worker starts from that proof, so each must refuse unless it is at that commit and
+    clean. Each case gets a throwaway repository of two commits: at the second and
+    clean, a worker judges; at the first, or with a file changed or added, it refuses."""
+    import subprocess, tempfile
+    spec = importlib.util.spec_from_file_location("parallel", os.path.join(ROOT, "tests", "sabotage", "parallel.py"))
+    parallel = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(parallel)
+
+    def two_commits(tree):
+        def git(*args):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                                   *args], cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "--template=")  # no hooks from a global template
+        with open(os.path.join(tree, "a.txt"), "w") as f:
+            f.write("one\n")
+        git("add", "a.txt")
+        git("commit", "-q", "-m", "one")
+        first = git("rev-parse", "HEAD")
+        git("commit", "-q", "--allow-empty", "-m", "two")
+        return first, git("rev-parse", "HEAD")
+
+    refused = {}
+    with tempfile.TemporaryDirectory() as d:
+        for case in ("proved", "another commit", "a changed file", "an added file"):
+            tree = os.path.join(d, case.replace(" ", "-"))
+            os.makedirs(tree)
+            first, second = two_commits(tree)
+            sha = first if case == "another commit" else second
+            if case == "a changed file":
+                with open(os.path.join(tree, "a.txt"), "a") as f:
+                    f.write("changed\n")
+            if case == "an added file":
+                with open(os.path.join(tree, "b.txt"), "w") as f:
+                    f.write("added\n")
+            try:
+                parallel.refuse_unless_proven(tree, sha)
+            except RuntimeError as why:
+                refused[case] = str(why)
+    assert set(refused) == {"another commit", "a changed file", "an added file"}, refused
+
+test("a corpus worker judges only at the commit the run proved, and clean", check_a_worker_judges_only_at_the_commit_the_run_proved)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

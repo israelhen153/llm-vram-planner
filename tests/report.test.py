@@ -1394,6 +1394,31 @@ def story_strings(cfg, comp=None):
     return seen
 
 
+def check_the_parse_memo_changes_nothing_a_test_reads():
+    """story_strings() shares one parse per markup and style, and that must change
+    nothing a test reads: a markup that fails to parse fails every time, the memo
+    serves only a story being read, and a paragraph built anywhere else parses its own."""
+    style = gr.getSampleStyleSheet()["Normal"]
+    _reading.append(True)
+    try:
+        for attempt in (1, 2):
+            try:
+                RecordingParagraph("<b>never closed", style)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"attempt {attempt}: a markup that fails to parse was served from the memo")
+        first, again = RecordingParagraph("<b>shared</b>", style), RecordingParagraph("<b>shared</b>", style)
+        assert again.frags is first.frags, "a story being read parsed a markup it had parsed before"
+    finally:
+        _reading.pop()
+    outside = RecordingParagraph("<b>shared</b>", style)
+    assert outside.frags is not first.frags, "a paragraph built outside story_strings() came from the memo"
+
+test("the parse memo changes nothing a test reads: a failing markup fails every time, and only read stories share",
+     check_the_parse_memo_changes_nothing_a_test_reads)
+
+
 def check_parallelism_row_agrees_with_the_command():
     single_dev, multi_dev, skipped = 0, 0, 0
     for card in (dict(DUAL, devices=1, gb=80, name="S"), DUAL):

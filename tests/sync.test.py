@@ -269,6 +269,23 @@ test("a hostile benchmark note round-trips intact and cannot close the script ta
      check_hostile_notes_are_escaped)
 
 
+def check_each_block_is_evaluated_alone():
+    """The hostile and control-character cases share one node process, so each block
+    must run in a context of its own, and a block that can't be evaluated must still
+    fail its test, naming the block."""
+    got = js_eval_all(["globalThis.leak = 1; const X = 1;", "const X = typeof leak;"], "X")
+    assert got == [1, "undefined"], f"one block's global reached the next: {got}"
+    try:
+        js_eval_all(["const X = 1;", "const X = ;"], "X")
+    except AssertionError as e:
+        assert "block 1" in str(e), f"the failure doesn't name the block: {e}"
+    else:
+        raise AssertionError("a block node can't evaluate passed")
+
+test("each block the shared node process evaluates runs alone, and one that fails is named",
+     check_each_block_is_evaluated_alone)
+
+
 def check_missing_field_names_itself():
     rows = {"8b-h100-80": {"tokS": 1, "mode": "batch", "src": "x", "note": "y", "prec": "bf16"}}
     try:

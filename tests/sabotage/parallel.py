@@ -224,6 +224,16 @@ def judge_shell(tree, driver):
     return {"status": "shell", "rc": p.returncode, "output": p.stdout}
 
 
+def refuse_unless_proven(tree, sha):
+    """A worker judges only at the commit the run proved, on a clean tree: the first
+    worker's proof holds for the others only while each is that commit, unchanged."""
+    head = git("rev-parse", "HEAD", cwd=tree).stdout.strip()
+    if head != sha:
+        raise RuntimeError(f"the worker is at {head[:7]}, not at {sha[:7]}")
+    if git("status", "--porcelain", cwd=tree).stdout.strip():
+        raise RuntimeError("the worker is not clean")
+
+
 def worker_main(tree, early_exit, sha, golden_file):
     # The task stream and the results travel on this process's own stdin and stdout.
     # Children inherit fd 0 and fd 1, so both are moved out of their reach first: a
@@ -256,9 +266,6 @@ def worker_main(tree, early_exit, sha, golden_file):
     started = time.monotonic()
     try:
         harness = load_harness(tree)
-        head = git("rev-parse", "HEAD", cwd=tree).stdout.strip()
-        if head != sha:
-            raise RuntimeError(f"the worker is at {head[:7]}, not at {sha[:7]}")
         if golden_file is None:
             # The first worker proves the commit, once for the run: its suites green, and
             # which failures are golden ones. Every worker proving it ran sixteen suite
@@ -270,8 +277,7 @@ def worker_main(tree, early_exit, sha, golden_file):
             # rules, so the first worker's proof is theirs: they only check that they are.
             with open(golden_file, encoding="utf-8") as fh:
                 golden = set(json.load(fh))
-        if git("status", "--porcelain", cwd=tree).stdout.strip():
-            raise RuntimeError("the worker is not clean after proving the commit")
+        refuse_unless_proven(tree, sha)
     except SystemExit as e:
         send({"ready": False, "error": str(e.code)})
         return 2
