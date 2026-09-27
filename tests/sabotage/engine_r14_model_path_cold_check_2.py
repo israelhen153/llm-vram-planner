@@ -74,8 +74,10 @@ S = {
         dropped_when('cfg.get("ctx", 8192) != 8192')],
     "K7 py: the refusal is skipped at four boards and more": [
         dropped_when('cfg.get("n_gpu", 1) >= 4')],
+    # "bpp" in cfg, not cfg.get("bpp", 0.5): the menu's cfg has no bpp key, and a gate
+    # that fires on the missing key is caught by the menu's test for that reason alone.
     "K8 py: the refusal is skipped for 4-bit and GGUF weights (bpp 0.5, the JSON default)": [
-        dropped_when('cfg.get("bpp", 0.5) not in (1, 2)')],
+        dropped_when('"bpp" in cfg and cfg["bpp"] not in (1, 2)')],
     # ---- a normalisation the generated shapes cannot see ----
     "N1 py: a trailing slash is dropped before counting parts (models/llama/ is planned)": [
         (REPORT_PY, PY_PATH_RELATIVE, PY_PATH_RELATIVE.replace('model.count("/") >= 2', 'model.rstrip("/").count("/") >= 2'), 1)],
