@@ -2556,17 +2556,21 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
 
 
 # Model paths, generated from their parts: every start a path can have, crossed with
-# bodies that carry a dot, a dash, a space, a ~ inside, a hidden directory and deep
-# nesting, plus the bare forms, and every path the mount test plans. A cold check
-# found five shapes a listed set had left out: a bare ~, $MODEL with no /, a dotted
-# relative path of three parts, and absolute paths with a ~ or a space inside.
+# bodies that carry a dot, a dash, a space, a ~ inside, a hidden directory, deep
+# nesting, a trailing / and a doubled one, plus the bare forms and every path the
+# mount test plans. Two cold checks found shapes a listed set had left out: a bare ~,
+# $MODEL with no /, a dotted three-part relative path, absolute paths with a ~ or a
+# space inside, then models/llama/, a//b, x$ and a path with both a ~ and a $.
 PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
 PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
-               "models/llama/x.gguf", "a/b/c/d/e/f")
-BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "gpt2", "org/model.v2", "models/")
+               "models/llama/x.gguf", "a/b/c/d/e/f", "models/llama/", "a//b")
+BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/")
 MODEL_PATHS = sorted({start + body for start in PATH_STARTS for body in PATH_BODIES}
                      | set(BARE_PATHS) | set(LOCAL_MODEL_PATHS) | set(HUB_MODEL_IDS))
-# The refusal's words, as the contract: why, by kind of path, and the fix.
+# Whitespace round a path, as a JSON config or a typed answer might carry it.
+PATH_PADDINGS = ("{}", " {}", "{} ", "\t{}", "{}\n", " \t{} \n")
+# The refusal's words, as the contract: why, by kind of path, and the fix. A path
+# with both a shell variable and a leading ~ is refused for the variable.
 MODEL_PATH_REASONS = {
     "variable": "names a shell variable, which the printed command quotes, so the GPU server never expands it",
     "tilde": "starts with ~, which the printed command quotes, so the GPU server never expands it",
@@ -2587,7 +2591,7 @@ def path_kind(path):
         return None
     if path.startswith("~"):
         return "tilde"
-    if path in (".", "..") or path.startswith(("./", "../")) or path.count("/") >= 2:
+    if path in (".", "..") or path.startswith(("./", "../")) or len(path.split("/")) >= 3:
         return "relative"
     return None
 
@@ -2602,8 +2606,8 @@ def check_the_generated_model_paths_cover_every_kind():
     round found missing."""
     counts = {kind: sum(path_kind(p) == kind for p in MODEL_PATHS) for kind in (*MODEL_PATH_REASONS, None)}
     assert all(n >= 5 for n in counts.values()), counts
-    for shape in ("~", "$MODEL", "models/llama/x.gguf", "/opt/a~b/c", "/opt/my models/llama", ".", "..",
-                  "~user/m", "/data/$USER/m"):
+    for shape in ("~", "$MODEL", "x$", "~/$HOME/m", "models/llama/x.gguf", "models/llama/", "a//b",
+                  "/opt/a~b/c", "/opt/my models/llama", ".", "..", "~user/m", "/data/$USER/m"):
         assert shape in MODEL_PATHS, shape
 
 test("the generated model paths hold every kind, and every shape a past round found missing",
@@ -2619,71 +2623,78 @@ def refusal_of(plan):
     return None
 
 
-def json_plan(raw):
-    """from_json() on raw, without the interconnect notes it prints for each plan."""
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-        json.dump(raw, f)
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            return gr.from_json(f.name)
-    finally:
-        os.unlink(f.name)
+# What a JSON plan can vary besides its model path, each axis derived where the
+# catalog, the presets or the board sample define it. The refusal must not depend on
+# any of them: two cold checks passed refusals skipped on a two-device board, on the
+# MI300X, at two or four boards, over NVLink, on FP8, at 0.5 bytes per parameter,
+# with an FP8 KV cache, at another context length and on a MoE model.
+DENSE = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100)
+MOE = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100)
+PLAN_AXES = {
+    "card": list(gr.GPUS),
+    "boards": list(BOARD_SAMPLE),
+    "precision": [{}, {"bpp": 0.5, "quant": "awq"}, {"bpp": 1, "quant": "fp8"}, {"bpp": 2}],
+    "kv": [{}, {"kv_bpp": 1}],
+    "ctx": [{}, {"ctx": 4096}, {"ctx": 131072}],
+    "conc": [{}, {"conc": 16}],
+    "nvlink": [{}, {"nvlink": False}],
+    "model": [DENSE, MOE],
+    "branch": ["preset", "raw"],
+    "padding": list(PATH_PADDINGS),
+}
+# Stride per axis, each coprime to its axis's size, so the axes do not move in step.
+PLAN_STRIDES = {"card": 1, "boards": 7, "precision": 3, "kv": 1, "ctx": 2, "conc": 1, "nvlink": 1,
+                "model": 1, "branch": 1, "padding": 5}
+PLAN_OFFSETS = {axis: n for n, axis in enumerate(PLAN_AXES)}
 
 
-def check_a_json_model_path_is_judged_by_its_kind_with_any_spaces_round_it():
-    """Through both of from_json()'s branches, every generated path, bare and with a
-    space or a tab round it, is refused with its kind's reason and the fix, or planned
-    with the spaces trimmed. The menu always trimmed; a JSON config didn't, so
-    " ~/models" got the reason for a relative path and " /opt/models/x" was refused."""
-    slug = next(iter(gr.GPUS))
-    for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
-        for path in MODEL_PATHS:
-            for written in (path, f" {path}", f"{path}\t"):
+def plans_for(p):
+    """The configurations model path number p is judged under: as many as the largest
+    axis has values, each axis stepping by its stride from an offset of its own, so
+    this path meets every value of every axis."""
+    rounds = max(len(values) for values in PLAN_AXES.values())
+    for r in range(rounds):
+        pick = {axis: (p * (PLAN_OFFSETS[axis] + 1) + r * PLAN_STRIDES[axis]) % len(values)
+                for axis, values in PLAN_AXES.items()}
+        yield pick
+
+
+def check_a_model_path_is_judged_by_its_kind_alone_under_every_plan():
+    """Every generated path, through a JSON config, meets every value of every axis
+    above: each card, each board count in the board sample, each precision (FP8 only
+    where the card runs it), both KV caches, three context lengths, two concurrencies,
+    NVLink on and off, a dense model and a MoE one, both of from_json()'s branches and
+    every whitespace round it. Each time it is refused with its kind's reason and the
+    fix, or planned with the spaces trimmed. The sweep asserts it met every value."""
+    assert all(math.gcd(PLAN_STRIDES[a], len(v)) == 1 for a, v in PLAN_AXES.items()), PLAN_STRIDES
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for p, path in enumerate(MODEL_PATHS):
+            met = {axis: set() for axis in PLAN_AXES}
+            for pick in plans_for(p):
+                for axis, i in pick.items():
+                    met[axis].add(i)
+                v = {axis: PLAN_AXES[axis][i] for axis, i in pick.items()}
+                card = v["card"]
+                prec = v["precision"]
+                if prec.get("bpp") == 1 and gr.fp8_weights_blocked(gr.GPUS[card]):
+                    prec = {"bpp": 2}
+                base = ({"preset": v["model"]} if v["branch"] == "preset"
+                        else gr.arch_fields(gr.PRESETS[v["model"]]))
+                raw = dict(base, gpu=card, n_gpu=v["boards"], hf_model=v["padding"].format(path),
+                           **prec, **v["kv"], **v["ctx"], **v["conc"], **v["nvlink"])
+                with open(config, "w") as f:
+                    json.dump(raw, f)
                 cfg = {}
-                got = refusal_of(lambda: cfg.update(json_plan(dict(base, gpu=slug, hf_model=written, bpp=2))))
-                assert got == model_path_refusal(path), ("preset" in base, written, got)
-                assert got or cfg["hf_model"] == path, (written, cfg.get("hf_model"))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    got = refusal_of(lambda: cfg.update(gr.from_json(config)))
+                assert got == model_path_refusal(path), (path, {a: v[a] for a in PLAN_AXES}, got)
+                assert got or cfg["hf_model"] == path, (path, raw["hf_model"], cfg.get("hf_model"))
+            missed = {axis: len(PLAN_AXES[axis]) - len(seen) for axis, seen in met.items() if len(seen) < len(PLAN_AXES[axis])}
+            assert not missed, f"{path!r} missed values on {missed}"
 
-test("a JSON config's model path is refused or planned by its kind alone, with any spaces round it trimmed",
-     check_a_json_model_path_is_judged_by_its_kind_with_any_spaces_round_it)
-
-
-def model_path_configs():
-    """Every card in the catalog, at one board and two, with a dense preset and a MoE
-    one, in BF16 and, where the card runs it, FP8: every shape a refusal gated on
-    anything but the path would differ on."""
-    dense = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100)
-    moe = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100)
-    for slug, row in gr.GPUS.items():
-        for n_gpu in (1, 2):
-            for preset in (dense, moe):
-                for prec in ({"bpp": 2}, {"bpp": 1, "quant": "fp8"}):
-                    if prec["bpp"] == 1 and gr.fp8_weights_blocked(row):
-                        continue
-                    yield {"preset": preset, "gpu": slug, "n_gpu": n_gpu, **prec}
-                    yield dict(gr.arch_fields(gr.PRESETS[preset]), gpu=slug, n_gpu=n_gpu, **prec)
-
-
-def check_a_model_path_is_judged_the_same_on_every_card_board_count_precision_and_model():
-    """A cold check kept the refusal to one card of each vendor, one board, BF16 and a
-    dense model, and a refusal skipped on a two-device board, on the MI300X, at two
-    boards, over NVLink, on FP8 or on a MoE model passed. One path of each kind, and
-    two that must be planned, on every derived configuration; the configurations
-    cover every card, and both board counts, presets and precisions."""
-    samples = [next(p for p in MODEL_PATHS if path_kind(p) == kind) for kind in MODEL_PATH_REASONS]
-    samples += ["/opt/my models/llama", "org/model.v2"]
-    configs = list(model_path_configs())
-    assert {c["gpu"] for c in configs} == set(gr.GPUS), "a card is missing from the sweep"
-    assert {(c["n_gpu"], c["bpp"], "preset" in c) for c in configs} >= {(n, b, p) for n in (1, 2) for b in (1, 2)
-                                                                          for p in (True, False)}
-    assert len({c.get("preset") or c["params"] for c in configs}) >= 2, "one model only"
-    for config in configs:
-        for path in samples:
-            got = refusal_of(lambda: json_plan(dict(config, hf_model=path)))
-            assert got == model_path_refusal(path), (config["gpu"], config["n_gpu"], config["bpp"], path, got)
-
-test("a model path is refused or planned the same on every card, board count, precision and model",
-     check_a_model_path_is_judged_the_same_on_every_card_board_count_precision_and_model)
+test("a JSON config's model path is refused or planned by its kind alone, on every value of every plan axis",
+     check_a_model_path_is_judged_by_its_kind_alone_under_every_plan)
 
 
 MENU_CUSTOM = ["custom", "8", "100", "32", "8", "128", "0"]
@@ -2692,11 +2703,12 @@ MENU_REST = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", 
 
 def check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed():
     """The menu's custom model took any text as its HuggingFace ID. Every generated
-    path, typed bare or with spaces round it, is refused right after it is typed with
-    its kind's reason, or planned trimmed; a refusal that read the untrimmed answer let
-    "  ~/llama" through."""
+    path, typed with every whitespace round it, is refused right after it is typed with
+    its kind's reason, or planned trimmed. A refusal that read the untrimmed answer let
+    "  ~/llama" through, and a menu that trimmed only spaces was never typed a tab."""
     for path in MODEL_PATHS:
-        for typed in (path, f"  {path}", f"{path} "):
+        for padding in PATH_PADDINGS:
+            typed = padding.format(path)
             answers = unittest.mock.Mock(side_effect=MENU_CUSTOM + [typed] + MENU_REST)
             cfg = {}
             with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
@@ -2707,7 +2719,7 @@ def check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed():
             else:
                 assert cfg.get("hf_model") == path, (typed, cfg.get("hf_model"))
 
-test("the interactive menu refuses or plans a model path by its kind as soon as it is typed, spaces trimmed",
+test("the interactive menu refuses or plans a model path by its kind as soon as it is typed, any whitespace trimmed",
      check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed)
 
 
