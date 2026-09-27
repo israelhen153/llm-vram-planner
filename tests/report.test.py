@@ -2856,22 +2856,57 @@ test("a JSON config at one byte per parameter is FP8 in the command; a width wit
      check_a_one_byte_json_config_is_fp8_in_the_command)
 
 
-# A JSON config's precision, as the owner decided it (2026-09-27, decision desk A2):
-# the width comes from the method where the method fixes it (a method with one width
-# in --prec's table), the plan never guesses, and a config naming nothing is the BF16
-# checkpoint its command loads. The refusals' words are the contract.
+# A JSON config's precision, as the owner decided it (2026-09-27, decision desk A1, A2,
+# A3): only a quantization vLLM v0.30.0 serves on the card's vendor; the width comes
+# from the method where the method fixes it (one width in --prec's table, or any of
+# vLLM's FP8 methods, at one byte); the plan never guesses; and a config naming nothing
+# is the BF16 checkpoint its command loads. The lists, the FP8 methods and the
+# refusals' words are the contract.
+VLLM_QUANTIZATIONS_CONTRACT = {
+    "nvidia": ("awq", "auto_awq", "fp8", "fbgemm_fp8", "fp_quant", "modelopt", "modelopt_fp4", "modelopt_mxfp8",
+               "modelopt_mixed", "auto_gptq", "gptq", "gptq_marlin", "awq_marlin", "humming", "compressed-tensors",
+               "experts_int8", "quark", "moe_wna16", "torchao", "inc", "mxfp4", "gpt_oss_mxfp4", "deepseek_v4_fp8",
+               "online", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel", "int8_per_channel_weight_only",
+               "nvfp4_per_token", "mxfp8", "gguf"),
+    "amd": ("awq", "auto_awq", "awq_marlin", "gptq", "auto_gptq", "fp8", "deepseek_v4_fp8", "compressed-tensors",
+            "fbgemm_fp8", "inc", "quark", "mxfp4", "mxfp8", "torchao", "modelopt", "modelopt_fp4", "modelopt_mxfp8",
+            "modelopt_mixed", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel", "online", "gpt_oss_mxfp4",
+            "gguf"),
+}
+FP8_METHODS_CONTRACT = ("fp8", "fbgemm_fp8", "deepseek_v4_fp8", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel",
+                        "mxfp8", "modelopt_mxfp8")
 JSON_WIDTH_GGUF = " (GGUF: Q2_K 0.35, Q4_K_M 0.63, Q5_K_M 0.71, Q6_K 0.82, Q8_0 1.1)"
 
 
-def json_precision(quant, bpp):
-    """What a JSON config giving quant and bpp (None where absent) plans as, (bpp,
-    quant), or the refusal it gets."""
+def check_the_quantization_lists_are_vllm_v0_30_0s():
+    """The planner's lists are the contract's: NVIDIA every built-in method of vLLM
+    v0.30.0 (CUDA sets no allow-list), AMD ROCm's allow-list, both with gguf; AMD's is
+    NVIDIA's less the CUDA-only ones; the FP8 methods are on both. Changing a list is
+    changing a public claim, so it changes this literal too."""
+    assert gr.VLLM_QUANTIZATIONS == VLLM_QUANTIZATIONS_CONTRACT, gr.VLLM_QUANTIZATIONS
+    assert gr.FP8_METHODS == FP8_METHODS_CONTRACT, gr.FP8_METHODS
+    assert set(gr.GPUS[s]["vendor"] for s in gr.GPUS) == set(VLLM_QUANTIZATIONS_CONTRACT)
+    assert set(VLLM_QUANTIZATIONS_CONTRACT["amd"]) < set(VLLM_QUANTIZATIONS_CONTRACT["nvidia"])
+    assert set(FP8_METHODS_CONTRACT) <= set(VLLM_QUANTIZATIONS_CONTRACT["amd"])
+
+test("the planner accepts exactly vLLM v0.30.0's quantizations per vendor, and knows its FP8 methods",
+     check_the_quantization_lists_are_vllm_v0_30_0s)
+
+
+def json_precision(quant, bpp, vendor):
+    """What a JSON config giving quant and bpp (None where absent) plans as on this
+    vendor's card, (bpp, quant), or the refusal it gets."""
     widths = {}
     for b, q in PRECISIONS_CONTRACT.values():
         if q:
             widths.setdefault(q, set()).add(b)
-    fixed = {q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1}
+    fixed = {**{q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1},
+             **{m: 1 for m in FP8_METHODS_CONTRACT}}
     q = (quant or "").strip().lower()
+    served = VLLM_QUANTIZATIONS_CONTRACT[vendor]
+    if q and q not in served:
+        return (f'"quant": {q!r} isn\'t a quantization vLLM v0.30.0 serves on {"AMD" if vendor == "amd" else "NVIDIA"} '
+                f'cards, so the printed command would stop at startup. Use one of: {", ".join(sorted(served))}.')
     if bpp is None:
         if q and q not in fixed:
             return (f'"quant": {q!r} has no single width, so the plan can\'t size the weights without "bpp", '
@@ -2888,48 +2923,58 @@ def json_precision(quant, bpp):
 
 
 def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
-    """A JSON config without "bpp" was sized at 0.5 whatever it named: {"quant": "fp8"}
-    planned half the weights its command loads, and a config naming nothing a quarter
-    of its BF16 checkpoint. Every quantization (none, empty, each method --prec knows,
-    another spelling, one it doesn't) crossed with every width (none, and each the
-    report can label), through both of from_json()'s branches on every card, is
-    planned at the width and with the --quantization the owner's rules give, or
-    refused with their words; FP8 on a card that can't run it gets the FP8 refusal."""
-    quants = [None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors"]
+    """A JSON config without "bpp" was sized at 0.5 whatever it named, and any name
+    went into --quantization. Every quantization on either of vLLM's lists, plus none,
+    empty, another spelling and names vLLM doesn't serve, meets every card through both
+    of from_json()'s branches and every width (none, and each the report can label):
+    it is planned at the width and with the --quantization the owner's rules give, or
+    refused with their words; FP8 on a card that can't run it gets the FP8 refusal. The
+    sweep asserts each name met every card, both branches and every width."""
+    names = sorted(set(VLLM_QUANTIZATIONS_CONTRACT["nvidia"]) | set(VLLM_QUANTIZATIONS_CONTRACT["amd"]))
+    quants = [None, "", " FP8", "Fp8_Per_Block ", "float8", "bogus", *names]
     widths = [None, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
-    planned, commanded = set(), set()
-    for n, (slug, row) in enumerate(gr.GPUS.items()):
-        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
-            for quant in quants:
-                for bpp in widths:
-                    raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[n % len(BOARD_SAMPLE)])
-                    if quant is not None:
-                        raw["quant"] = quant
-                    if bpp is not None:
-                        raw["bpp"] = bpp
-                    want = json_precision(quant, bpp)
-                    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
-                        want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
-                    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-                        json.dump(raw, f)
-                    try:
-                        with contextlib.redirect_stdout(io.StringIO()):
-                            cfg = gr.from_json(f.name)
-                        got = (cfg["bpp"], cfg.get("quant") or "")
-                        planned.add((quant, bpp))
-                        comp = gr.compute(cfg)
-                        if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
-                            flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
-                            assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
-                            commanded.add((quant, bpp))
-                    except gr.PlanRefused as refused:
-                        got = str(refused)
-                    finally:
-                        os.unlink(f.name)
-                    assert got == want, (slug, "preset" in base, quant, bpp, got, want)
-    assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)}"
+    cards = list(gr.GPUS.items())
+    # The smallest preset, so every card fits it and prints a command to check.
+    small = min(gr.PRESETS, key=lambda k: gr.arch_fields(gr.PRESETS[k])["params"])
+    planned, commanded, met = set(), set(), {}
+    for qi, quant in enumerate(quants):
+        for turn in (0, 1):
+            for ci, (slug, row) in enumerate(cards):
+                bpp = widths[(ci + qi + 5 * turn) % len(widths)]
+                branch = (ci + turn) % 2
+                met.setdefault(quant, set()).update({("card", slug), ("branch", branch), ("width", bpp)})
+                base = {"preset": small} if branch == 0 else gr.arch_fields(gr.PRESETS[small])
+                raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
+                if quant is not None:
+                    raw["quant"] = quant
+                if bpp is not None:
+                    raw["bpp"] = bpp
+                want = json_precision(quant, bpp, row["vendor"])
+                if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+                    want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                    json.dump(raw, f)
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        cfg = gr.from_json(f.name)
+                    got = (cfg["bpp"], cfg.get("quant") or "")
+                    planned.add((quant, bpp))
+                    comp = gr.compute(cfg)
+                    if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
+                        flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
+                        assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                        commanded.add((quant, bpp))
+                except gr.PlanRefused as refused:
+                    got = str(refused)
+                finally:
+                    os.unlink(f.name)
+                assert got == want, (slug, branch, quant, bpp, got, want)
+    everything = {("card", s) for s, _ in cards} | {("branch", 0), ("branch", 1)} | {("width", w) for w in widths}
+    missed = {q: len(everything - seen) for q, seen in met.items() if everything - seen}
+    assert not missed, f"quantizations that missed a card, a branch or a width: {missed}"
+    assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"
 
-test("a JSON config's precision is the width its method fixes, BF16 when it names nothing, or refused",
+test("a JSON config's quantization is one vLLM serves on the card's vendor, sized by what its method fixes, or refused",
      check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
 
 
