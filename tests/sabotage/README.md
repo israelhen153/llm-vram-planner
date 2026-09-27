@@ -33,8 +33,10 @@ python3 tests/sabotage/engine_r1_throughput_leaks.py --from H8   # from one sabo
 
 **`parallel.py` changes where a sabotage runs, not how it is judged.** Each worker is a git
 worktree detached at the commit under test, and every sabotage goes through that commit's own
-`run_driver()` and its six suites. Only the green baseline is proved once per worker instead of
-once per driver. Its logs have `chain.sh`'s shape, so `--compare` can hold a parallel run to a
+`run_driver()` and its six suites. Only the green baseline is proved once per run instead of
+once per driver: the first worker proves it, and finds the golden failures, alone; every other
+worker checks that it is a clean checkout of the same commit and starts from that proof. Its
+logs have `chain.sh`'s shape, so `--compare` can hold a parallel run to a
 serial one. It never touches your checkout, so it needs no clean tree, and uncommitted work is
 not judged. The workers live in `tmp/corpus-workers/` and are reused from run to run. **The
 script never deletes one:** a worker that is dirty, locked or missing stops the run and is
@@ -44,7 +46,8 @@ listed, and removing them is the owner's call. One run holds the workers at a ti
 often red first, and a sabotage whose failures so far are all golden comparisons keeps going, so
 the run still reports it: every run lists the catches only a golden made in `golden-only.txt`,
 since regenerating the goldens would hide them. Which failures are golden ones is found by
-emptying the goldens and running the suites, not from test names. Workers write no bytecode and
+emptying the goldens and running the suites, not from test names, and kept in the run's
+`golden-failures.json`. Workers write no bytecode and
 refresh every tracked `.py`'s timestamp first: a sabotage restored inside a second once left a
 `.pyc` that turned 90 later runs on one worker into false catches.
 

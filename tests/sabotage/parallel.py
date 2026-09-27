@@ -224,7 +224,7 @@ def judge_shell(tree, driver):
     return {"status": "shell", "rc": p.returncode, "output": p.stdout}
 
 
-def worker_main(tree, early_exit):
+def worker_main(tree, early_exit, sha, golden_file):
     # The task stream and the results travel on this process's own stdin and stdout.
     # Children inherit fd 0 and fd 1, so both are moved out of their reach first: a
     # suite reading stdin would eat tasks, and one printing would corrupt results.
@@ -256,10 +256,22 @@ def worker_main(tree, early_exit):
     started = time.monotonic()
     try:
         harness = load_harness(tree)
-        harness.require_green_baseline()
-        golden = golden_failures(harness, tree)
+        head = git("rev-parse", "HEAD", cwd=tree).stdout.strip()
+        if head != sha:
+            raise RuntimeError(f"the worker is at {head[:7]}, not at {sha[:7]}")
+        if golden_file is None:
+            # The first worker proves the commit, once for the run: its suites green, and
+            # which failures are golden ones. Every worker proving it ran sixteen suite
+            # passes at once on eight workers and four cores before any sabotage was judged.
+            harness.require_green_baseline()
+            golden = golden_failures(harness, tree)
+        else:
+            # The others are the same commit, checked out clean, with the same bytecode
+            # rules, so the first worker's proof is theirs: they only check that they are.
+            with open(golden_file, encoding="utf-8") as fh:
+                golden = set(json.load(fh))
         if git("status", "--porcelain", cwd=tree).stdout.strip():
-            raise RuntimeError("the worker is not clean after finding the golden failures")
+            raise RuntimeError("the worker is not clean after proving the commit")
     except SystemExit as e:
         send({"ready": False, "error": str(e.code)})
         return 2
@@ -482,27 +494,37 @@ def run(args):
           f"in {os.path.join(root, WORKERS_DIR)}; logs in {logdir}", flush=True)
 
     t_start = time.monotonic()
-    procs = []
-    for i, w in enumerate(workers, 1):
+    procs, baselines = [], []
+    golden_file = os.path.join(logdir, "golden-failures.json")
+
+    def start(i, w, proof):
         err = open(os.path.join(logdir, f"worker-w{i}.stderr"), "w")
-        procs.append(subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__), "--worker", w,
-                                       *(["--early-exit"] if args.early_exit else [])],
-                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
-                                      text=True, bufsize=1, start_new_session=True))
-    baselines, goldens = [], []
-    for i, p in enumerate(procs, 1):
+        p = subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__), "--worker", w, "--sha", sha,
+                              *(["--early-exit"] if args.early_exit else []),
+                              *([] if proof else ["--golden", golden_file])],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
+                             text=True, bufsize=1, start_new_session=True)
+        procs.append(p)
+        return p
+
+    def ready(i, p):
         line = p.stdout.readline()
-        msg = json.loads(line) if line else {"ready": False, "error": "exited before its baseline"}
+        msg = json.loads(line) if line else {"ready": False, "error": "exited before it was ready"}
         if not msg.get("ready"):
             for q in procs:
                 q.stdin.close()
             sys.exit(f"w{i} refused to judge on {sha[:7]}: {msg.get('error')}")
         baselines.append(msg["baseline_s"])
-        goldens.append(msg["golden"])
-    if any(g != goldens[0] for g in goldens):
-        for q in procs:
-            q.stdin.close()
-        sys.exit("the workers disagree about which failures are golden ones, so no catch can be classified")
+        return msg
+
+    # The first worker proves the commit alone, then the rest start from its proof.
+    golden = ready(1, start(1, workers[0], proof=True))["golden"]
+    with open(golden_file, "w", encoding="utf-8") as fh:
+        json.dump(golden, fh, indent=1)
+    rest = [(i, start(i, w, proof=False)) for i, w in enumerate(workers[1:], 2)]
+    for i, p in rest:
+        ready(i, p)
+    goldens = [golden]
 
     todo = queue.Queue()
     for t in tasks:
@@ -657,7 +679,9 @@ def compare(serial_dir, parallel_dir, subset=False):
 
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--worker":
-        return worker_main(sys.argv[2], "--early-exit" in sys.argv[3:])
+        rest = sys.argv[3:]
+        return worker_main(sys.argv[2], "--early-exit" in rest, rest[rest.index("--sha") + 1],
+                           rest[rest.index("--golden") + 1] if "--golden" in rest else None)
     if len(sys.argv) >= 3 and sys.argv[1] == "--list":
         return list_main(sys.argv[2], sys.argv[3:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
