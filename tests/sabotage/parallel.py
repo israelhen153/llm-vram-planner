@@ -234,6 +234,22 @@ def refuse_unless_proven(tree, sha):
         raise RuntimeError("the worker is not clean")
 
 
+def prove_or_trust(harness, tree, sha, golden_file):
+    """The golden failures this worker judges with. With no golden_file, this is the
+    first worker, and it proves the commit for the run: its suites green, and which
+    failures are golden ones. When every worker proved it, eight workers on four cores
+    ran sixteen suite passes at once before judging anything. Any other worker trusts
+    that proof, read from golden_file, once it has checked it is the proved commit, clean."""
+    if golden_file is None:
+        harness.require_green_baseline()
+        golden = golden_failures(harness, tree)
+    else:
+        with open(golden_file, encoding="utf-8") as fh:
+            golden = set(json.load(fh))
+    refuse_unless_proven(tree, sha)
+    return golden
+
+
 def worker_main(tree, early_exit, sha, golden_file):
     # The task stream and the results travel on this process's own stdin and stdout.
     # Children inherit fd 0 and fd 1, so both are moved out of their reach first: a
@@ -266,18 +282,7 @@ def worker_main(tree, early_exit, sha, golden_file):
     started = time.monotonic()
     try:
         harness = load_harness(tree)
-        if golden_file is None:
-            # The first worker proves the commit, once for the run: its suites green, and
-            # which failures are golden ones. Every worker proving it ran sixteen suite
-            # passes at once on eight workers and four cores before any sabotage was judged.
-            harness.require_green_baseline()
-            golden = golden_failures(harness, tree)
-        else:
-            # The others are the same commit, checked out clean, with the same bytecode
-            # rules, so the first worker's proof is theirs: they only check that they are.
-            with open(golden_file, encoding="utf-8") as fh:
-                golden = set(json.load(fh))
-        refuse_unless_proven(tree, sha)
+        golden = prove_or_trust(harness, tree, sha, golden_file)
     except SystemExit as e:
         send({"ready": False, "error": str(e.code)})
         return 2

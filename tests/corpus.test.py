@@ -266,5 +266,77 @@ def check_a_worker_judges_only_at_the_commit_the_run_proved():
 test("a corpus worker judges only at the commit the run proved, and clean", check_a_worker_judges_only_at_the_commit_the_run_proved)
 
 
+FAKE_HARNESS = """import os
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+JUDGING_SUITES = [("fake", ["true"])]
+
+
+def require_green_baseline():
+    with open(os.environ["FAKE_HARNESS_LOG"], "a") as f:
+        f.write("baseline\\n")
+
+
+def run_judging_suites():
+    with open(os.path.join(ROOT, "tests", "golden", "g.json")) as f:
+        emptied = f.read().strip() == "{}"
+    return {"fake": (1, ["FAIL the golden"], [], "") if emptied else (0, [], [], "")}
+"""
+
+
+def check_a_worker_starts_from_the_run_s_proof_or_refuses():
+    """A corpus worker's start, through the real `parallel.py --worker` process, on a
+    throwaway repository whose harness only records what it is asked. The first worker
+    proves the commit: its baseline runs, and the golden failures are found by emptying
+    the goldens. Another worker trusts that proof: no baseline, and the golden failures
+    it judges with are the file's. And a worker at another commit refuses. Round 23
+    dropped the proof's check, the first worker's baseline, and the golden file's
+    contents from a worker, and the unit test of the check alone saw none of them."""
+    import json, subprocess, tempfile
+    runner = os.path.join(ROOT, "tests", "sabotage", "parallel.py")
+    with tempfile.TemporaryDirectory() as d:
+        tree, log, handed = os.path.join(d, "tree"), os.path.join(d, "harness.log"), os.path.join(d, "golden.json")
+        os.makedirs(os.path.join(tree, "tests", "sabotage"))
+        os.makedirs(os.path.join(tree, "tests", "golden"))
+        with open(os.path.join(tree, "tests", "sabotage", "harness.py"), "w") as f:
+            f.write(FAKE_HARNESS)
+        with open(os.path.join(tree, "tests", "golden", "g.json"), "w") as f:
+            f.write('{"a": 1}\n')
+        with open(handed, "w") as f:
+            json.dump(["FAIL handed on by the first worker"], f)
+
+        def git(*args):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                                   *args], cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "--template=")  # no hooks from a global template
+        git("add", ".")
+        git("commit", "-q", "-m", "one")
+        first = git("rev-parse", "HEAD")
+        git("commit", "-q", "--allow-empty", "-m", "two")
+        second = git("rev-parse", "HEAD")
+
+        def start(sha, golden_file=None):
+            open(log, "w").close()
+            done = subprocess.run([sys.executable, "-B", runner, "--worker", tree, "--sha", sha,
+                                   *(["--golden", golden_file] if golden_file else [])],
+                                  input="", capture_output=True, text=True, timeout=60,
+                                  env=dict(os.environ, FAKE_HARNESS_LOG=log))
+            lines = done.stdout.splitlines()
+            assert lines, f"the worker said nothing: {done.stderr[-400:]}"
+            with open(log) as f:
+                return json.loads(lines[0]), f.read().split()
+
+        ready, calls = start(second)
+        assert ready.get("ready") and ready["golden"] == ["FAIL the golden"], ready
+        assert calls == ["baseline"], f"the first worker proved nothing green: {calls}"
+        ready, calls = start(second, handed)
+        assert ready.get("ready") and ready["golden"] == ["FAIL handed on by the first worker"], ready
+        assert calls == [], f"a worker given the proof proved the commit again: {calls}"
+        ready, calls = start(first, handed)
+        assert not ready.get("ready") and "not at" in ready.get("error", ""), ready
+
+test("a corpus worker starts from the run's proof, or proves it first, or refuses at another commit",
+     check_a_worker_starts_from_the_run_s_proof_or_refuses)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

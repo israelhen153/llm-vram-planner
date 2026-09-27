@@ -99,10 +99,11 @@ RUNNER_HEAD = ('    if head != sha:\n'
                '        raise RuntimeError(f"the worker is at {head[:7]}, not at {sha[:7]}")\n')
 RUNNER_CLEAN = ('    if git("status", "--porcelain", cwd=tree).stdout.strip():\n'
                 '        raise RuntimeError("the worker is not clean")\n')
-RUNNER_CALL = '        refuse_unless_proven(tree, sha)\n'
-RUNNER_SHARED = '                golden = set(json.load(fh))\n'
-RUNNER_PROOF = ('            harness.require_green_baseline()\n'
-                '            golden = golden_failures(harness, tree)\n')
+RUNNER_CALL = '    refuse_unless_proven(tree, sha)\n'
+RUNNER_START = '        golden = prove_or_trust(harness, tree, sha, golden_file)\n'
+RUNNER_SHARED = '            golden = set(json.load(fh))\n'
+RUNNER_PROOF = ('        harness.require_green_baseline()\n'
+                '        golden = golden_failures(harness, tree)\n')
 
 RUNNER = {
     "R1 runner: a worker no longer checks it is at the proved commit": [
@@ -114,9 +115,11 @@ RUNNER = {
     "R4 runner: refuse_unless_proven() is never called": [
         (RUNNER_PY, RUNNER_CALL, '', 1)],
     "R5 runner: the other workers ignore the first worker's golden failures": [
-        (RUNNER_PY, RUNNER_SHARED, '                golden = set()\n', 1)],
+        (RUNNER_PY, RUNNER_SHARED, '            golden = set()\n', 1)],
     "R6 runner: the first worker finds the golden failures without proving the tree green": [
-        (RUNNER_PY, RUNNER_PROOF, '            golden = golden_failures(harness, tree)\n', 1)],
+        (RUNNER_PY, RUNNER_PROOF, '        golden = golden_failures(harness, tree)\n', 1)],
+    "R7 runner: a worker judges with no golden failures and no proof at all": [
+        (RUNNER_PY, RUNNER_START, '        golden = set()\n', 1)],
 }
 
 
