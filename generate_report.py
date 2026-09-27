@@ -868,6 +868,37 @@ def refuse_fp8_where_vllm_cannot(cfg):
     return cfg
 
 
+def unresolvable_model_path(model):
+    """Why the GPU server couldn't find this model path, or "" if it can. The printed
+    command runs there, not where the planner ran: a path starting with ~, or naming
+    a shell variable, stays literal because the command quotes it, so vLLM takes it
+    for a Hugging Face id; a relative path depends on the directory the command runs
+    from, which inside the ROCm container is /vllm-workspace. An absolute path, and a
+    name shaped like a Hugging Face id (at most one /), are fine."""
+    model = str(model or "")
+    if "$" in model:
+        return "names a shell variable, which the printed command quotes, so the GPU server never expands it"
+    if not model or model.startswith("/"):
+        return ""
+    if model.startswith("~"):
+        return "starts with ~, which the printed command quotes, so the GPU server never expands it"
+    if model in (".", "..") or model.startswith(("./", "../")) or model.count("/") >= 2:
+        return ("is relative, so it depends on the directory the command runs from, and inside "
+                "the ROCm container that is /vllm-workspace")
+    return ""
+
+
+def refuse_model_path_the_server_cannot_resolve(cfg):
+    """Stop a plan whose model path only makes sense on the machine that wrote it,
+    with the reason and the fix: the model's absolute path on the GPU server, which
+    the ROCm command also mounts."""
+    reason = unresolvable_model_path(cfg.get("hf_model"))
+    if reason:
+        raise PlanRefused(f"The model path {cfg['hf_model']!r} {reason}. Give its absolute path on "
+                          f"the GPU server instead, for example /opt/models/<name>.")
+    return cfg
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
@@ -1503,6 +1534,7 @@ def interactive_mode():
             "shared_exp": int(input("  Shared experts (0 if none): ") or "0"),
         }
         hf_model = input("  HuggingFace model ID: ").strip() or "/opt/models/YourModel"
+        refuse_model_path_the_server_cannot_resolve({"hf_model": hf_model})
         model_name = input("  Display name: ").strip() or f"{arch['params']}B model"
     else:
         # Same construction path as from_cli_args/from_json: this is the
@@ -1680,6 +1712,9 @@ def validate_arch(cfg):
     # can say which.
     if cfg.get("bpp") == 1 and not cfg.get("quant"):
         cfg["quant"] = "fp8"
+    # A model path the GPU server can't resolve (~, a shell variable, a relative
+    # path): refused, with the fix, not printed into a command that fails at startup.
+    refuse_model_path_the_server_cannot_resolve(cfg)
     # FP8 weights, by quant or by one byte per parameter, on a card vLLM has no FP8
     # weight kernel for: refused, not planned.
     return refuse_fp8_where_vllm_cannot(cfg)

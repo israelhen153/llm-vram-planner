@@ -2555,6 +2555,105 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
      check_a_local_model_is_mounted_wherever_it_lives)
 
 
+# Model paths the GPU server can't resolve, generated: every prefix that needs a shell
+# or a working directory, crossed with tails like the local ones, plus the bare
+# relative forms. Every path the mount test above plans must still be planned.
+UNRESOLVABLE_PREFIXES = ("~/", "~", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
+UNRESOLVABLE_MODEL_PATHS = ([prefix + tail for prefix in UNRESOLVABLE_PREFIXES
+                             for tail in ("llama-8b", "checkpoint_v2.1", "a/b/c/d/e/f")]
+                            + [".", "..", "models/llama/v2", "a/b/c/d/e/f"])
+RESOLVABLE_MODEL_PATHS = LOCAL_MODEL_PATHS + HUB_MODEL_IDS + ["gpt2"]
+# The refusal's words, as the contract: why, by kind of path, and the fix.
+MODEL_PATH_REASONS = {
+    "variable": "names a shell variable, which the printed command quotes, so the GPU server never expands it",
+    "tilde": "starts with ~, which the printed command quotes, so the GPU server never expands it",
+    "relative": ("is relative, so it depends on the directory the command runs from, and inside "
+                 "the ROCm container that is /vllm-workspace"),
+}
+MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
+
+
+def model_path_refusal(path):
+    kind = "variable" if "$" in path else "tilde" if path.startswith("~") else "relative"
+    return f"The model path {path!r} {MODEL_PATH_REASONS[kind]}. {MODEL_PATH_FIX}"
+
+
+def refusal_of(plan):
+    """plan()'s PlanRefused message, or None when it plans."""
+    try:
+        plan()
+    except gr.PlanRefused as refused:
+        return str(refused)
+    return None
+
+
+def check_a_model_path_the_server_cannot_resolve_is_refused():
+    """The printed command runs on the GPU server. A model path starting with ~, or
+    naming a shell variable, stayed literal there because the command quotes it, so
+    vLLM took it for a Hugging Face id and failed at startup; a relative one depends
+    on where the command runs, and inside the ROCm container that is /vllm-workspace.
+    Each is refused with its reason and the fix, through both of from_json()'s
+    branches, on a card of every vendor in the catalog. Every path the mount test
+    plans is still planned."""
+    cards = {}
+    for slug, row in gr.GPUS.items():
+        cards.setdefault(row["vendor"], slug)
+    assert len(cards) >= 2, cards
+    for slug in cards.values():
+        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+            for path in UNRESOLVABLE_MODEL_PATHS + RESOLVABLE_MODEL_PATHS:
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                    json.dump(dict(base, gpu=slug, hf_model=path, bpp=2), f)
+                try:
+                    got = refusal_of(lambda: gr.from_json(f.name))
+                finally:
+                    os.unlink(f.name)
+                want = model_path_refusal(path) if path in UNRESOLVABLE_MODEL_PATHS else None
+                assert got == want, (slug, "preset" in base, path, got)
+
+test("a model path the GPU server can't resolve is refused with its reason and the fix, on every vendor, "
+     "and absolute paths and hub ids are still planned", check_a_model_path_the_server_cannot_resolve_is_refused)
+
+
+def check_the_menu_refuses_a_model_path_the_server_cannot_resolve():
+    """The menu's custom model took any text as its HuggingFace ID, so ~/models went
+    into the command. Every unresolvable form is refused as soon as it is typed, with
+    the same words; an absolute path and a hub id go on to a plan that keeps them."""
+    custom = ["custom", "8", "100", "32", "8", "128", "0"]
+    rest = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
+    for path in UNRESOLVABLE_MODEL_PATHS + ["/opt/models/llama-8b", "meta-llama/Llama-3.1-8B-Instruct"]:
+        answers = unittest.mock.Mock(side_effect=custom + [path] + rest)
+        cfg = {}
+        with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
+            got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
+        if path in UNRESOLVABLE_MODEL_PATHS:
+            assert got == model_path_refusal(path), (path, got)
+            assert answers.call_count == len(custom) + 1, f"{path!r}: refused only after {answers.call_count} answers"
+        else:
+            assert got is None and cfg.get("hf_model") == path, (path, got, cfg.get("hf_model"))
+
+test("the interactive menu refuses a model path the GPU server can't resolve as soon as it is typed",
+     check_the_menu_refuses_a_model_path_the_server_cannot_resolve)
+
+
+def check_the_cli_refuses_a_model_path_with_exit_2():
+    """The command line itself, for a JSON config on an AMD card: the reason on
+    stderr, exit status 2, and no PDF."""
+    slug = next(s for s, row in gr.GPUS.items() if row["vendor"] == "amd")
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": "~/models/llama", "bpp": 2}, f)
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert f"error: {model_path_refusal('~/models/llama')}" in run.stderr, run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses a JSON config's unresolvable model path with the reason and exit status 2, and writes no PDF",
+     check_the_cli_refuses_a_model_path_with_exit_2)
+
+
 def check_the_rocm_block_holds_on_a_board_of_four_devices():
     """No catalog board has more than two devices, so a ROCm block that dropped its
     closing notes above two passed every card that exists. A board of four, built
