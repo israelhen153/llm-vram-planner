@@ -2911,14 +2911,15 @@ def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
     cards = list(gr.GPUS.items())
     planned, commanded, met = set(), set(), {}
     for qi, quant in enumerate(quants):
-        for turn in range(4):
-            model = dense if turn < 2 else moe  # the dense turns meet every width on the smallest model
+        # Model, KV cache and branch step in whole turns, and the width steps with the
+        # card inside each turn, so every quantization meets every width under every
+        # model, KV cache and branch: a default read off the KV cache showed only for no
+        # quantization, no width and an FP8 KV cache together, which a rotation missed.
+        for turn in range(8):
+            model, kv, branch = (dense if turn < 4 else moe), turn % 2, (turn // 2) % 2
             for ci, (slug, row) in enumerate(cards):
                 bpp = widths[(ci + qi + 5 * turn) % len(widths)]
-                branch = (ci + turn) % 2
-                kv = (ci + qi + turn) % 2
-                met.setdefault(quant, set()).update({("card", slug), ("branch", branch), ("width", bpp),
-                                                     ("model", model), ("kv", kv)})
+                met.setdefault(quant, set()).update({("card", slug), ("combo", bpp, model, kv, branch)})
                 base = {"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model])
                 raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
                 if kv:
@@ -2949,8 +2950,9 @@ def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
                 finally:
                     os.unlink(f.name)
                 assert got == want, (slug, branch, model, kv, quant, bpp, got, want)
-    everything = ({("card", s) for s, _ in cards} | {("branch", 0), ("branch", 1)} | {("width", w) for w in widths}
-                  | {("model", dense), ("model", moe)} | {("kv", 0), ("kv", 1)})
+    assert len(cards) >= len(widths), "each turn must reach every width"
+    everything = ({("card", s) for s, _ in cards}
+                  | {("combo", w, m, k, b) for w in widths for m in (dense, moe) for k in (0, 1) for b in (0, 1)})
     missed = {q: sorted(everything - seen, key=str)[:3] for q, seen in met.items() if everything - seen}
     assert not missed, f"quantizations that missed a value: {missed}"
     assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"

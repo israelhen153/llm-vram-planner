@@ -14,6 +14,10 @@ builder, the method table written by hand or given a no-method entry, each
 refusal narrowed, a disagreeing width overridden by the method's, the FP8 gate
 moved ahead of the width rules, and the command's --quantization read off the
 width instead of the method.
+
+X4 is not kept: once a width of 0 or less is refused before the width is
+resolved, `if not bpp` and `if bpp is None` behave the same (a bool is a type
+error before either), so no test can tell them apart.
 """
 import os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
@@ -47,8 +51,6 @@ S = {
     "X3 py: the own-fields branch defaults to BF16 before the method is consulted": [
         (REPORT_PY, PY_OWN_CTX_DEFAULT, '    cfg.setdefault("bpp", 2)\n' + PY_OWN_CTX_DEFAULT, 1)],
     # ---- axes the sweep holds fixed ----
-    "X4 py: a width of 0 is treated as missing (`if not bpp`)": [
-        (REPORT_PY, PY_WIDTH_IF_MISSING, "    if not bpp:\n", 1)],
     "X5 py: the preset branch copies the JSON's width only when it is truthy": [
         (REPORT_PY, PY_WIDTH_JSON_GIVEN, '        if raw.get("bpp"):\n            cfg["bpp"] = raw["bpp"]\n', 1)],
     "X6 py: a missing width is resolved on dense models only": [
