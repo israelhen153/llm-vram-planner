@@ -17,6 +17,7 @@ from anchors import (INDEX_HTML, JS_BADGE, JS_CAP_MAXCTX, JS_CMP_GATE, JS_CMP_UN
                      JS_RET_FITS, JS_RET_TP, JS_RET_VRAM, JS_STATE_PK, JS_TP_GATE,
                      JS_TP_RETURN, JS_TP_TILE, JS_UNMODELLED_NOTE, JS_UNSUPPRESS, PY_B_CLI,
                      PY_B_INTERACTIVE, PY_B_JSON, PY_B_RAW, PY_COST, PY_COST_HEAD, PY_DECL,
+                     PY_R10_CONTEXT_AMD,
                      PY_DP_NOTE, PY_EXPLAIN, PY_FIELDS, PY_FP8_NOTE, PY_MAXCTX_ROW,
                      PY_NOTES_PCIE, PY_NOTMOD_ROW, PY_PERF, PY_RET_BATCH, PY_RET_FITS,
                      PY_RET_TP, PY_RET_W, PY_TP_GATE, PY_UNSUPPRESS, REPORT_PY, SYNC_FIELDS,
@@ -129,13 +130,15 @@ S["E18 py: PDF — only the 'No measured utilisation' half"] = [(REPORT_PY, PY_E
 S["E19 py: PDF — 'Not modelled' cell replaced by a dash"] = [(REPORT_PY, PY_NOTMOD_ROW, "                [\"Throughput and TTFT\", \"\\u2014\"],\n", 1)]
 S["E20 py: PDF — reason moved into Notes and assumptions"] = [
     (REPORT_PY, PY_EXPLAIN, "", 1),
-    (REPORT_PY, "        notes.append(\"VRAM estimates include ~1.5 GB CUDA context overhead per device.\")\n",
-     "        notes.append(\"VRAM estimates include ~1.5 GB CUDA context overhead per device.\")\n        if not c[\"throughput_modelled\"]:\n            notes.append(f\"No measured utilisation is published for {gpu['name']}; borrowed constants do not transfer.\")\n", 1)]
+    # Ahead of the runtime-context note, which feat/rocm-guidance split by vendor: an
+    # insertion before an `if` stays valid Python whatever its branches come to hold.
+    (REPORT_PY, PY_R10_CONTEXT_AMD,
+     "        if not c[\"throughput_modelled\"]:\n            notes.append(f\"No measured utilisation is published for {gpu['name']}; borrowed constants do not transfer.\")\n" + PY_R10_CONTEXT_AMD, 1)]
 S["E21 py: PDF — throughput section omitted entirely for the unknown card"] = [
     (REPORT_PY, "            story.append(Paragraph(\"Throughput\", self.styles[\"SectionHead\"]))\n            story.append(self._make_kv_table([\n                [\"Throughput and TTFT\", \"Not modelled\"],\n                max_batch_row,\n            ]))\n" + PY_EXPLAIN, "            pass\n", 1)]
 
 # ---- F. suppress a constants-independent figure as well ----
-S["F1 js: weightsGB null without constants"] = [(INDEX_HTML, JS_RET_VRAM, "    isMoE, weightsGB: throughputModelled ? weightsGB : null, kvCacheGB, activationsGB, totalOverhead, totalGB,\n", 1)]
+S["F1 js: weightsGB null without constants"] = [(INDEX_HTML, JS_RET_VRAM, "    isMoE, weightsGB: throughputModelled ? weightsGB : null, kvCacheGB, activationsGB, totalOverhead, peerBufferGB, totalGB,\n", 1)]
 S["F2 js: maxBatchByKV null without constants"] = [(INDEX_HTML, JS_RET_BATCH, "    maxBatchByKV: throughputModelled ? maxBatchByKV : null, batchLimitedByKV, computeBound, ttftMs, ttftColdMs, ttftWarmMs,\n", 1)]
 S["F3 js: tp/dp null without constants"] = [(INDEX_HTML, JS_RET_TP, "    tp: throughputModelled ? tp : null, dp: throughputModelled ? dp : null,\n    freeForKVCache,", 1)]
 S["F4 js: hourlyHyper null without constants"] = [(INDEX_HTML, JS_RET_COST, "    hourlyHyper: throughputModelled ? hourlyHyper : null, hourlySpec, hourlySpot,\n", 1)]

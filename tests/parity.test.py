@@ -33,14 +33,14 @@ tree = ast.parse(src)
 # Every module-level name compute() closes over must be listed here, and must be
 # a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
 # gets skipped, and surfaces as a bare NameError from inside compute() much later.
-wanted = {"GIB", "GPUS", "PERF"}
+wanted = {"GIB", "GPUS", "PERF", "ROCM"}
 # build_vllm_cmd/split_parallelism/device_count_for don't close over any of the
 # above (they take cfg/comp as plain dicts and gpu_count as a plain int), so
 # wanted stays as-is — they just need to ride along in the same exec(), because
 # compute() now calls split_parallelism(device_count_for(cfg)) for the TP/DP
 # split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
-              "device_count_for"}
+              "device_count_for", "interconnect_name", "rocm_guidance", "fp8_weights_blocked"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -55,7 +55,9 @@ for name in sorted(wanted):
     assert name in ns, f"{name} not extracted from generate_report.py — is it still a top-level assignment?"
 compute, GPUS, PERF = ns["compute"], ns["GPUS"], ns["PERF"]
 supports_nvlink = ns["supports_nvlink"]
+interconnect_name = ns["interconnect_name"]
 build_vllm_cmd = ns["build_vllm_cmd"]
+ROCM, rocm_guidance = ns["ROCM"], ns["rocm_guidance"]
 # build_vllm_cmd() reads the split off comp rather than deriving it, so the
 # command matrix at the bottom has to derive one to hand it — with this engine's
 # own function, so what that section compares is still two derivations.
@@ -217,6 +219,23 @@ CASES = [
      "card": {"gb": 80, "bw": 3352, "hyper": 12.3, "spec": 3.99, "spot": 2.25,
               "tflops": 990, "name": "Keyless 80 GB", "vendor": "nvidia", "devices": 1,
               "caps": {"fp8": True}}},
+    # Price tiers the catalog records as null — no confirmed hourly price. Each
+    # engine must keep the tier's cost absent (None, null) rather than turning
+    # it into a number: null * n is 0 in JavaScript and a TypeError in Python,
+    # so the two would disagree by crashing on one side and pricing a free
+    # cluster on the other. With constants, and without them.
+    {"name": "Null price tiers, constants present: hyper and spot absent in both engines",
+     "params": 70, "active": 100, "bpp": 1, "quant": "fp8", "layers": 80, "kv_heads": 8,
+     "h_dim": 128, "ctx": 8192, "conc": 16, "n_gpu": 4, "gpu": "h100-80",
+     "card": {"gb": 80, "bw": 3352, "hyper": None, "spec": 3.99, "spot": None,
+              "tflops": 990, "name": "Null-tier 80 GB", "vendor": "nvidia", "perfKey": "nvidia",
+              "devices": 1, "caps": {"fp8": True}}},
+    {"name": "Null price tiers, no constants: every tier absent in both engines",
+     "params": 8, "active": 100, "bpp": 2, "layers": 32, "kv_heads": 8, "h_dim": 128,
+     "ctx": 8192, "conc": 16, "n_gpu": 1, "gpu": "h100-80",
+     "card": {"gb": 128, "bw": 3276.8, "hyper": None, "spec": None, "spot": None,
+              "tflops": 383, "name": "Unpriced 128 GB", "vendor": "amd", "perfKey": "cdna2",
+              "devices": 2, "caps": {"fp8": False}}},
 ]
 
 js_runner = r"""
@@ -334,6 +353,9 @@ FIELDS = [
     # The engines reach this by different routes — device GB x devices here,
     # board GB x boards there — and nothing compared the results.
     ("total_vram", "totalVRAM", 0.001),
+    # The per-extra-device peer-buffer charge both engines' notes print. Compared so
+    # the two can't charge, or describe, different figures for the same link.
+    ("peer_buffer_gb", "peerBufferGB", 0.001),
     # The constants as executed, not as extracted — this is what stops the two
     # engines quietly disagreeing about a value no case happens to exercise.
     ("perf_mbu", "perfMbu", 0), ("perf_mfu_decode", "perfMfuDecode", 0),
@@ -533,7 +555,10 @@ for case, js in zip(CASES, js_results):
         except Missing:
             problems.append(f"js returned no {jk} at all")
             continue
-        want_none = absent and pk in PERF_BOUND
+        # A cost whose tier the card records as null is absent too, with or
+        # without constants — the only other field allowed to be None.
+        tier = {"hourly_hyper": "hyper", "hourly_spec": "spec", "hourly_spot": "spot"}.get(pk)
+        want_none = (absent and pk in PERF_BOUND) or (tier is not None and cfg["gpu"].get(tier) is None)
         for engine, v in (("python", py[pk]), ("js", jv)):
             if (v is None) != want_none:
                 problems.append(f"{engine} {pk}={v!r}, expected {'None' if want_none else 'a value'}")
@@ -735,6 +760,9 @@ else:
 
 # The GPU tables are maintained twice.# The GPU tables are maintained twice. Drift there is silent and produces
 # confidently wrong numbers, so compare them field by field.
+# Every value the catalog's `form` may take: the contract tests/model.test.js
+# checks every row against, and the same four tests/report.test.py walks.
+FORMS = ["sxm", "pcie", "consumer", "oam"]
 js_side = json.loads(subprocess.run(
     ["node", "-e", """
 const fs=require('fs');const h=fs.readFileSync(process.argv[1],'utf8');
@@ -746,11 +774,18 @@ if(!fn) throw new Error('supportsNVLink() not found in index.html');
 const supportsNVLink=new Function(`${fn[0]}; return supportsNVLink;`)();
 const nvlink={};
 for(const [k,g] of Object.entries(T)) nvlink[k]=supportsNVLink(g);
+const icn=h.match(/^function interconnectName\\(state\\) \\{[\\s\\S]*?\\n\\}$/m);
+if(!icn) throw new Error('interconnectName() not found in index.html');
+const interconnectName=new Function(`${icn[0]}; return interconnectName;`)();
+const links={};
+for(const form of JSON.parse(process.argv[2]))
+  for(const asked of [true,false])
+    links[form+'/'+asked]=interconnectName({hasNVLink:supportsNVLink({form})&&asked,gpuForm:form});
 const bd=h.match(/^const BENCHMARK_DATA = \\{[\\s\\S]*?\\n\\};$/m);
 if(!bd) throw new Error('BENCHMARK_DATA not found in index.html');
 const benchmarks=new Function(`${bd[0]}; return BENCHMARK_DATA;`)();
-console.log(JSON.stringify({table:T, nvlink, benchmarks}));""",
-     os.path.join(ROOT, "index.html")],
+console.log(JSON.stringify({table:T, nvlink, links, benchmarks}));""",
+     os.path.join(ROOT, "index.html"), json.dumps(FORMS)],
     capture_output=True, text=True).stdout)
 js_gpus = js_side["table"]
 
@@ -776,7 +811,8 @@ else:
         # nested-dict renderers, and nothing else here would catch the two
         # disagreeing about a provider name or a date.
         for f in ("gb", "bw", "hyper", "spec", "spot", "tflops",
-                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource"):
+                  "name", "vendor", "perfKey", "devices", "form", "caps", "default", "priceSource",
+                  "priceRecord", "priceNote", "priceLead", "gfx"):
             a, b = GPUS[key].get(f), js_gpus[key].get(f)
             numeric = f in ("gb", "bw", "hyper", "spec", "spot", "tflops", "devices")
             if a is None or b is None:
@@ -860,6 +896,34 @@ elif with_nv != by_form:
     failed += 1
 else:
     print(f"  ok   NVLink tracks `form`: {len(with_nv)} cards have it, {len(without_nv)} do not")
+    passed += 1
+
+# ---- the interconnect's name, form by form ----------------------------------
+# Both engines print the link a configuration's devices share, and both derive
+# it from the NVLink gate and the form. A disagreement would title the PDF
+# "(PCIe)" above a page that says Infinity Fabric. Driven over every form the
+# catalog allows rather than over its rows, because no row need exist for a
+# form to be reachable.
+link_drift = []
+for form in FORMS:
+    for asked in (True, False):
+        nv = supports_nvlink({"form": form}) and asked
+        py = interconnect_name({"nvlink": nv, "gpu": {"form": form}})
+        js = js_side["links"].get(f"{form}/{str(asked).lower()}")
+        if py != js:
+            link_drift.append(f"{form}, NVLink {'asked' if asked else 'not asked'}: py={py!r} js={js!r}")
+names = {interconnect_name({"nvlink": supports_nvlink({"form": f}) and a, "gpu": {"form": f}})
+         for f in FORMS for a in (True, False)}
+if link_drift:
+    print("  FAIL the two engines name the interconnect differently")
+    for d in link_drift:
+        print(f"       {d}")
+    failed += 1
+elif names != {"NVLink", "Infinity Fabric", "PCIe"}:
+    print(f"  FAIL the forms reach only {sorted(names)}, so the agreement check covers too little")
+    failed += 1
+else:
+    print(f"  ok   both engines name the same link for every form ({len(FORMS)} forms x NVLink asked/not)")
     passed += 1
 
 # ---- the same guard, for the benchmark table ------------------------------
@@ -964,7 +1028,7 @@ else:
 # which meant only 4 of the 8 (quant, prefix_caching) pairs ever occurred.
 GPU_COUNTS = [1, 2, 3, 6, 8, 12, 16, 17, 64, 100, 128, 256]
 PREFIX_CACHING_VALUES = [True, False]
-QUANT_VALUES = [None, "awq", "gptq", "gguf"]
+QUANT_VALUES = [None, "awq", "gptq", "gguf", "fp8"]
 IS_MOE_VALUES = [False, True]
 KV_BPP_VALUES = [2, 1]  # BF16 vs FP8 KV cache -> --kv-cache-dtype fp8
 MAX_CTX_1 = 8192
@@ -1042,6 +1106,22 @@ EXTRA_CASES = [
 ]
 MATRIX.extend(EXTRA_CASES)
 
+# AMD: vLLM's ROCm image in place of `vllm serve`, with AITER where the target has it
+# and a mount for a local path. Every AMD row in the catalog, so a target added
+# tomorrow is compared the day it lands, at one board and three, with the
+# precisions and both KV types, and a local path and a hub id.
+for slug, row in GPUS.items():
+    if row["vendor"] != "amd":
+        continue
+    for n in (1, 3):
+        for q in (None, "awq", "gguf", "fp8"):
+            for kv in (2, 1):
+                for hf in ("/opt/models/YourModel", "meta-llama/Llama-3.1-8B-Instruct"):
+                    MATRIX.append({"n_gpu": n, "prefix_caching": True, "fits": True, "quant": q,
+                                   "is_moe": False, "kv_bpp": kv, "ctx": 16384, "hf_model": hf,
+                                   "devices": row["devices"], "vendor": "amd", "gfx": row.get("gfx"),
+                                   "skip_reason": None})
+
 for unsafe in UNSAFE_HF_MODELS:
     MATRIX.append({
         "n_gpu": 1, "prefix_caching": True, "fits": True, "quant": None,
@@ -1064,7 +1144,7 @@ def py_comp(m):
 py_cmds = [
     build_vllm_cmd(
         {"hf_model": m["hf_model"], "ctx": m["ctx"], "n_gpu": m["n_gpu"],
-         "gpu": {"devices": m.get("devices", 1)},
+         "gpu": {"devices": m.get("devices", 1), "vendor": m.get("vendor", "nvidia"), "gfx": m.get("gfx")},
          "quant": m["quant"], "prefix_caching": m["prefix_caching"],
          "kv_bpp": m["kv_bpp"]},
         py_comp(m),
@@ -1081,14 +1161,16 @@ function extract(sig) {
   const e = html.indexOf('\n}\n', s);
   return html.slice(s, e + 2);
 }
-const src = extract('function splitParallelism(gpuCount) {')
+const rocm = html.match(/^const ROCM = \{[\s\S]*?\n\};$/m);
+if (!rocm) throw new Error('ROCM not found in index.html');
+const src = rocm[0] + '\n' + extract('function fp8WeightsBlocked(gpu) {') + extract('function splitParallelism(gpuCount) {')
           + extract('function parallelismFor(state) {')
           + extract('function buildVllmCommand(state, computed, modelPath) {');
 const api = new Function(`${src}; return {buildVllmCommand, parallelismFor};`)();
 const scenarios = JSON.parse(process.argv[2]);
 const MAX_CTX_1 = 8192; // must match Python's MAX_CTX_1 above
 console.log(JSON.stringify(scenarios.map((m) => {
-  const state = {gpuCount: m.n_gpu, gpuDevices: m.devices || 1,
+  const state = {gpuCount: m.n_gpu, gpuDevices: m.devices || 1, vendor: m.vendor || 'nvidia', gfx: m.gfx,
    quantMethod: m.quant || '', kvBytesPerValue: m.kv_bpp,
    prefixCaching: m.prefix_caching, contextLength: m.ctx};
   // The split this engine derives, standing in for the one computeInference()
@@ -1109,7 +1191,8 @@ if proc.returncode:
 else:
     js_cmds = json.loads(proc.stdout)
     for m, py_cmd, js_cmd in zip(MATRIX, py_cmds, js_cmds):
-        label = (f"n_gpu={m['n_gpu']} prefix_caching={m['prefix_caching']} fits={m['fits']} "
+        label = (f"{m.get('vendor', 'nvidia')}{('/' + m['gfx']) if m.get('gfx') else ''} "
+                 f"n_gpu={m['n_gpu']} prefix_caching={m['prefix_caching']} fits={m['fits']} "
                  f"quant={m['quant']!r} is_moe={m['is_moe']} kv_bpp={m['kv_bpp']} ctx={m['ctx']} "
                  f"hf_model={m['hf_model']!r}")
         if m["skip_reason"]:
@@ -1149,6 +1232,42 @@ else:
     print(f"  FAIL the GGUF guidance differs between the engines")
     print(f"       py: {_py_gguf!r}")
     print(f"       js: {_js_gguf!r}")
+    failed += 1
+
+# The ROCm table is maintained twice, like the GPU tables: index.html's ROCM drives
+# the page's command and lines, generate_report.py's the PDF's. And which lines
+# apply is decided twice, by rocmGuidance() and rocm_guidance(), over every AMD
+# row, every precision, both KV types and one board and three.
+js_rocm = json.loads(subprocess.run(
+    ["node", "-e", """
+const h=require('fs').readFileSync(process.argv[1],'utf8');
+const m=h.match(/^const ROCM = \\{[\\s\\S]*?\\n\\};$/m);
+const f=h.match(/^function rocmGuidance\\(state\\) \\{[\\s\\S]*?\\n\\}$/m);
+const b=h.match(/^function fp8WeightsBlocked\\(gpu\\) \\{[\\s\\S]*?\\n\\}$/m);
+if(!m||!f||!b) throw new Error('ROCM, rocmGuidance() or fp8WeightsBlocked() not found in index.html');
+const api=new Function(`${m[0]}\\n${b[0]}\\n${f[0]}; return {ROCM, rocmGuidance};`)();
+const plans=JSON.parse(process.argv[2]);
+console.log(JSON.stringify({table: api.ROCM, lines: plans.map(p => api.rocmGuidance(p))}));""",
+     os.path.join(ROOT, "index.html"),
+     json.dumps([{"vendor": row["vendor"], "gfx": row.get("gfx"), "gpuDevices": row["devices"] * n,
+                  "quantMethod": q or "", "kvBytesPerValue": kv}
+                 for row in GPUS.values() for n in (1, 3) for q in (None, "awq", "gptq", "gguf", "fp8") for kv in (2, 1)])],
+    capture_output=True, text=True, check=True).stdout)
+if js_rocm["table"] == ROCM:
+    print("  ok   both engines carry the same ROCm table")
+    passed += 1
+else:
+    print("  FAIL the ROCm table differs between the engines")
+    failed += 1
+py_lines = [rocm_guidance({"gpu": {"vendor": row["vendor"], "gfx": row.get("gfx"), "devices": row["devices"] * n},
+                           "quant": q, "kv_bpp": kv})
+            for row in GPUS.values() for n in (1, 3) for q in (None, "awq", "gptq", "gguf", "fp8") for kv in (2, 1)]
+bad = [i for i, (a, b) in enumerate(zip(js_rocm["lines"], py_lines)) if a != [list(x) for x in b]]
+if not bad and len(py_lines) == len(js_rocm["lines"]) and any(py_lines):
+    print(f"  ok   both engines choose the same ROCm lines for {len(py_lines)} plans")
+    passed += 1
+else:
+    print(f"  FAIL the engines choose different ROCm lines for {len(bad)} of {len(py_lines)} plans")
     failed += 1
 
 print(f"\n{passed} passed, {failed} failed\n")
