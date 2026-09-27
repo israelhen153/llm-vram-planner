@@ -1502,6 +1502,7 @@ def interactive_mode():
             "h_dim": int(input("  Head dimension: ")),
             "shared_exp": int(input("  Shared experts (0 if none): ") or "0"),
         }
+        refuse_non_finite({"Parameters (B)": arch["params"], "MoE active %": arch["active"]})
         hf_model = input("  HuggingFace model ID: ").strip() or "/opt/models/YourModel"
         model_name = input("  Display name: ").strip() or f"{arch['params']}B model"
     else:
@@ -1720,9 +1721,23 @@ def validate_arch(cfg):
     return refuse_fp8_where_vllm_cannot(cfg)
 
 
+def refuse_non_finite(named):
+    """NaN and Infinity size nothing: they crashed the sizing with a traceback, or, as
+    "nvlink", planned NVLink. Python's json reads NaN, Infinity and -Infinity, which
+    the JSON standard doesn't have, and reads a number too large for a float, such as
+    1e400, as Infinity; the menu's float() takes "nan" and "inf". named maps each
+    field's label to its value."""
+    for label, value in named.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise PlanRefused(f"{label}: {json.dumps(value)} isn't a finite number, so the plan can't be "
+                              f"sized from it. Give a number.")
+
+
 def from_json(path):
     with open(path) as f:
         raw = json.load(f)
+    if isinstance(raw, dict):
+        refuse_non_finite({json.dumps(key): value for key, value in raw.items()})
     gpu_key = raw.get("gpu", DEFAULT_GPU_KEY)
     gpu = GPUS.get(gpu_key, GPUS[DEFAULT_GPU_KEY])
     preset = raw.get("preset")
