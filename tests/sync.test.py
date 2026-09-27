@@ -286,6 +286,30 @@ test("each block the shared node process evaluates runs alone, and one that fail
      check_each_block_is_evaluated_alone)
 
 
+def check_the_evaluator_wants_one_result_per_block():
+    """The shared node process answers a list, one result per block; a reply one short
+    must fail, or the blocks after a lost one would be judged against the wrong rows.
+    The node process is real; only its reply is cut short."""
+    real = subprocess.run
+
+    def one_short(*args, **kwargs):
+        done = real(*args, **kwargs)
+        done.stdout = json.dumps(json.loads(done.stdout)[:-1])
+        return done
+
+    subprocess.run = one_short
+    try:
+        js_eval_all(["const X = 1;", "const X = 2;"], "X")
+    except AssertionError as e:
+        assert "2 blocks, 1 results" in str(e), f"refused, but not for the count: {e}"
+    else:
+        raise AssertionError("a reply missing one block's result passed")
+    finally:
+        subprocess.run = real
+
+test("the shared node process must answer one result per block", check_the_evaluator_wants_one_result_per_block)
+
+
 def check_missing_field_names_itself():
     rows = {"8b-h100-80": {"tokS": 1, "mode": "batch", "src": "x", "note": "y", "prec": "bf16"}}
     try:
