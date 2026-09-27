@@ -34,6 +34,9 @@ PY_MAIN_JSON = '        if args.json:\n            cfg = from_json(args.json)\n'
 PY_CMD_QUANT = ('    if cfg.get("quant"):\n'
                 '        parts.append(f"    --quantization {shlex.quote(cfg[\'quant\'])} \\\\")\n')
 
+# The fix's own addition, from the round's findings.
+WIDTH_AT_OR_BELOW_ZERO = '    if bpp is not None and bpp <= 0:\n'
+
 S = {
     # ---- the bug put back at the builders ----
     "X1 py: the bug itself, both builders guess 0.5 again": [
@@ -94,6 +97,11 @@ S = {
         (REPORT_PY, PY_CMD_QUANT,
          '    if cfg.get("quant"):\n'
          '        parts.append(f"    --quantization {shlex.quote({1: \'fp8\', 0.5: \'awq\'}.get(cfg[\'bpp\'], cfg[\'quant\']))} \\\\")\n', 1)],
+    # ---- round 2: the fix's own addition, a width of 0 or less refused ----
+    "Z1 py: a width of 0 or less is planned": [
+        (REPORT_PY, WIDTH_AT_OR_BELOW_ZERO, "    if False:\n", 1)],
+    "Z2 py: only a negative width is refused (0 planned)": [
+        (REPORT_PY, WIDTH_AT_OR_BELOW_ZERO, "    if bpp is not None and bpp < 0:\n", 1)],
 }
 
 if __name__ == "__main__":
