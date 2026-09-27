@@ -301,6 +301,12 @@ PY_WIDTH_CONTRADICTION = '    elif quant in METHOD_WIDTH and bpp != METHOD_WIDTH
 PY_WIDTH_NO_METHOD = '    elif not quant and bpp not in (1, 2):\n'
 PY_WIDTH_JSON_GIVEN = '        if "bpp" in raw:\n            cfg["bpp"] = raw["bpp"]\n'
 PY_WIDTH_ONE_ONLY = '    return {quant: next(iter(ws)) for quant, ws in widths.items() if len(ws) == 1}\n'
+# A JSON config's or the menu's NaN or Infinity (fix/json-precision-width, engine_r21).
+PY_NON_FINITE_TEST = '        if isinstance(value, float) and not math.isfinite(value):\n'
+PY_NON_FINITE_RAISE = '            raise PlanRefused(f"{label}: {json.dumps(value)} isn\'t a finite number, so the plan can\'t be "\n'
+PY_NON_FINITE_JSON = ('    if isinstance(raw, dict):\n'
+                      '        refuse_non_finite({json.dumps(key): value for key, value in raw.items()})\n')
+PY_NON_FINITE_MENU = '        refuse_non_finite({"Parameters (B)": arch["params"], "MoE active %": arch["active"]})\n'
 
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
