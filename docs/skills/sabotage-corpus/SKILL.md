@@ -52,13 +52,12 @@ python3 tests/sabotage/engine_r1_throughput_leaks.py W11   # one sabotage by nam
 | `chain.sh` | 567 | 2 h 12 min of running | 2026-09-24, at `d99f1b6` |
 | `parallel.py`, 8 workers | 567 | 31.2 min | 2026-09-25, at `d99f1b6`, cold checks running alongside part of it |
 | `parallel.py --early-exit`, 8 workers | 609 | 12.1 min | 2026-09-27, at `dcf6c60`, before the suite speed-ups, nothing else running |
-| `parallel.py --early-exit`, 8 workers | 609 | 9.5 min | 2026-09-27, at `54c29cf`, after them, nothing else running |
-| `parallel.py --early-exit`, 6 workers | 609 | 10.1 min | the same |
-| `parallel.py --early-exit`, 4 workers | 609 | 11.2 min | the same |
+| `parallel.py --early-exit`, 8 workers | 609 | 10.5 min | 2026-09-27, at `6672529`, after them, nothing else running |
 
-Fewer workers finish later but use less of the machine: at `54c29cf`, 4 workers judged in 43.6
-worker-minutes against 8 workers' 72.6. The default stays one worker per CPU thread; `--jobs 6`
-keeps two threads free for other work at about 6% more wall clock.
+Fewer workers finish later but use less of the machine. Measured at `54c29cf`, an earlier version
+of the speed-ups that took 9.5 min on 8 workers: 10.1 min on 6 and 11.2 on 4, and 4 workers judged
+in 43.6 worker-minutes against 8 workers' 72.6. The default stays one worker per CPU thread;
+`--jobs 6` keeps two threads free for other work at about 6% more wall clock.
 
 Estimate a run from its sabotage count and a pace you measured, never from a figure written down:
 this file said ~15 min when the real figure was 2 h 12 min, and the suites keep growing. Both runners
