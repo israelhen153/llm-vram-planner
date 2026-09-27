@@ -2561,10 +2561,11 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
 # mount test plans. Two cold checks found shapes a listed set had left out: a bare ~,
 # $MODEL with no /, a dotted three-part relative path, absolute paths with a ~ or a
 # space inside, then models/llama/, a//b, x$ and a path with both a ~ and a $.
-PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
+PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/", "-", "--")
 PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
                "models/llama/x.gguf", "a/b/c/d/e/f", "models/llama/", "a//b")
-BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/")
+BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/",
+              "", "-", "-8b", "-$X", "-a/b/c")
 MODEL_PATHS = sorted({start + body for start in PATH_STARTS for body in PATH_BODIES}
                      | set(BARE_PATHS) | set(LOCAL_MODEL_PATHS) | set(HUB_MODEL_IDS))
 # Whitespace round a path, as a JSON config or a typed answer might carry it.
@@ -2576,6 +2577,8 @@ MODEL_PATH_REASONS = {
     "tilde": "starts with ~, which the printed command quotes, so the GPU server never expands it",
     "relative": ("is relative, so it depends on the directory the command runs from, and inside "
                  "the ROCm container that is /vllm-workspace"),
+    "empty": "is empty",
+    "dash": "starts with -, so vLLM would read it as an option",
 }
 MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
 
@@ -2584,11 +2587,16 @@ def path_kind(path):
     """The requirement, restated: the reason a path is refused for, or None when it is
     planned. A shell variable anywhere, a leading ~, or a relative path (., .., ./ or
     ../ first, or three or more parts) is refused; an absolute path, or a name with at
-    most one / (a Hugging Face id's shape), is planned."""
+    most one / (a Hugging Face id's shape), is planned. An empty path, and one starting
+    with - (vLLM would read it as an option), are refused too."""
+    if not path:
+        return "empty"
     if "$" in path:
         return "variable"
     if path.startswith("/"):
         return None
+    if path.startswith("-"):
+        return "dash"
     if path.startswith("~"):
         return "tilde"
     if path in (".", "..") or path.startswith(("./", "../")) or len(path.split("/")) >= 3:
@@ -2605,8 +2613,9 @@ def check_the_generated_model_paths_cover_every_kind():
     """The generated set holds each kind many times over, and every shape a past
     round found missing."""
     counts = {kind: sum(path_kind(p) == kind for p in MODEL_PATHS) for kind in (*MODEL_PATH_REASONS, None)}
-    assert all(n >= 5 for n in counts.values()), counts
-    for shape in ("~", "$MODEL", "x$", "~/$HOME/m", "models/llama/x.gguf", "models/llama/", "a//b",
+    # An empty path is one path; its whitespace-only forms come from PATH_PADDINGS.
+    assert all(n >= (1 if kind == "empty" else 5) for kind, n in counts.items()), counts
+    for shape in ("", "-8b", "--m", "-$X", "~", "$MODEL", "x$", "~/$HOME/m", "models/llama/x.gguf", "models/llama/", "a//b",
                   "/opt/a~b/c", "/opt/my models/llama", ".", "..", "~user/m", "/data/$USER/m"):
         assert shape in MODEL_PATHS, shape
 
@@ -2697,6 +2706,28 @@ test("a JSON config's model path is refused or planned by its kind alone, on eve
      check_a_model_path_is_judged_by_its_kind_alone_under_every_plan)
 
 
+def check_a_wrong_typed_model_path_is_named():
+    """A JSON config's "hf_model" of 123, 1.5, true, a list or an object crashed inside
+    shlex.quote with a TypeError that named nothing, and null planned `vllm serve ''`.
+    Each is a TypeError naming cfg['hf_model'] now, through both of from_json()'s
+    branches, the way a wrong-typed quant or bpp already was."""
+    for bad in (123, 1.5, True, None, ["~/x"], {"path": "/opt/m"}):
+        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(dict(base, gpu="h100-80", hf_model=bad, bpp=2), f)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    gr.from_json(f.name)
+            except TypeError as e:
+                assert "cfg['hf_model']" in str(e), (bad, str(e))
+            else:
+                raise AssertionError(f"hf_model {bad!r} was planned")
+            finally:
+                os.unlink(f.name)
+
+test("a JSON config's wrong-typed model path is a TypeError that names it", check_a_wrong_typed_model_path_is_named)
+
+
 MENU_CUSTOM = ["custom", "8", "100", "32", "8", "128", "0"]
 MENU_REST = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
 
@@ -2713,6 +2744,9 @@ def check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed():
             cfg = {}
             with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
                 got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
+            if not path:  # the menu's own default stands in for an empty answer
+                assert got is None and cfg.get("hf_model") == "/opt/models/YourModel", (typed, got, cfg.get("hf_model"))
+                continue
             assert got == model_path_refusal(path), (typed, got)
             if got:
                 assert answers.call_count == len(MENU_CUSTOM) + 1, f"{typed!r}: refused after {answers.call_count} answers"
