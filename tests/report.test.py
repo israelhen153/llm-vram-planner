@@ -48,6 +48,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1898,19 +1899,18 @@ GGUF_LINES = [
 ]
 
 
-def prec_tokens():
-    """Every --prec value from_cli_args() knows, with the quantization it maps to,
-    read from its own table so a GGUF level added there is covered here too."""
-    src = open(gr.__file__).read()
-    table = re.search(r'"quant": \{([^}]*)\}', src)
-    assert table, "from_cli_args() no longer has the --prec -> quant table this reads"
-    pairs = re.findall(r'"(\w+)":"(\w*)"', table.group(1))
-    assert any(q == "gguf" for _, q in pairs) and any(q != "gguf" for _, q in pairs), pairs
+def prec_quant_pairs():
+    """Every --prec value from_cli_args() knows, with the quantization it maps to:
+    its PRECISIONS table, so a precision added there is covered here too. What the
+    table says is pinned separately, against PRECISIONS_CONTRACT: expectations read
+    from the table follow any change made to it."""
+    pairs = [(token, quant) for token, (bpp, quant) in gr.PRECISIONS.items()]
+    assert {q for _, q in pairs} >= {"", "fp8", "awq", "gptq", "gguf"}, pairs
     return pairs
 
 
 def check_gguf_guidance_rides_the_pdf():
-    for token, quant in prec_tokens():
+    for token, quant in prec_quant_pairs():
         args = cli_args_for("llama31-8b")
         args.prec = token
         cfg = gr.from_cli_args(args)
@@ -2011,10 +2011,26 @@ test("price_source_label formats provider, SKU, region and date — a fixed expe
      check_price_source_label_format_is_a_fixed_expectation)
 
 
+# On a card with a null tier, the one sentence that explains the table's wording for it.
+NULL_TIER_SENTENCE = ("\"No confirmed hourly price\" marks a tier for which no provider's own page "
+                      "prices this card by the hour.")
+# On a card with a lead, the one sentence that says what a lead is.
+LEAD_SENTENCE = ("A lead is an hourly price found but not confirmed: it is shown with why, and no figure in "
+                 "this report uses it.")
 NOTES_PRICE_SENTENCE = (
     "GPU prices are mid-2026 per-board/hr figures across 3 tiers: hyperscaler, "
     "specialized, spot/marketplace — see each tier's own source above, or "
     '"not recorded" where it has no confirmed source.')
+
+
+def catalog_note_text(gpu, tier):
+    """The catalog's own note for a tier, in the one form both engines print it:
+    the reason as written, then "Checked <date>." Only where the tier has neither
+    an automated reading nor a hand record. Written out here rather than taken
+    from generate_report.py: this is the contract the PDF is held to."""
+    note = (gpu.get("priceNote") or {}).get(tier)
+    other = (gpu.get("priceSource") or {}).get(tier) or (gpu.get("priceRecord") or {}).get(tier)
+    return f"{note['reason']} Checked {note['checked']}." if note and not other else ""
 
 
 def check_pdf_cost_section_names_a_source_or_says_not_recorded():
@@ -2049,6 +2065,15 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
     mixed_sourced_hit = mixed_not_recorded_hit = 0
     for label, card, shape in cases:
         cfg, strings = report_strings(card, 1, bpp=2)
+        # A tier's note is the catalog's own sentence about where its figure came
+        # from; it names providers and says "price" by design, and it has its own
+        # test below. Taken out here, exact text only, so every rule in this sweep
+        # still holds for the rest of the PDF; a note changed by one character
+        # stays in and meets them.
+        for tier in ("hyper", "spec", "spot"):
+            note = catalog_note_text(card, tier)
+            if note:
+                strings = [s.replace(note, " ") for s in strings]
         cost_strings = [s for s in strings if cost_line.search(s)]
         assert cost_strings, f"{label}: no cost figure printed at all — report_strings found nothing"
 
@@ -2078,9 +2103,14 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         # regexes do not match (" and " joined, lowercase). One sentence in the
         # notes mentions price and what it may say is a contract, so it is a
         # literal.
-        for sentence in re.split(r"(?<=\.)\s+", whole_blob):
+        # Every string but the cost section's own Source line, which is the
+        # provenance this sweep checks tier by tier above, and says "no confirmed
+        # hourly price" for a null tier by design. The page's rule reads its notes
+        # panel only; this one still reads the whole PDF except that line.
+        outside = "\n".join(s for s in whole_blob.split("\n") if not s.startswith("Source — "))
+        for sentence in re.split(r"(?<=\.)\s+", outside):
             if re.search(r"\bprices?\b", sentence, re.I) and "$" not in sentence:
-                assert sentence.strip().lstrip("\u2022 ").startswith(NOTES_PRICE_SENTENCE), (
+                assert sentence.strip().lstrip("\u2022 ").startswith((NOTES_PRICE_SENTENCE, NULL_TIER_SENTENCE, LEAD_SENTENCE)), (
                     f"{label}: the PDF says something about price outside the cost table that is "
                     f"not the one sentence it may say — {sentence.strip()[:200]!r}")
         assert "per-board/hr estimates" not in whole_blob, (
@@ -2192,6 +2222,635 @@ def check_pdf_tier_names_are_bare():
     assert "Specialized" in strings, "the PDF cost table lost its Specialized tier name"
     assert "Spot / marketplace" in strings, "the PDF cost table lost its Spot / marketplace tier name"
 
+def check_every_noted_tier_says_why_in_the_pdf():
+    """Tier honesty on the artifact that gets forwarded: under the Source line, a
+    "Why —" line carries each noted tier's note, verbatim, in tier order, and
+    nothing else; a row with no notes has no such line; and no note appears
+    anywhere else in the PDF. Every catalog row."""
+    shown = 0
+    for slug, card in gr.GPUS.items():
+        _, strings = report_strings(card, 1, bpp=2)
+        notes = [(name, catalog_note_text(card, tier))
+                 for name, tier in (("Hyperscaler", "hyper"), ("Specialized", "spec"), ("Spot", "spot"))]
+        want = [f"{name}: {note}" for name, note in notes if note]
+        why = [s for s in strings if s.startswith("Why — ")]
+        if want:
+            shown += len(want)
+            assert why == ["Why — " + " ".join(want)], f"{slug}: the Why line is {why!r}, expected {want!r}"
+            src = next(i for i, s in enumerate(strings) if s.startswith("Source — "))
+            assert strings[src + 1] == why[0], f"{slug}: the Why line does not sit under the Source line"
+            for _, note in notes:
+                if note:
+                    assert sum(s.count(note) for s in strings) == 1, f"{slug}: a note appears more than once"
+        else:
+            assert not why, f"{slug}: a row with no notes has a Why line: {why!r}"
+    assert shown >= 20, f"only {shown} noted tiers reached the PDF — the check above checked almost nothing"
+
+test("every tier the catalog notes says why in the PDF, verbatim, under the Source line, and nowhere else",
+     check_every_noted_tier_says_why_in_the_pdf)
+
+
+def lead_line(name, lead):
+    """A lead as the PDF prints it, written out here as the contract."""
+    return (f"{name} — Lead, not used: {lead['provider']} lists ${lead['price']:.2f}/hr (read {lead['date']}, "
+            f"{lead['url']}). {lead['why']}" + (f" About {lead['provider']}: {lead['about']}" if lead.get("about") else ""))
+
+
+# A card with a lead on every tier, which the catalog doesn't have: its leads sit on
+# spec and spot, so a PDF that dropped the hyperscaler's leads passed. A card with no
+# price in any tier, each lead at its own figure.
+EVERY_TIER_LEADS = ("mi210-64 (a lead on every tier)", dict(gr.GPUS["mi210-64"], priceLead={
+    tier: [{"provider": f"Lead{i}", "price": 1.51 + i / 100, "url": f"https://lead{i}.example/p",
+            "date": "2026-09-23", "why": f"Not confirmed ({tier})."}]
+    for i, tier in enumerate(("hyper", "spec", "spot"))}))
+# Board counts a lead is held out of the figures at: one board, two (a lead once
+# reached the per-board cell at exactly two, and only the golden saw it), odd, four
+# (and at four and above, which a sweep of one and three missed), and odd above eight.
+LEAD_BOARDS = (1, 2, 3, 4, 9)
+# Board counts a PDF check samples from the page's own range, since a PDF per count
+# is too slow to sweep all of them: every count from one to nine (one board, and past
+# the eight where the cluster changes), each power of two and the count after it, and
+# the page's maximum. A check on the page's side sweeps every count.
+PAGE_MAX_BOARDS = int(re.search(r'max="(\d+)"[^>]*id="gpu-count"',
+                                open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()).group(1))
+BOARD_SAMPLE = sorted(({*range(1, 10), PAGE_MAX_BOARDS}
+                       | {2 ** k + extra for k in range(4, PAGE_MAX_BOARDS.bit_length()) for extra in (0, 1)})
+                      & set(range(1, PAGE_MAX_BOARDS + 1)))
+
+
+def check_a_lead_changes_no_figure_in_the_pdf():
+    """The owner's rule for Runcrate, and for every lead since: shown, never used as
+    a price. Take a lead out of the catalog and compute() returns exactly what it
+    did, and the PDF loses the lead's own lines and its sentence in the notes, and
+    nothing else. Every catalog row that carries a lead at each of LEAD_BOARDS, and a
+    card with a lead on every tier at each of BOARD_SAMPLE's counts: a lead's price in
+    the per-board cell at exactly five boards, or at seventeen and more, passed a sweep
+    of LEAD_BOARDS alone."""
+    names = {"hyper": "Hyperscaler", "spec": "Specialized", "spot": "Spot"}
+    rows = [(slug, card) for slug, card in gr.GPUS.items() if card.get("priceLead")]
+    assert len(rows) >= 3, f"only {len(rows)} catalog rows carry a lead — this checks too little"
+    for slug, card in rows + [EVERY_TIER_LEADS]:
+        bare = {k: v for k, v in card.items() if k != "priceLead"}
+        for boards in (BOARD_SAMPLE if slug == EVERY_TIER_LEADS[0] else LEAD_BOARDS):
+            cfg_lead, with_lead = report_strings(card, boards, bpp=2)
+            cfg_bare, without = report_strings(bare, boards, bpp=2)
+            assert gr.compute(cfg_lead) == gr.compute(cfg_bare), f"{slug} x{boards}: a lead changed what compute() returns"
+            lines = [lead_line(names[tier], lead) for tier, leads in card["priceLead"].items() for lead in leads]
+            for line in lines:
+                assert with_lead.count(line) == 1, f"{slug} x{boards}: the lead line appears {with_lead.count(line)} times"
+            rest = [s for s in with_lead if s not in lines]
+            rest = [s.replace(LEAD_SENTENCE, "").rstrip() if LEAD_SENTENCE in s else s for s in rest]
+            rest = [s for s in rest if s.strip("\u2022 ")]
+            assert rest == [s for s in without if s.strip("\u2022 ")], (
+                f"{slug} x{boards}: with its lead taken out of the text, the PDF still differs from the catalog without it")
+            for tier, leads in card["priceLead"].items():
+                for lead in leads:
+                    figure = f"${lead['price']:.2f}"
+                    assert not any(figure in s for s in rest), f"{slug} x{boards}: the lead's figure appears outside the lead"
+
+test("a lead changes no figure in the PDF: every row with one reports identically without it, but for the lead",
+     check_a_lead_changes_no_figure_in_the_pdf)
+
+
+def check_the_pdf_shows_leads_only_on_tiers_with_no_price():
+    """A lead stands beside a tier that has no price, and a price is the answer
+    wherever there is one. The page's tests held that and the PDF's didn't: its
+    lead list lost the no-price gate and nothing noticed. A lead put on a priced
+    tier of each card that has one, which the catalog tests refuse."""
+    checked = 0
+    for slug, card in gr.GPUS.items():
+        for tier in ("hyper", "spec", "spot"):
+            if card[tier] is None:
+                continue
+            lead = {"provider": "X", "price": 9.87, "url": "https://x.example/p", "date": "2026-09-23", "why": "Test."}
+            priced = dict(card, priceLead={tier: [lead]})
+            assert gr.price_leads(priced, tier) == [], f"{slug}/{tier}: a lead on a priced tier is listed"
+            cfg, strings = report_strings(priced, 1, bpp=2)
+            assert not any("Lead, not used" in s or "$9.87" in s for s in strings), (
+                f"{slug}/{tier}: the PDF shows a lead beside a price")
+            checked += 1
+    assert checked >= 20, f"only {checked} priced tiers checked"
+
+test("the PDF shows a lead only beside a tier with no price", check_the_pdf_shows_leads_only_on_tiers_with_no_price)
+
+
+def check_the_pdf_explains_leads_on_every_card_that_shows_one():
+    """The notes' sentence on leads, exactly where a tier shows one: every catalog
+    row, and a card with a single lead on each tier in turn. On the page it was
+    once gated on the specialized tier alone, and only the golden saw it."""
+    lead = {"provider": "L", "price": 1.5, "url": "https://l.example/p", "date": "2026-09-23", "why": "Not confirmed."}
+    cases = list(gr.GPUS.items()) + [(f"mi210-64 (a lead on {tier} only)", dict(gr.GPUS["mi210-64"], priceLead={tier: [lead]}))
+                                     for tier in ("hyper", "spec", "spot")]
+    shown = 0
+    for slug, card in cases:
+        cfg, strings = report_strings(card, 1, bpp=2)
+        shows = any(card[tier] is None and (card.get("priceLead") or {}).get(tier) for tier in ("hyper", "spec", "spot"))
+        assert any(LEAD_SENTENCE in s for s in strings) == shows, (
+            f"{slug}: the PDF's notes {'lack' if shows else 'carry'} the sentence explaining leads")
+        shown += shows
+    assert shown >= 5, f"only {shown} cards showed a lead"
+
+test("the PDF's notes explain leads on every card that shows one, and on no other",
+     check_the_pdf_explains_leads_on_every_card_that_shows_one)
+
+
+def check_the_pdf_shows_no_note_beside_a_reading_or_a_hand_record():
+    """A tier with an automated reading or a hand record has its answer, and a note
+    beside it would contradict it. The catalog tests refuse the shape, so it is
+    built here: every answered tier in the catalog, with a note slipped in. The
+    page tested a reading once, and the PDF neither."""
+    note = {"reason": "A note that should not show.", "checked": "2026-09-23"}
+    kinds = set()
+    for slug, card in gr.GPUS.items():
+        for tier in ("hyper", "spec", "spot"):
+            kind = ("reading" if (card.get("priceSource") or {}).get(tier)
+                    else "hand record" if (card.get("priceRecord") or {}).get(tier) else None)
+            if not kind:
+                continue
+            kinds.add(kind)
+            noted = dict(card, priceNote=dict(card.get("priceNote") or {}, **{tier: note}))
+            assert gr.price_note_text(noted, tier) == "", f"{slug}/{tier}: a note beside a {kind}"
+            cfg, strings = report_strings(noted, 1, bpp=2)
+            assert not any(note["reason"] in s for s in strings), f"{slug}/{tier}: the PDF shows a note beside a {kind}"
+    assert kinds == {"reading", "hand record"}, f"the catalog no longer has both kinds of answered tier: {kinds}"
+
+test("the PDF shows no note beside a reading or a hand record", check_the_pdf_shows_no_note_beside_a_reading_or_a_hand_record)
+
+
+def check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words():
+    """The PDF's two overhead notes, held to the figures compute() charges and to
+    the card's own runtime. The context allowance is "CUDA context" on NVIDIA,
+    and on AMD an allowance set for CUDA and not measured on ROCm. The peer
+    buffers are NCCL's or RCCL's, at the figure compute() charged per extra
+    device, read back from its total, not from source. Every catalog card, at
+    one, two and three boards, over each link it can have."""
+    checked = 0
+    for slug, card in gr.GPUS.items():
+        for nvlink in ((True, False) if gr.supports_nvlink(card) else (False,)):
+            for boards in (1, 2, 3):
+                cfg, _ = report_strings(card, boards, bpp=2)
+                cfg = dict(cfg, nvlink=nvlink)
+                strings = story_strings(cfg)
+                blob = "\n".join(strings)
+                c = gr.compute(cfg)
+                dc = gr.device_count_for(cfg)
+                amd = card["vendor"] == "amd"
+                where = f"{slug} x{boards}, {'NVLink' if nvlink else 'no NVLink'}"
+                cuda = "VRAM estimates include ~1.5 GB CUDA context overhead per device."
+                rocm = ("VRAM estimates include ~1.5 GB per device for the runtime context: an allowance set "
+                        "for CUDA, not measured on ROCm.")
+                assert (rocm in blob, cuda in blob) == ((True, False) if amd else (False, True)), (
+                    f"{where}: the context note is not the {'ROCm' if amd else 'CUDA'} one")
+                lib, other = ("RCCL", "NCCL") if amd else ("NCCL", "RCCL")
+                assert other not in blob, f"{where}: the PDF names {other} on a card that uses {lib}"
+                if dc > 1:
+                    charged = round((c["total_oh"] - 1.5 * dc) / (dc - 1), 1)
+                    want = f"{lib} buffers add ~{charged} GB per device peer connection."
+                    assert want in blob, f"{where}: the math charges {charged} GB per extra device; wanted {want!r}"
+                    # And the charge itself, as the contract: both engines charging 0.3 off
+                    # NVLink, alike, agreed with each other and with their notes.
+                    link = cfg["nvlink"] and gr.supports_nvlink(card)
+                    assert charged == (0.3 if link else 0.2), (
+                        f"{where}: compute() charges {charged} GB per extra device; the contract is "
+                        f"{0.3 if link else 0.2} {'over NVLink' if link else 'off NVLink'}")
+                    # Each device's own overhead charges the same buffer. It carried its own
+                    # copy of the constants once, and 0.3 there off NVLink passed.
+                    per_device = round(c["per_oh"] - 1.5, 1)
+                    assert per_device == (0.3 if link else 0.2), (
+                        f"{where}: each device's overhead charges {per_device} GB for peer buffers")
+                    checked += 1
+                else:
+                    assert "buffers add" not in blob, f"{where}: one device, and the PDF describes peer buffers"
+                    assert c["per_oh"] == 1.5, f"{where}: one device, and its overhead charges peer buffers"
+    assert checked >= 30, f"only {checked} multi-device reports were checked"
+    # And every AMD card at BOARD_SAMPLE's counts: the AMD wording once held only up to
+    # three boards, where the loop above stops.
+    swept = 0
+    for slug, card in gr.GPUS.items():
+        if card["vendor"] != "amd":
+            continue
+        for boards in BOARD_SAMPLE:
+            cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), ctx=8192, conc=16, n_gpu=boards, gpu=card,
+                       nvlink=False, kv_bpp=2, vendor="amd", perfKey=card["perfKey"], hf_model="m",
+                       model_name="M", bpp=2)
+            blob = "\n".join(story_strings(cfg))
+            dc = gr.device_count_for(cfg)
+            where = f"{slug} x{boards}"
+            assert ("VRAM estimates include ~1.5 GB per device for the runtime context: an allowance set "
+                    "for CUDA, not measured on ROCm.") in blob and "CUDA context" not in blob, (
+                f"{where}: the context note is not the ROCm one")
+            assert "NCCL" not in blob, f"{where}: the PDF names NCCL on an AMD card"
+            assert ("RCCL buffers add ~0.2 GB per device peer connection." in blob) == (dc > 1), (
+                f"{where}: the PDF's RCCL line, over {dc} device(s)")
+            swept += 1
+    assert swept == len(BOARD_SAMPLE) * sum(c["vendor"] == "amd" for c in gr.GPUS.values()), swept
+
+test("the PDF prints the overhead compute() charges, in the words of the card's own runtime",
+     check_the_pdf_prints_the_overhead_it_charges_in_the_vendors_words)
+
+
+def check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need():
+    """The PDF's side of the ROCm contract. On an AMD card, the command is vLLM's
+    own ROCm image at the pinned release, with AITER on exactly where the target
+    has it. Under the command, a "Running on ROCm" block carries exactly the lines
+    that apply, in order, each with its source as an address. Which lines apply is
+    re-derived here from the plan, not taken from generate_report.py. On an NVIDIA
+    card there is none of it. Every catalog card, every --prec value
+    from_cli_args() knows, both KV types, one and two boards."""
+    L = gr.ROCM["lines"]
+    arch_of = {"gfx90a": (False, False), "gfx942": (True, False), "gfx1100": (False, True)}   # (aiter, fp8KvUnverified)
+    shown = 0
+    for slug, card in gr.GPUS.items():
+        for token, quant in prec_quant_pairs():
+            for fp8_kv in (False, True):
+                for ngpu in (1, 2):
+                    args = cli_args_for("llama31-8b")
+                    args.gpu, args.prec, args.fp8_kv, args.ngpu = slug, token, fp8_kv, ngpu
+                    if card["vendor"] == "amd" and card["gfx"] != "gfx942" and quant == "fp8":
+                        try:
+                            gr.from_cli_args(args)
+                        except gr.PlanRefused:
+                            continue
+                        raise AssertionError(f"{slug} --prec {token}: FP8 weights on {card['gfx']} were planned, not refused")
+                    cfg = gr.from_cli_args(args)
+                    c = gr.compute(cfg)
+                    strings = story_strings(cfg)
+                    where = f"{slug} --prec {token} fp8_kv={fp8_kv} x{ngpu}"
+                    if card["vendor"] != "amd" or not c["fits"]:
+                        assert "<b>Running on ROCm</b>" not in strings, f"{where}: a ROCm block where none applies"
+                        if card["vendor"] != "amd":
+                            assert not any("docker run" in s for s in strings), f"{where}: an NVIDIA card got the ROCm command"
+                        continue
+                    aiter, kv_unverified = arch_of[card["gfx"]]
+                    want = [L["image"], L["wheels"], L["hip"], L["hipBoth"]]
+                    want += [L["gcd"]] if card["devices"] > 1 else []
+                    want += [L["aiterOn"], L["aiterDefault"]] if aiter else [L["aiterOff"]]
+                    want += [] if card["gfx"] == "gfx942" else [L["fp8Weights"]]
+                    want += [L["awqDocs"], L["awqSource"]] if quant in ("awq", "gptq") else []
+                    want += [L["gguf"]] if quant == "gguf" else []
+                    want += [L["kvUnverified"]] if fp8_kv and kv_unverified else []
+                    want += [L["more"]]
+                    at = strings.index("<b>Running on ROCm</b>")
+                    got = strings[at + 1: at + 1 + len(want)]
+                    assert got == [text.replace("`", "") + f" (source: {source})" for text, source in want], (
+                        f"{where}: the ROCm block is {got!r}")
+                    after = strings[at + 1 + len(want)] if at + 1 + len(want) < len(strings) else ""
+                    assert "(source: https://github.com/vllm-project" not in after, (
+                        f"{where}: the ROCm block has a line beyond the ones that apply: {after!r}")
+                    # reportlab stores each command line without its leading spaces.
+                    assert "docker run --rm \\" in strings and "vllm/vllm-openai-rocm:v0.30.0 \\" in strings, (
+                        f"{where}: the command is not vLLM's ROCm image")
+                    assert ("--env VLLM_ROCM_USE_AITER=1 \\" in strings) == aiter, (
+                        f"{where}: AITER is not exactly where the target has it")
+                    # The command's own lines; the guidance names CUDA_VISIBLE_DEVICES to say it no longer applies.
+                    start = strings.index("docker run --rm \\")
+                    end = next(i for i in range(start, len(strings)) if "--max-model-len" in strings[i])
+                    assert not any(bad in s for s in strings[start:end + 1] for bad in ("vllm serve", "CUDA_VISIBLE_DEVICES", "rocm/vllm")), (
+                        f"{where}: the ROCm command says vllm serve, CUDA_VISIBLE_DEVICES or rocm/vllm")
+                    shown += 1
+    assert shown >= 50, f"only {shown} AMD plans reached the PDF"
+
+test("an AMD card's PDF runs vLLM's own ROCm image and says what else it needs, each line with its source",
+     check_the_pdf_runs_rocm_cards_in_vllms_image_and_says_what_else_they_need)
+
+
+# Local model paths, generated rather than listed: roots in and out of /opt, crossed
+# with tails that carry dots, dashes, underscores, a hidden directory and deep nesting.
+# Three listed paths let a mount skip any path with a dot, or deeper than four levels.
+LOCAL_MODEL_PATHS = [f"{root}/{tail}"
+                     for root in ("/opt", "/mnt/nfs", "/data", "/home/user/.cache/huggingface/hub", "/srv/models.d", "")
+                     for tail in ("llama-8b", "llama-3.1-8b", "checkpoint_v2.1", "models--meta-llama--Llama-3.1-8B/snapshots/0123abc",
+                                  "Llama-3.1-8B-Instruct-Q4_K_M.gguf", "a/b/c/d/e/f")]
+HUB_MODEL_IDS = ["meta-llama/Llama-3.1-8B-Instruct", "org/model.v2", "Qwen/Qwen3-8B"]
+
+
+def check_a_local_model_is_mounted_wherever_it_lives():
+    """The ROCm command mounts a local model path at the same path, so the container
+    can read the weights: the air-gapped case a JSON config's hf_model exists for.
+    The tests used only /opt/models/..., and a mount made only under /opt passed;
+    then three listed paths, and a mount skipping paths with a dot passed. Every AMD
+    card, through the JSON path a local model arrives by, with every generated local
+    path and every hub id."""
+    mounted = 0
+    for slug, row in gr.GPUS.items():
+        if row["vendor"] != "amd":
+            continue
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": "/opt/models/YourModel", "bpp": 2}, f)
+        try:
+            cfg = gr.from_json(f.name)
+        finally:
+            os.unlink(f.name)
+        comp = gr.compute(cfg)
+        for path in LOCAL_MODEL_PATHS + HUB_MODEL_IDS:
+            cmd = gr.build_vllm_cmd(dict(cfg, hf_model=path), comp).split("\n")
+            if cmd[0].startswith("#"):
+                break
+            local, q = path.startswith("/"), shlex.quote(path)
+            assert (f"    -v {q}:{q} \\" in cmd) == local, (slug, path, cmd)
+            mounted += local
+    assert mounted >= 3 * len(LOCAL_MODEL_PATHS), f"only {mounted} local paths reached a command"
+
+test("a local model is mounted into the ROCm container wherever it lives, and a hub id is not",
+     check_a_local_model_is_mounted_wherever_it_lives)
+
+
+def check_the_rocm_block_holds_on_a_board_of_four_devices():
+    """No catalog board has more than two devices, so a ROCm block that dropped its
+    closing notes above two passed every card that exists. A board of four, built
+    here, at one board and two: the GCD line, and the notes last."""
+    L = gr.ROCM["lines"]
+    line = lambda key: L[key][0].replace("`", "") + f" (source: {L[key][1]})"
+    card = dict(gr.GPUS["mi300x-192"], devices=4)
+    for ngpu in (1, 2):
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.prec, args.ngpu = "mi300x-192", "bf16", ngpu
+        cfg = dict(gr.from_cli_args(args), gpu=card)
+        strings = story_strings(cfg)
+        at = strings.index("<b>Running on ROCm</b>")
+        block = []
+        for s in strings[at + 1:]:
+            if "(source: " not in s:
+                break
+            block.append(s)
+        assert line("gcd") in block, f"x{ngpu}: four devices a board, and no GCD line"
+        assert block and block[-1] == line("more"), f"x{ngpu}: the ROCm block does not end with the notes: {block[-1:]}"
+
+test("the ROCm block holds on a board of four devices, the GCD line in and the notes last",
+     check_the_rocm_block_holds_on_a_board_of_four_devices)
+
+
+# The cards vLLM v0.30.0 has no FP8 weight kernel for, read off the catalog: AMD rows
+# whose LLVM target is not CDNA3's. Written out rather than taken from the engine's
+# table, so a change to the table shows up here as a disagreement.
+FP8_GATED = {slug for slug, row in gr.GPUS.items() if row["vendor"] == "amd" and row["gfx"] != "gfx942"}
+
+
+def fp8_reason(row):
+    return (f"vLLM v0.30.0 has no FP8 weight kernel for {row['name']} ({row['gfx']}): its FP8 matrix kernels "
+            f"need CDNA3 or newer, or RDNA4.")
+
+
+def check_fp8_weights_are_refused_where_vllm_cannot_run_them():
+    """Every entry path, every catalog card. On a gated card, `--prec fp8` and a JSON
+    config asking for FP8 (by quant, or by one byte per parameter) are refused with
+    the reason. A config that reaches the command builder anyway gets the reason
+    where a command would be. On every other card nothing is refused."""
+    assert FP8_GATED == {"mi210-64", "mi250x-128", "rx7900xtx-24"}, FP8_GATED
+    for slug, row in gr.GPUS.items():
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.prec = slug, "fp8"
+        gated = slug in FP8_GATED
+        try:
+            cfg = gr.from_cli_args(args)
+            assert not gated, f"{slug}: --prec fp8 was planned on a card vLLM can't run FP8 weights on"
+        except gr.PlanRefused as refused:
+            assert gated, f"{slug}: --prec fp8 was refused on a card that runs it"
+            assert str(refused) == fp8_reason(row) + " Choose --prec bf16, awq or gptq.", str(refused)
+        # Both of from_json()'s branches, a preset's and a config's own fields, and the
+        # quantization in any case: "FP8" got past the refusal once, and a refusal tested
+        # only in the preset branch could be swallowed in the other without a sound.
+        for raw in ({**base, "gpu": slug, **extra}
+                    for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"]))
+                    for extra in ({"quant": "fp8", "bpp": 1}, {"bpp": 1}, {"quant": "FP8", "bpp": 1},
+                                  {"quant": "Fp8"})):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(raw, f)
+            try:
+                gr.from_json(f.name)
+                assert not gated, f"{slug}: JSON {raw} was planned on a card vLLM can't run FP8 weights on"
+            except gr.PlanRefused as refused:
+                assert gated and fp8_reason(row) in str(refused), f"{slug}: JSON {raw} refused: {refused}"
+            finally:
+                os.unlink(f.name)
+        # The builder's own line, for a config that got past both.
+        if gated:
+            cmd = gr.build_vllm_cmd({"gpu": row, "quant": "fp8", "bpp": 1, "hf_model": "m", "ctx": 8192},
+                                    {"fits": True, "tp": 1, "dp": 1, "is_moe": False, "max_ctx_1": 8192})
+            assert cmd == f"# {fp8_reason(row)} Choose BF16, AWQ or GPTQ.", cmd
+
+test("FP8 weights are refused, with the reason, on every card vLLM has no FP8 weight kernel for, and nowhere else",
+     check_fp8_weights_are_refused_where_vllm_cannot_run_them)
+
+
+def check_fp8_is_refused_however_a_config_spells_it():
+    """"FP8" got past the refusal, and after that was fixed so did " fp8": the
+    refusal compares against vLLM's own spelling, so a config's is read in any case
+    and with any spaces round it. Every such spelling, generated, through both of
+    from_json()'s branches, at one board and two, on every gated card."""
+    spellings = [f"{left}{word}{right}" for word in ("fp8", "FP8", "Fp8")
+                 for left in ("", " ", "\t") for right in ("", " ", "\n")]
+    for slug in sorted(FP8_GATED):
+        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+            for quant in spellings:
+                for n_gpu in (1, 2):
+                    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                        json.dump(dict(base, gpu=slug, quant=quant, bpp=2, n_gpu=n_gpu), f)
+                    try:
+                        gr.from_json(f.name)
+                    except gr.PlanRefused:
+                        continue
+                    finally:
+                        os.unlink(f.name)
+                    raise AssertionError(f"{slug} x{n_gpu}: quant {quant!r} was planned, not refused")
+
+test("FP8 is refused on a gated card however a JSON config spells it, in either branch, at one board or more",
+     check_fp8_is_refused_however_a_config_spells_it)
+
+
+def check_a_wrong_typed_quantization_is_named():
+    """"quant": 1, true or ["fp8"], or "bpp": "1", died several frames deep with a
+    TypeError that named no key. validate_arch() names the key and what it got."""
+    for bad in ({"quant": 1}, {"quant": True}, {"quant": ["fp8"]}, {"bpp": "1"}):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(dict({"preset": "llama31-8b", "gpu": "h100-80"}, **bad), f)
+        try:
+            gr.from_json(f.name)
+        except TypeError as e:
+            assert f"cfg[{next(iter(bad))!r}]" in str(e), (bad, str(e))
+        else:
+            raise AssertionError(f"{bad} was planned")
+        finally:
+            os.unlink(f.name)
+
+test("a wrong-typed quantization or width is refused by name", check_a_wrong_typed_quantization_is_named)
+
+
+def check_the_cli_exits_2_with_the_reason():
+    """The command line itself: the reason on stderr, exit status 2, and no PDF."""
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "r.pdf")
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--preset", "llama31-8b",
+                              "--gpu", "mi210-64", "--prec", "fp8", "-o", out], capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert fp8_reason(gr.GPUS["mi210-64"]) in run.stderr, run.stderr[-300:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses --prec fp8 on a gated card with the reason and exit status 2, and writes no PDF",
+     check_the_cli_exits_2_with_the_reason)
+
+
+# What each --prec means, as a literal. The sweeps read their expectations from
+# gr.PRECISIONS, so a change to the table carries them along with it: --prec q8
+# losing --quantization gguf, and --prec fp8 sized as BF16, both passed every one.
+PRECISIONS_CONTRACT = {"bf16": (2, ""), "fp8": (1, "fp8"), "int4": (0.5, "awq"), "awq": (0.5, "awq"),
+                       "gptq": (0.5, "gptq"), "q4km": (0.63, "gguf"), "q6k": (0.82, "gguf"), "q8": (1.1, "gguf")}
+
+
+def check_every_prec_means_what_its_contract_says():
+    """The table as a whole, then each entry read back through from_cli_args() on a
+    card that runs FP8, so nothing is refused on the way."""
+    assert gr.PRECISIONS == PRECISIONS_CONTRACT, (
+        f"--prec's table is now {gr.PRECISIONS}; a deliberate change updates PRECISIONS_CONTRACT with it")
+    for token, (bpp, quant) in PRECISIONS_CONTRACT.items():
+        args = cli_args_for("llama31-8b")
+        args.gpu, args.prec = "h100-80", token
+        cfg = gr.from_cli_args(args)
+        assert (cfg["bpp"], cfg["quant"]) == (bpp, quant), (token, cfg["bpp"], cfg["quant"])
+
+test("every --prec means the bytes per parameter and the quantization its contract says",
+     check_every_prec_means_what_its_contract_says)
+
+
+def check_an_unknown_prec_is_refused():
+    """--prec int8, or any typo, exited 0 with a plan for AWQ 4-bit. The command line
+    refuses it now, naming the precisions it knows, with exit status 2 and no PDF,
+    and from_cli_args() refuses it too."""
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "r.pdf")
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--preset", "llama31-8b",
+                              "--gpu", "h100-80", "--prec", "int8", "-o", out], capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert "int8" in run.stderr and all(p in run.stderr for p in PRECISIONS_CONTRACT), run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a precision nobody defined"
+    args = cli_args_for("llama31-8b")
+    args.prec = "int8"
+    try:
+        gr.from_cli_args(args)
+    except ValueError as e:
+        assert "int8" in str(e) and all(p in str(e) for p in PRECISIONS_CONTRACT), str(e)
+    else:
+        raise AssertionError("from_cli_args() planned --prec int8")
+
+test("an unknown --prec is refused, naming the precisions the CLI knows, not planned as AWQ",
+     check_an_unknown_prec_is_refused)
+
+
+def check_fp8_is_refused_on_an_amd_target_the_planner_does_not_know():
+    """No catalog row has such a target today, so a gate that let FP8 through there
+    passed every test. A target the table lacks, and no target at all."""
+    base = dict(gr.GPUS["mi300x-192"], name="Unknown-target card")
+    want = ("vLLM v0.30.0 loads FP8 weights only on CDNA3 or newer, or RDNA4, and Unknown-target card's LLVM "
+            "target is not one this planner knows.")
+    for row in (dict(base, gfx="gfx000"), {k: v for k, v in base.items() if k != "gfx"}):
+        assert gr.fp8_weights_blocked(row) == want, (row.get("gfx"), gr.fp8_weights_blocked(row))
+        try:
+            gr.refuse_fp8_where_vllm_cannot({"gpu": row, "quant": "fp8", "bpp": 1})
+        except gr.PlanRefused as refused:
+            assert str(refused) == want + " Choose --prec bf16, awq or gptq.", str(refused)
+        else:
+            raise AssertionError(f"gfx {row.get('gfx')}: FP8 weights were planned")
+
+test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn't know",
+     check_fp8_is_refused_on_an_amd_target_the_planner_does_not_know)
+
+
+def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
+    """After a gated card is chosen, the precision menu leaves FP8 out and says why,
+    and its default is still INT4/AWQ. On every other card, FP8 is offered and the
+    default is the same. At every one of BOARD_SAMPLE's counts: the test answered one
+    GPU, and a menu offering FP8 on a gated card above one board passed."""
+    for slug, row in gr.GPUS.items():
+        for n_gpu in BOARD_SAMPLE:
+            asks_nvlink = n_gpu * (row.get("devices", 1) or 1) > 1 and gr.supports_nvlink(row)
+            answers = ([str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index(slug) + 1), str(n_gpu)]
+                       + (["y"] if asks_nvlink else []) + ["", "n", "8192", "1"])
+            out = io.StringIO()
+            with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(out):
+                cfg = gr.interactive_mode()
+            menu = out.getvalue().split("Precision options:")[1]
+            gated, where = slug in FP8_GATED, f"{slug} x{n_gpu}"
+            assert ("FP8 (1.0 B/param)" in menu) == (not gated), f"{where}: FP8 {'offered' if gated else 'missing'}"
+            if gated:
+                assert f"FP8 is not offered: {fp8_reason(row)}" in out.getvalue(), f"{where}: the reason is missing"
+            else:
+                assert "FP8 is not offered" not in out.getvalue(), f"{where}: FP8 said to be withheld on a card that runs it"
+            assert cfg["bpp"] == 0.5, f"{where}: the default precision is {cfg['bpp']}, not INT4/AWQ"
+
+test("the interactive menu offers no FP8 on a gated card, says why, and keeps INT4/AWQ as its default",
+     check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it)
+
+
+# What each interactive menu choice is, as the contract: its bytes per parameter and
+# the --quantization it means.
+MENU_QUANT = {"BF16": (2.0, ""), "FP8": (1.0, "fp8"), "INT4/AWQ": (0.5, "awq"),
+              "Q4_K_M": (0.63, "gguf"), "Q6_K": (0.82, "gguf")}
+
+
+def check_every_interactive_choice_names_its_quantization_in_the_command():
+    """interactive_mode() never set quant, so the PDF's command carried no
+    --quantization for any choice. For FP8 that loaded BF16 weights, twice the
+    memory the report had sized. Every choice the menu prints, on a card that runs
+    all of them: the choice is the one asked for, and the command names it."""
+    for n, label in enumerate(MENU_QUANT, 1):
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index("h100-80") + 1), "1",
+                   str(n), "n", "8192", "1"]
+        out = io.StringIO()
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(out):
+            cfg = gr.interactive_mode()
+        assert f"  {n}. {label} (" in out.getvalue(), f"menu choice {n} is not {label}: {out.getvalue()[-400:]}"
+        bpp, quant = MENU_QUANT[label]
+        assert (cfg["bpp"], cfg["quant"]) == (bpp, quant), f"{label}: cfg says {cfg['bpp']}, {cfg['quant']!r}"
+        c = gr.compute(cfg)
+        cmd = gr.build_vllm_cmd(cfg, c)
+        assert c["fits"], f"{label}: 8B should fit one H100, or this checks nothing"
+        assert ((f"    --quantization {quant} \\" in cmd.split("\n")) if quant else "--quantization" not in cmd), (
+            f"{label}: the command does not say --quantization {quant or '(none)'}: {cmd}")
+
+test("every interactive precision choice names its quantization in the PDF's command",
+     check_every_interactive_choice_names_its_quantization_in_the_command)
+
+
+def check_a_one_byte_json_config_is_fp8_in_the_command():
+    """from_json() accepted {"bpp": 1} with no quant, and compute() sized it as FP8
+    while the command named no quantization, so it loaded BF16. One byte per
+    parameter is FP8, by compute()'s own test, so the command now says so. A width
+    that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is left as the config
+    gave it, and an explicit quant is never overridden. Both of from_json()'s
+    branches, a preset's and a config's own fields: the fill once moved into the
+    preset branch alone and every test passed. A quantization in another case is
+    written in vLLM's."""
+    for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+        def plan(raw):
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(dict(base, gpu="h100-80", **raw), f)
+            try:
+                cfg = gr.from_json(f.name)
+            finally:
+                os.unlink(f.name)
+            return cfg, gr.build_vllm_cmd(cfg, gr.compute(cfg))
+        branch = "preset" if "preset" in base else "own fields"
+        cfg, cmd = plan({"bpp": 1})
+        assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 0.5})
+        assert not cfg.get("quant") and "--quantization" not in cmd, (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 1, "quant": "fp8"})
+        assert cfg["quant"] == "fp8", (branch, cfg.get("quant"))
+        cfg, cmd = plan({"bpp": 0.5, "quant": "gptq"})
+        assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 0.5, "quant": "AWQ"})
+        assert cfg["quant"] == "awq" and "    --quantization awq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        # An empty quantization is no quantization: the fill applies to it as it does
+        # to a missing one. Once it checked for the key alone and every test passed.
+        cfg, cmd = plan({"bpp": 1, "quant": ""})
+        assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+        cfg, cmd = plan({"bpp": 0.5, "quant": " gptq "})
+        assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
+
+test("a JSON config at one byte per parameter is FP8 in the command; other widths are left as given",
+     check_a_one_byte_json_config_is_fp8_in_the_command)
+
+
 test("the PDF cost table's tier names carry no provider parenthetical",
      check_pdf_tier_names_are_bare)
 
@@ -2270,6 +2929,8 @@ print("\nHardware with no measured constants")
 SURVIVE_WITHOUT_CONSTANTS = {
     # VRAM, capacity and the fit they decide
     "weights_gb", "kv_gb", "act_gb", "total_oh", "total_gb", "per_w", "per_kv", "per_a",
+    # the two overhead allowances the notes print, which read no PERF constant
+    "context_gb_per_device", "peer_buffer_gb",
     "per_oh", "per_total", "total_vram", "free_kv", "kv_per_tok_gb", "kv_bytes_per_tok",
     "max_ctx_1", "max_conc_8k", "max_conc_4k", "kv_saved_by_prefix_gb", "eff_prefix",
     "is_moe", "total_tokens", "device_count", "device_gb", "device_bw", "fits", "comfortable",
@@ -2913,6 +3574,14 @@ def golden_cases():
          cfg(h, 1, bpp=0.63, quant="gguf")),
         ("h100-80 x1 — AWQ weights, the CLI's default precision", cfg(h, 1, bpp=0.5, quant="awq")),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
+        # ROCm: vLLM's own image, and the lines that apply to the plan.
+        ("mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines",
+         cfg(gr.GPUS["mi300x-192"], 1, bpp=0.5, quant="awq", nvlink=False)),
+        ("mi210-64 x1 — FP8 weights asked for, refused: vLLM has no FP8 weight kernel for gfx90a",
+         cfg(gr.GPUS["mi210-64"], 1, bpp=1, quant="fp8", nvlink=False)),
+        ("mi250x-128 x2 — four GCDs on two boards", cfg(gr.GPUS["mi250x-128"], 2, nvlink=False)),
+        ("rx7900xtx-24 x1 — an FP8 KV cache on RDNA3, the unverified path, 4 users so it fits",
+         cfg(gr.GPUS["rx7900xtx-24"], 1, kv_bpp=1, conc=4, nvlink=False)),
         ("h100-80 x1 — a model imported by id rather than named by a preset",
          cfg(h, 1, hf_model="org/imported-8b", model_name="imported-8b", preset=None)),
         # No catalog row is keyless until the AMD rows land. What the report says
@@ -3042,6 +3711,15 @@ def check_the_golden_records_the_shapes_that_matter():
         # as the page golden records it under its command panel.
         "GGUF weights": lambda cs: any(c.get("quant") == "gguf" and comp(c)["fits"] for c in cs),
         "AWQ weights, the default": lambda cs: any(c.get("quant") == "awq" for c in cs),
+        "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),
+        "FP8 weights refused on a card vLLM has no FP8 kernel for":
+            lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["vendor"] == "amd" and c["gpu"].get("gfx") != "gfx942"
+                           for c in cs),
+        "a ROCm command on more than one dual-GCD board":
+            lambda cs: any(c["gpu"]["vendor"] == "amd" and c["gpu"]["devices"] > 1 and c["n_gpu"] > 1 for c in cs),
+        # Printed only under a command, so only a plan that fits records it.
+        "an FP8 KV cache on RDNA3": lambda cs: any(c["gpu"].get("gfx") == "gfx1100" and c["kv_bpp"] < 2
+                                                   and comp(c)["fits"] for c in cs),
     }
     gone = [name for name, hits in shapes.items() if not hits(cfgs)]
     assert not gone, "the golden no longer records: " + ", ".join(gone)

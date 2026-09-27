@@ -90,6 +90,9 @@ const stateFor = (gpu, o = {}) => ({
     // Cost provenance, off the row like every other GPU field above.
     priceSource: gpu.priceSource,
     priceRecord: gpu.priceRecord,
+    priceNote: gpu.priceNote,
+    priceLead: gpu.priceLead,
+    gfx: gpu.gfx,
     /* The key computeInference() looks PERF up by, off the row for the same
        reason. Left out, every test here would be computing a card with no
        constants while its name said H100. */
@@ -1220,6 +1223,9 @@ const asState = (card, count, extra = {}) => ({
   // as "not recorded" rather than throwing.
   priceSource: card.priceSource,
   priceRecord: card.priceRecord,
+  priceNote: card.priceNote,
+  priceLead: card.priceLead,
+  gfx: card.gfx,
   gpuForm: card.form,
   /* The name as the page's state carries it: getGpuSpec() drops the space
      ("MI250X 128GB"), as stateFor() above does. card.name kept the catalog's
@@ -2244,6 +2250,17 @@ test('priceSourceLabel formats provider, SKU, region and date — a fixed expect
         `a record on ${on}, asked about ${asked}`);
 });
 
+/* The catalog's own note for a tier, in the one form both engines print it: the
+   reason as written, then "Checked <date>." Only where the tier has neither an
+   automated reading nor a hand record, since either of those is the answer
+   then. Written out here rather than read from the page: this is the contract
+   the page is held to. */
+const catalogNoteText = (st, tier) => {
+  const note = st.priceNote && st.priceNote[tier];
+  const other = (st.priceSource && st.priceSource[tier]) || (st.priceRecord && st.priceRecord[tier]);
+  return note && !other ? `${note.reason} Checked ${note.checked}.` : '';
+};
+
 test('every cost surface names a source or says "not recorded", discovered not enumerated', () => {
   /* Same discovery approach as the two sweeps above: every renderer the
      harness exposes is invoked, and any rendered element whose text carries
@@ -2291,7 +2308,11 @@ test('every cost surface names a source or says "not recorded", discovered not e
                           /\b(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)(?:\s*[,\/]\s*(?:AWS|GCP|Azure|Lambda|CoreWeave|RunPod|Vast\.ai)){1,}/];
   const NOTES_PRICE_SENTENCES = [
     'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for ' +
-    "each tier's source, or \"not recorded\" where it has no confirmed source."];
+    "each tier's source, or \"not recorded\" where it has no confirmed source.",
+    // On a card with a null tier, the one sentence that explains the table's wording for it.
+    '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour.',
+    // On a card with a lead, the one sentence that says what a lead is.
+    'A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it.'];
   const PROVIDER_NAMES_LIST = ['Azure', 'AWS', 'Lambda', 'CoreWeave', 'Vast.ai'];
   // Cold-check finding: renderExecutiveSummary's "Monthly cost range" rounds
   // to whole dollars ("$657", never "$657.00"), so a cents-only pattern
@@ -2333,6 +2354,16 @@ test('every cost surface names a source or says "not recorded", discovered not e
       try { h[name](...args); } catch (e) { assert.fail(`${label}: ${name}(...) threw: ${e.message}`); }
     }
     const texts = { ...h.out, '(copied report)': h.exportSummary(st, c) };
+    /* A tier's note is the catalog's own sentence about where its figure came
+       from, and it names providers and says "price" by design. It has its own
+       test below: verbatim, under its own tier, and nowhere else. Here it is
+       taken out, exact text only, so every rule in this sweep still holds for
+       the rest of the surface. A note changed by one character is not taken
+       out, and meets the rules like anything else. */
+    for (const tier of ['hyper', 'spec', 'spot']) {
+      const note = catalogNoteText(st, tier);
+      if (note) for (const id of Object.keys(texts)) texts[id] = texts[id].split(note).join(' ');
+    }
     let sawCostSurface = false;
     for (const [id, text] of Object.entries(texts)) {
       if (!COST.test(text)) continue;
@@ -2473,6 +2504,285 @@ test('every cost surface names a source or says "not recorded", discovered not e
     'the sweep has stopped reaching them');
 });
 
+test("every tier the catalog notes says why, under its own label, in the cost table and the copied report, and nowhere else", () => {
+  /* Tier honesty: a figure with no source, and a tier with no figure, both say
+     how they got there. The note sits under the tier's own label in the cost
+     table, and on its own line under the tier's line in the copied report; the
+     compact views (the comparison card, the executive summary) keep the short
+     label, since the full reason is on the same page. Every catalog row, every
+     tier. */
+  const ROWS = { hyper: ['Hyperscaler', 'Hyperscaler'], spec: ['Specialized', 'Specialized'],
+                 spot: ['Spot / marketplace', 'Spot'] };
+  let shown = 0, silent = 0;
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
+    const h = renderHarness();
+    const st = asState(gpu, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.pushSnapshot(st, c);
+    for (const name of Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function')) {
+      try { h[name](st, c); } catch (e) { /* renderers that take other arguments are covered elsewhere */ }
+    }
+    const report = h.exportSummary(st, c);
+    const costRows = (h.out['cost-output'] || '').split('<tr').slice(1);
+    for (const [tier, [rowName, lineLabel]] of Object.entries(ROWS)) {
+      const note = catalogNoteText(st, tier);
+      const row = costRows.find(r => r.includes(`<b>${rowName}</b>`));
+      assert.ok(row, `${key}: the cost table has no ${rowName} row`);
+      const lines = report.split('\n');
+      const at = lines.findIndex(l => l.startsWith(`- ${lineLabel}: `));
+      assert.ok(at >= 0, `${key}: the copied report has no ${lineLabel} line`);
+      if (note) {
+        shown++;
+        assert.ok(row.includes(`</span><br><span style="font-size:11px;color:var(--text-muted)">${note}</span>`),
+          `${key}/${tier}: the cost table does not carry the note under the tier's label — ${row.slice(0, 400)}`);
+        assert.strictEqual(lines[at + 1], `  - ${note}`, `${key}/${tier}: the copied report's line under ${lineLabel}`);
+        for (const [id, text] of Object.entries(h.out))
+          if (id !== 'cost-output') assert.ok(!text.includes(note), `${key}/${tier}: the note also appears in ${id}`);
+        assert.strictEqual(report.split(note).length - 1, 1, `${key}/${tier}: the copied report carries the note more than once`);
+      } else {
+        silent++;
+        assert.ok(!row.includes('</span><br><span'), `${key}/${tier}: a tier with no note has a second line — ${row.slice(0, 300)}`);
+        assert.ok(!(lines[at + 1] || '').startsWith('  - '), `${key}/${tier}: a tier with no note has a line under it in the copied report`);
+      }
+    }
+  }
+  assert.ok(shown >= 20 && silent > 0, `checked ${shown} noted and ${silent} un-noted tiers — this needs both`);
+});
+
+test('a tier with a reading or a hand record shows that, not a note that slipped in beside it', () => {
+  /* The catalog tests refuse a note beside either, but the page is the last line:
+     the reading or the record is the answer, and a stale note next to it would
+     contradict it. Every tier in the catalog that has either, with a note slipped
+     in: only a reading was tested once, and a note shown beside a hand record
+     passed. */
+  const note = { reason: 'A note that should not show.', checked: '2026-09-23' };
+  const kinds = new Set();
+  for (const [key, gpu] of Object.entries(GPU_TABLE)) for (const tier of ['hyper', 'spec', 'spot']) {
+    const kind = (gpu.priceSource || {})[tier] ? 'reading' : (gpu.priceRecord || {})[tier] ? 'hand record' : null;
+    if (!kind) continue;
+    kinds.add(kind);
+    const h = renderHarness();
+    const st = asState({ ...gpu, priceNote: { ...(gpu.priceNote || {}), [tier]: note } }, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.renderCost(st, c);
+    assert.ok(!(h.out['cost-output'] || '').includes(note.reason), `${key}/${tier}: the cost table shows a note beside a ${kind}`);
+    assert.ok(!h.exportSummary(st, c).includes(note.reason), `${key}/${tier}: the copied report shows a note beside a ${kind}`);
+  }
+  assert.deepStrictEqual([...kinds].sort(), ['hand record', 'reading'], 'the catalog no longer has both kinds of answered tier');
+});
+
+/* A lead as the page prints it, written out here as the contract: in the cost table
+   (with its links) and in the copied report (with its addresses). */
+const leadHtml = (l) => `<br><span style="font-size:11px;color:var(--text-muted)">Lead, not used: ${l.provider} lists $${l.price.toFixed(2)}/hr (read ${l.date}). ${l.why} <a href="${l.url}" target="_blank" style="color:var(--accent-text)">${l.provider}'s page</a>${l.about ? ` · <a href="${l.about}" target="_blank" style="color:var(--accent-text)">about ${l.provider}</a>` : ''}</span>`;
+const leadLine = (l) => `  - Lead, not used: ${l.provider} lists $${l.price.toFixed(2)}/hr (read ${l.date}, ${l.url}). ${l.why}` +
+  (l.about ? ` About ${l.provider}: ${l.about}` : '') + '\n';
+const LEAD_SENTENCE = 'A lead is an hourly price found but not confirmed: it is shown with why, and no figure on this page uses it. ';
+const ROWS_WITH_LEADS = Object.entries(GPU_TABLE).filter(([, g]) => g.priceLead && Object.keys(g.priceLead).length);
+/* A card with a lead on every tier, which the catalog doesn't have: its leads sit on
+   spec and spot, so a surface that dropped the hyperscaler's leads passed. A card
+   with no price in any tier, each lead at its own figure. */
+const EVERY_TIER_LEADS = ['mi210-64 (a lead on every tier)', { ...GPU_TABLE['mi210-64'],
+  priceLead: Object.fromEntries(['hyper', 'spec', 'spot'].map((tier, i) => [tier,
+    [{ provider: `Lead${i}`, price: 1.51 + i / 100, url: `https://lead${i}.example/p`, date: '2026-09-23', why: `Not confirmed (${tier}).` }]])) }];
+/* Board counts a lead is held out of the figures at: one board, two (a lead once
+   reached the per-board cell at exactly two, and only the golden saw it), odd, four
+   (and at four and above, which a sweep of one and three missed), and odd above eight. */
+const LEAD_BOARDS = [1, 2, 3, 4, 9];
+
+test('a lead changes no figure: every row with one renders identically without it, but for the lead itself', () => {
+  /* The owner's rule for Runcrate, and for every lead since: shown, never used as a
+     price. Stated as the property that makes it true: take a lead out of the catalog
+     and nothing the tool computes moves, and no surface changes but by the lead's own
+     text. A lead that reached a range, a monthly total, a comparison or a summary
+     would leave a difference behind here that no text removal accounts for. */
+  assert.ok(ROWS_WITH_LEADS.length >= 3, `only ${ROWS_WITH_LEADS.length} catalog rows carry a lead — this checks too little`);
+  const renderAll = (card, boards) => {
+    const h = renderHarness();
+    const st = asState(card, boards, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.pushSnapshot(st, c);
+    for (const name of Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function')) {
+      try { h[name](st, c); } catch (e) { /* renderers that take other arguments are covered elsewhere */ }
+    }
+    return { c, out: { ...h.out, '(copied report)': h.exportSummary(st, c) } };
+  };
+  for (const [key, gpu] of [...ROWS_WITH_LEADS, EVERY_TIER_LEADS]) {
+    const bare = { ...gpu }; delete bare.priceLead;
+    for (const boards of LEAD_BOARDS) {
+      const withLead = renderAll(gpu, boards), without = renderAll(bare, boards);
+      assert.deepStrictEqual(withLead.c, without.c, `${key} x${boards}: a lead changed what the page computes`);
+      let removed = 0;
+      for (const [id, text] of Object.entries(withLead.out)) {
+        let rest = text;
+        for (const leads of Object.values(gpu.priceLead)) for (const l of leads) {
+          const html = leadHtml(l), line = leadLine(l);
+          if (rest.includes(html)) { rest = rest.split(html).join(''); removed++; }
+          if (rest.includes(line)) { rest = rest.split(line).join(''); removed++; }
+        }
+        rest = rest.split(LEAD_SENTENCE).join('');
+        assert.strictEqual(rest, without.out[id] || '',
+          `${key} x${boards}/${id}: with its lead taken out of the text, the surface still differs from the catalog without it`);
+        for (const leads of Object.values(gpu.priceLead)) for (const l of leads)
+          assert.ok(!rest.includes(`$${l.price.toFixed(2)}`), `${key} x${boards}/${id}: the lead's figure appears outside the lead`);
+      }
+      const expected = Object.values(gpu.priceLead).reduce((n, ls) => n + ls.length, 0) * 2;
+      assert.strictEqual(removed, expected, `${key} x${boards}: expected each lead once in the cost table and once in the report`);
+    }
+  }
+});
+
+test('a lead reaches no cost figure at any board count the page offers', () => {
+  /* The check above renders every view at LEAD_BOARDS, and a lead's price in the
+     per-board cell at exactly five boards, or at seventeen and more, passed it. The
+     two surfaces that print a tier's figures, the cost table and the copied report,
+     at every count the page's control offers, read off the page. */
+  const maxBoards = Number((html.match(/max="(\d+)"[^>]*id="gpu-count"/) || [])[1]);
+  assert.ok(maxBoards >= 16, `the page's board control no longer reads as a range up to ${maxBoards}`);
+  for (const [key, gpu] of [...ROWS_WITH_LEADS, EVERY_TIER_LEADS]) {
+    const bare = { ...gpu }; delete bare.priceLead;
+    const h = renderHarness();
+    const render = (card, boards) => {
+      const st = asState(card, boards, { params: 8, layers: 32 });
+      const c = h.computeInference(st);
+      h.renderCost(st, c);
+      return { cost: h.out['cost-output'] || '', report: h.exportSummary(st, c) };
+    };
+    for (let boards = 1; boards <= maxBoards; boards++) {
+      const withLead = render(gpu, boards), without = render(bare, boards);
+      let { cost, report } = withLead;
+      for (const leads of Object.values(gpu.priceLead)) for (const l of leads) {
+        cost = cost.split(leadHtml(l)).join('');
+        report = report.split(leadLine(l)).join('');
+      }
+      report = report.split(LEAD_SENTENCE).join('');
+      assert.strictEqual(cost, without.cost, `${key} x${boards}: the cost table differs beyond the lead's own lines`);
+      assert.strictEqual(report, without.report, `${key} x${boards}: the copied report differs beyond the lead's own lines`);
+    }
+  }
+});
+
+test('each lead sits under its own tier, after the note, and only where the tier has no price', () => {
+  const ROWS = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot / marketplace' };
+  const LINES = { hyper: 'Hyperscaler', spec: 'Specialized', spot: 'Spot' };
+  for (const [key, gpu] of [...ROWS_WITH_LEADS, EVERY_TIER_LEADS]) {
+    const h = renderHarness();
+    const st = asState(gpu, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.renderCost(st, c);
+    const report = h.exportSummary(st, c).split('\n');
+    const costRows = (h.out['cost-output'] || '').split('<tr').slice(1);
+    for (const tier of ['hyper', 'spec', 'spot']) {
+      const leads = (gpu.priceLead || {})[tier] || [];
+      const row = costRows.find(r => r.includes(`<b>${ROWS[tier]}</b>`));
+      const at = report.findIndex(l => l.startsWith(`- ${LINES[tier]}: `));
+      if (!leads.length) {
+        assert.ok(!row.includes('Lead, not used'), `${key}/${tier}: a lead appears under a tier that has none`);
+        continue;
+      }
+      assert.strictEqual(gpu[tier], null, `${key}/${tier}: a lead on a priced tier — the catalog tests should refuse this`);
+      const note = catalogNoteText(st, tier);
+      assert.ok(row.includes(`${note}</span>${leads.map(leadHtml).join('')}</td>`),
+        `${key}/${tier}: the cost table does not carry the lead right after the note — ${row.slice(0, 500)}`);
+      assert.deepStrictEqual(report.slice(at + 1, at + 2 + leads.length),
+        [`  - ${note}`, ...leads.map(l => leadLine(l).trimEnd())], `${key}/${tier}: the copied report's lines under ${LINES[tier]}`);
+    }
+  }
+  // And a lead the catalog puts on a priced tier is not shown: a price is the answer there.
+  const h = renderHarness();
+  const priced = { ...GPU_TABLE['h100-80'], priceLead: { hyper: [{ provider: 'X', price: 1.23, url: 'https://x.example/p', date: '2026-09-23', why: 'Test.' }] } };
+  const st = asState(priced, 1, { params: 8, layers: 32 });
+  const c = h.computeInference(st);
+  h.renderCost(st, c);
+  assert.ok(!(h.out['cost-output'] || '').includes('Lead, not used') && !h.exportSummary(st, c).includes('Lead, not used'),
+    'a lead on a priced tier is shown');
+});
+
+test('the notes explain leads on every card that shows one, and on no other', () => {
+  /* The sentence was once gated on the specialized tier's leads alone, and only the
+     golden saw a card whose leads sit on spot lose it. Every catalog row, and a card
+     with a single lead on each tier in turn. */
+  const lead = { provider: 'L', price: 1.5, url: 'https://l.example/p', date: '2026-09-23', why: 'Not confirmed.' };
+  const cases = [...Object.entries(GPU_TABLE), ...['hyper', 'spec', 'spot'].map(tier =>
+    [`mi210-64 (a lead on ${tier} only)`, { ...GPU_TABLE['mi210-64'], priceLead: { [tier]: [lead] } }])];
+  let shown = 0;
+  for (const [key, gpu] of cases) {
+    const h = renderHarness();
+    const st = asState(gpu, 1, { params: 8, layers: 32 });
+    const c = h.computeInference(st);
+    h.renderNotes(st, c);
+    const shows = ['hyper', 'spec', 'spot'].some(tier => gpu[tier] === null && ((gpu.priceLead || {})[tier] || []).length);
+    assert.strictEqual((h.out['notes-output'] || '').includes(LEAD_SENTENCE), shows,
+      `${key}: the notes ${shows ? 'lack' : 'carry'} the sentence explaining leads`);
+    shown += shows;
+  }
+  assert.ok(shown >= 5, `only ${shown} cards showed a lead`);
+});
+
+test("the notes print the peer-buffer figure the math charges, in the card's own library's name", () => {
+  /* Until 2026-09-23 the note said "NCCL buffers ~0.3 GB/peer" on every link while
+     computeInference() charged 0.2 without NVLink, so every PCIe plan, and every AMD
+     plan, described a charge it wasn't making, in NVIDIA's library's name on AMD's
+     cards. The figure the note must print is read back from the engine's own total
+     (1.5 GB of runtime context per device, and the rest per extra device), not from
+     its source: every catalog card, at one, two and three boards, over each link the
+     card can have. */
+  let checked = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE)) {
+    for (const nvlink of supportsNVLink(card) ? [true, false] : [false]) {
+      for (const boards of [1, 2, 3]) {
+        const h = renderHarness();
+        const st = asState(card, boards, { params: 8, layers: 32, hasNVLink: nvlink });
+        const c = h.computeInference(st);
+        h.renderNotes(st, c);
+        const notes = (h.out['notes-output'] || '').replace(/<[^>]*>/g, ' ');
+        const lib = card.vendor === 'amd' ? 'RCCL' : 'NCCL', other = lib === 'RCCL' ? 'NCCL' : 'RCCL';
+        const where = `${key} x${boards}, ${nvlink ? 'NVLink' : 'no NVLink'}`;
+        assert.ok(!notes.includes(other), `${where}: the notes name ${other} on a card that uses ${lib}`);
+        if (c.deviceCount > 1) {
+          const charged = Math.round(((c.totalOverhead - 1.5 * c.deviceCount) / (c.deviceCount - 1)) * 10) / 10;
+          assert.ok(notes.includes(`${lib} buffers ~${charged} GB/peer.`),
+            `${where}: the math charges ${charged} GB per extra device, the notes say ${JSON.stringify((notes.match(/\w+ buffers ~[\d.]+ GB\/peer/) || ['nothing'])[0])}`);
+          /* And the charge itself, as the contract: 0.3 GB over NVLink, 0.2 over any other
+             link. Both engines charging 0.3 on PCIe or Infinity Fabric, alike, agreed with
+             each other and with their notes, and only the goldens saw it. */
+          const link = nvlink && supportsNVLink(card);
+          assert.strictEqual(charged, link ? 0.3 : 0.2,
+            `${where}: the math charges ${charged} GB per extra device ${link ? 'over NVLink' : 'off NVLink'}`);
+          /* Each device's own overhead charges the same buffer. It carried its own copy of
+             the constants once, and 0.3 there off NVLink passed with only the goldens red. */
+          const perDevice = Math.round((c.perGPU.overhead - 1.5) * 10) / 10;
+          assert.strictEqual(perDevice, link ? 0.3 : 0.2,
+            `${where}: each device's overhead charges ${perDevice} GB for peer buffers ${link ? 'over NVLink' : 'off NVLink'}`);
+          checked++;
+        } else {
+          assert.ok(!/buffers ~/.test(notes), `${where}: one device, and the notes still describe peer buffers`);
+          assert.strictEqual(c.perGPU.overhead, 1.5, `${where}: one device, and its overhead charges peer buffers`);
+        }
+      }
+    }
+  }
+  assert.ok(checked >= 30, `only ${checked} multi-device plans were checked`);
+  /* And every AMD card at every board count the page offers, read off its own control:
+     the AMD wording once held only up to three boards, where the loop above stops. */
+  const maxBoards = Number((html.match(/max="(\d+)"[^>]*id="gpu-count"/) || [])[1]);
+  assert.ok(maxBoards >= 16, `the page's board control no longer reads as a range up to ${maxBoards}`);
+  let swept = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd')) {
+    const h = renderHarness();
+    for (let boards = 1; boards <= maxBoards; boards++) {
+      const st = asState(card, boards, { params: 8, layers: 32, hasNVLink: false });
+      const c = h.computeInference(st);
+      h.renderNotes(st, c);
+      const notes = (h.out['notes-output'] || '').replace(/<[^>]*>/g, ' ');
+      assert.ok(!notes.includes('NCCL'), `${key} x${boards}: the notes name NCCL on an AMD card`);
+      assert.strictEqual(notes.includes('RCCL buffers ~0.2 GB/peer.'), c.deviceCount > 1,
+        `${key} x${boards}: the notes' RCCL line, over ${c.deviceCount} device(s)`);
+      swept++;
+    }
+  }
+  assert.strictEqual(swept, maxBoards * Object.values(GPU_TABLE).filter(g => g.vendor === 'amd').length);
+});
+
 test('the Cost/hr and Monthly cost range surfaces span the true cheapest and priciest tier', () => {
   /* Cold-check finding: renderComparisons' "Cost/hr" and renderExecutiveSummary's
      "Monthly cost range" both hardcoded spot as the floor and hyperscaler as
@@ -2517,9 +2827,11 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
     }
     const trueMin = Math.min(...priced);
     const trueMax = Math.max(...priced);
-    if (priced.length === 3 &&
-        (trueMin !== Math.min(c.hourlyHyper, c.hourlySpot) || trueMax !== Math.max(c.hourlyHyper, c.hourlySpot)))
-      inverted++;   // specialized is the true floor or ceiling, not just spot/hyper — the regime that broke
+    /* The regime that broke: a range whose floor is not spot, or whose ceiling is
+       not hyperscaler, so a renderer that hardcodes spot-to-hyperscaler prints the
+       wrong figures. A card with no hyperscaler price is in it too: the hardcoded
+       range has no ceiling to print there. */
+    if (trueMin !== c.hourlySpot || trueMax !== c.hourlyHyper) inverted++;
 
     h.pushSnapshot(st, c);
     h.renderComparisons();
@@ -2552,8 +2864,8 @@ test('the Cost/hr and Monthly cost range surfaces span the true cheapest and pri
   assert.strictEqual(checkedCmp, Object.keys(GPU_TABLE).length);
   assert.strictEqual(checkedExec, Object.keys(GPU_TABLE).length);
   assert.ok(inverted >= 2,
-    `only ${inverted} catalog row(s) have specialized as the true floor/ceiling instead of spot/hyper — ` +
-    'expected at least l40s-48 and rtx4090-24, so this sweep is not actually exercising the broken regime');
+    `only ${inverted} catalog row(s) have a range other than spot-to-hyperscaler — expected at least ` +
+    'l40s-48 and the cards with no hyperscaler price, so this sweep is not actually exercising the broken regime');
 });
 
 
@@ -2725,7 +3037,7 @@ test('the probe grid renders the shapes the tool ships', () => {
    decides which side of this list it is on. */
 const WITHOUT_CONSTANTS_SURVIVE = [
   // VRAM, capacity and the fit they decide
-  'isMoE', 'weightsGB', 'kvCacheGB', 'activationsGB', 'totalOverhead', 'totalGB', 'perGPU',
+  'isMoE', 'weightsGB', 'kvCacheGB', 'activationsGB', 'totalOverhead', 'peerBufferGB', 'totalGB', 'perGPU',
   'totalVRAM', 'deviceCount', 'deviceGB', 'deviceBandwidth', 'freeForKVCache', 'kvPerTokenGB',
   'kvBytesPerToken', 'kvSavedByPrefixGB', 'effectivePrefix', 'totalTokens', 'fits', 'comfortable',
   'maxContextSingleUser', 'maxConcurrentAt8K', 'maxConcurrentAt4K',
@@ -3454,7 +3766,7 @@ test('the page hands the engine each tier\'s price exactly as the catalog record
      test green, and `hyper: g.hyper ?? 0` printed $0.00 (cold check, round 1).
      Driven through the real state builder, for every row and every tier —
      priced or null — and the provenance each tier carries. */
-  let nulls = 0, priced = 0;
+  let nulls = 0, priced = 0, noted = 0;
   for (const [key, gpu] of Object.entries(GPU_TABLE)) {
     const st = readInputStateFor(key, '1');
     for (const [tier, field] of [['hyper', 'gpuHyperCost'], ['spec', 'gpuSpecCost'], ['spot', 'gpuSpotCost']]) {
@@ -3463,8 +3775,13 @@ test('the page hands the engine each tier\'s price exactly as the catalog record
     }
     assert.deepStrictEqual(st.priceSource, gpu.priceSource, `${key}: the state's priceSource`);
     assert.deepStrictEqual(st.priceRecord, gpu.priceRecord, `${key}: the state's priceRecord`);
+    assert.deepStrictEqual(st.priceNote, gpu.priceNote, `${key}: the state's priceNote`);
+    assert.deepStrictEqual(st.priceLead, gpu.priceLead, `${key}: the state's priceLead`);
+    assert.strictEqual(st.gfx, gpu.gfx, `${key}: the state's gfx`);
+    if (gpu.priceNote) noted++;
   }
   assert.ok(nulls > 0 && priced > 0, `the catalog gave ${nulls} null and ${priced} priced tiers — this needs both`);
+  assert.ok(noted > 0, 'no catalog row carries a priceNote, so the state was never shown one');
 });
 test('the state carries the perfKey its constants are chosen by, for every row', () => {
   /* Deleting perfKey from readInputState() — or from getGpuSpec(), which it reads
@@ -3934,7 +4251,7 @@ test('the constants README quotes are the constants the model uses', () => {
   // The overhead trio, read out of index.html rather than restated here.
   const actPct = Number(html.match(/const activationsGB = Math\.max\(\(totalActiveParams \* 1e9 \* 2 \* ([\d.]+)\)/)[1]) * 100;
   const ctxGiB = Number(html.match(/const overheadPerGPU = ([\d.]+);/)[1]);
-  const [hi, lo] = html.match(/hasNVLink \? ([\d.]+) : ([\d.]+)\) \* \(deviceCount - 1\)/).slice(1).map(Number);
+  const [hi, lo] = html.match(/const peerBufferGB = deviceCount > 1 \? \(hasNVLink \? ([\d.]+) : ([\d.]+)\) : 0;/).slice(1).map(Number);
   assert.deepStrictEqual(
     quoted(/\((\d+)% of active params, ([\d.]+) GiB\/GPU, ([\d.]+)–([\d.]+) GiB per extra GPU\)/, 'the overhead heuristics'),
     [actPct, ctxGiB, lo, hi]);
@@ -3968,16 +4285,20 @@ test('no document promises a --device flag', () => {
     'README.md': readmeDoc, 'ROADMAP.md': roadmapDoc, 'CONTRIBUTING.md': contributing,
     'docs/MODEL.md': fs.readFileSync(path.join(ROOT, 'docs', 'MODEL.md'), 'utf8'),
   };
+  /* Docker has a --device flag of its own, and vLLM's ROCm image needs two of them,
+     `--device /dev/kfd` and `--device /dev/dri`, to see the GPUs. Those two are not
+     vLLM's flag, so they are allowed as exactly themselves, and nothing else is. */
+  const DOCKER_DEVICE = /--device \/dev\/(kfd|dri)\b/g;
   for (const [name, text] of Object.entries(docs)) {
-    for (const line of text.split('\n').filter(l => l.includes('--device'))) {
+    for (const line of text.split('\n').filter(l => l.replace(DOCKER_DEVICE, '').includes('--device'))) {
       assert.ok(/\b(no|not|never)\b/i.test(line),
         `${name} mentions --device without denying it: ${line.trim()}`);
     }
   }
-  // And neither engine may emit it, which is what the denial is asserting.
+  // And neither engine may emit vLLM's, which is what the denial is asserting.
   const py = fs.readFileSync(path.join(ROOT, 'generate_report.py'), 'utf8');
   for (const [name, src] of [['index.html', html], ['generate_report.py', py]]) {
-    assert.ok(!/['"`]--device/.test(src), `${name} emits a --device flag`);
+    assert.ok(!/['"`]--device/.test(src.replace(DOCKER_DEVICE, '')), `${name} emits a --device flag`);
   }
 });
 
@@ -4070,6 +4391,294 @@ test('a GGUF plan that does not fit prints no GGUF guidance, because it prints n
     assert.ok(!text.includes(line.replace(/`/g, '')) && !report.includes(line),
       `guidance for a command the page does not print: "${line}"`);
   }
+});
+
+console.log('\nROCm: vLLM\'s own image, and what else running it needs');
+/* The contract the ROCm command rests on, written out: vLLM v0.30.0's own image, the
+   flags vLLM's docs give for it, word for word, and per LLVM target whether FP8
+   weights load, whether AITER is there, and whether the FP8 KV path is unverified
+   (docs/research/vllm-rocm.md). The table is read from the page once, here, and held
+   to these literals. */
+const ROCM_TABLE = new Function(`${html.match(/^const ROCM = \{[\s\S]*?\n\};$/m)[0]}; return ROCM;`)();
+const ROCM_IMAGE = 'vllm/vllm-openai-rocm:v0.30.0';
+const ROCM_FLAGS = ['--group-add=video', '--cap-add=SYS_PTRACE', '--security-opt seccomp=unconfined',
+                    '--device /dev/kfd', '--device /dev/dri', '-v ~/.cache/huggingface:/root/.cache/huggingface',
+                    '--env "HF_TOKEN=$HF_TOKEN"', '-p 8000:8000', '--ipc=host'];
+const ROCM_ARCH = { gfx90a: { fp8Weights: false, aiter: false, fp8KvUnverified: false },
+                    gfx942: { fp8Weights: true, aiter: true, fp8KvUnverified: false },
+                    gfx1100: { fp8Weights: false, aiter: false, fp8KvUnverified: true } };
+/* Every line the planner prints under an AMD command, word for word, with its source.
+   The rules below it (a sentence, a source of the right kind) held while
+   engine_r10_rocm_guidance's R11 swapped HIP_VISIBLE_DEVICES for CUDA_VISIBLE_DEVICES
+   in both engines alike, so parity saw nothing and only the goldens noticed. A line
+   is a claim a reader acts on: changing one means changing it here too. */
+const ROCM_LINES = {
+  image: ["This is vLLM's own ROCm image, pinned to `v0.30.0`, the release these lines were checked against on 2026-09-23. AMD's `rocm/vllm` images are deprecated.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/getting_started/installation/gpu.rocm.inc.md#L353-L394'],
+  wheels: ["vLLM's ROCm wheels are built for Python 3.12 only, and on any other Python the installer silently falls back to the CUDA wheel, which fails on AMD GPUs. The image avoids that.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/getting_started/installation/gpu.rocm.inc.md#L30-L32'],
+  hip: ['To choose GPUs, add `--env HIP_VISIBLE_DEVICES=0,1` before the image name, with your own device IDs. Since v0.30.0, vLLM on ROCm no longer falls back to `CUDA_VISIBLE_DEVICES`.',
+    'https://github.com/vllm-project/vllm/releases/tag/v0.30.0'],
+  hipBoth: ['If both are set and differ, vLLM stops at startup.',
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L127-L137'],
+  gcd: ['Each board of this card is two GPUs to ROCm, one per GCD, so N boards are 2N device IDs.',
+    'https://instinct.docs.amd.com/projects/system-acceptance/en/latest/gpus/mi250.html'],
+  aiterOn: ["`VLLM_ROCM_USE_AITER=1` turns on AITER, AMD's kernel library; AMD's vLLM guide says to always set it on Instinct MI300-series GPUs.",
+    'https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference-optimization/vllm-optimization.html'],
+  aiterDefault: ['vLLM leaves AITER off unless it is set.',
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/envs.py#L1231-L1232'],
+  aiterOff: ["AITER, AMD's kernel library, is enabled only on CDNA3 and newer, so this card runs without it.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/_aiter_ops.py#L138-L160'],
+  fp8Weights: ["vLLM v0.30.0's FP8 weight kernels need CDNA3 or newer, or RDNA4, so FP8 weights are not offered on this card.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/model_executor/kernels/linear/scaled_mm/rocm.py#L89-L90'],
+  awqDocs: ["vLLM's quantization table marks AWQ and GPTQ as unsupported on AMD GPUs.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/docs/features/quantization/README.md#L69-L70'],
+  awqSource: ["v0.30.0's ROCm platform accepts both; this tool has not run either.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L503-L527'],
+  gguf: ["GGUF needs `vllm-gguf-plugin`, which this image doesn't include. The plugin lists ROCm among its prerequisites; this tool has not run it.",
+    'https://github.com/vllm-project/vllm-gguf-plugin'],
+  kvUnverified: ["On RDNA, vLLM v0.30.0's custom paged-attention kernel takes only the default KV cache type, so an FP8 cache runs on another kernel path, which this tool has not verified.",
+    'https://github.com/vllm-project/vllm/blob/v0.30.0/vllm/platforms/rocm.py#L401-L410'],
+  more: ["Every line here, and what could not be verified, is in the planner's ROCm notes.",
+    'https://github.com/israelhen153/llm-vram-planner/blob/HEAD/docs/research/vllm-rocm.md'],
+};
+
+test('the ROCm table says what vLLM v0.30.0 and AMD say, each line with a source of the kind it claims', () => {
+  assert.strictEqual(ROCM_TABLE.image, ROCM_IMAGE);
+  assert.deepStrictEqual(ROCM_TABLE.dockerFlags, ROCM_FLAGS);
+  assert.deepStrictEqual(ROCM_TABLE.arch, ROCM_ARCH);
+  assert.strictEqual(ROCM_TABLE.vllm, 'v0.30.0');
+  assert.deepStrictEqual(ROCM_TABLE.lines, ROCM_LINES);
+  const PINNED = /^https:\/\/(github\.com\/vllm-project\/vllm\/(blob|releases\/tag)\/v0\.30\.0([\/#]|$)|github\.com\/vllm-project\/vllm-gguf-plugin$|rocm\.docs\.amd\.com\/|instinct\.docs\.amd\.com\/|github\.com\/israelhen153\/llm-vram-planner\/blob\/HEAD\/docs\/research\/vllm-rocm\.md$)/;
+  for (const [id, [text, source]] of Object.entries(ROCM_TABLE.lines)) {
+    assert.ok(typeof text === 'string' && text.trim().endsWith('.'), `line ${id} is not a sentence`);
+    assert.ok(PINNED.test(source), `line ${id}: ${source} is not a v0.30.0 vLLM source, AMD's own page, the plugin, or the planner's notes`);
+  }
+});
+
+test('every AMD row names an LLVM target the ROCm table knows, and no NVIDIA row names one', () => {
+  const used = new Set();
+  for (const [key, g] of Object.entries(GPU_TABLE)) {
+    if (g.vendor === 'amd') {
+      assert.ok(Object.hasOwn(ROCM_ARCH, g.gfx), `${key}: gfx ${g.gfx} is not a target the ROCm table knows`);
+      used.add(g.gfx);
+    } else assert.strictEqual(g.gfx, undefined, `${key}: an NVIDIA row carries a gfx`);
+  }
+  assert.deepStrictEqual([...used].sort(), Object.keys(ROCM_ARCH).sort(), 'the ROCm table knows a target no row uses');
+});
+
+test("an AMD card's command is vLLM's ROCm image with the same serve arguments; an NVIDIA card's is unchanged", () => {
+  /* The property: the launcher differs, the plan does not. The arguments after the
+     image are exactly the ones `vllm serve` gets for the same plan, since the image's
+     entrypoint is `vllm serve`. Every catalog card, every weight option the page
+     offers, both KV types, one to three boards, local paths in and out of /opt, and
+     a hub id: with only /opt in the list, a mount made only for /opt passed. */
+  let amd = 0, nvidia = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE)) {
+    for (const opt of WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2, 3]) {
+      const h = renderHarness();
+      const st = asState(card, boards, { ...dense8BPlan, ...opt, kvBytesPerValue: kv });
+      const c = h.computeInference(st);
+      for (const model of ['/opt/models/YourModel', '/mnt/models/llama-8b', 'meta-llama/Llama-3.1-8B-Instruct']) {
+        const cmd = h.buildVllmCommand(st, c, model);
+        const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}, ${model}`;
+        if (!c.fits) { assert.ok(cmd.startsWith('# Does not fit'), `${where}: no fit, and a command`); continue; }
+        /* FP8 weights on a target vLLM has no FP8 weight kernel for: no command, the
+           reason in its place. Written out here, from the table's literals above. */
+        if (card.vendor === 'amd' && !ROCM_ARCH[card.gfx].fp8Weights && (opt.quantMethod === 'fp8' || opt.bytesPerParam === 1)) {
+          assert.strictEqual(cmd, `# vLLM v0.30.0 has no FP8 weight kernel for ${st.gpuName} (${card.gfx}): its FP8 matrix kernels need CDNA3 or newer, or RDNA4. Choose BF16, AWQ or GPTQ.`,
+            `${where}: FP8 weights on a card vLLM can't run them on`);
+          continue;
+        }
+        const serve = h.buildVllmCommand({ ...st, vendor: 'nvidia' }, c, model);
+        const head = `vllm serve ${model} \\\n`;
+        assert.ok(serve.startsWith(head), `${where}: the vllm serve form lost its head`);
+        if (card.vendor !== 'amd') {
+          assert.strictEqual(cmd, serve, `${where}: an NVIDIA card's command is not the vllm serve one`);
+          nvidia++;
+          continue;
+        }
+        const want = ['docker run --rm \\', ...ROCM_FLAGS.map(f => `    ${f} \\`),
+                      ...(ROCM_ARCH[card.gfx].aiter ? ['    --env VLLM_ROCM_USE_AITER=1 \\'] : []),
+                      ...(model.startsWith('/') ? [`    -v ${model}:${model} \\`] : []),
+                      `    ${ROCM_IMAGE} \\`, `    ${model} \\`].join('\n') + '\n' + serve.slice(head.length);
+        assert.strictEqual(cmd, want, `${where}: the ROCm command`);
+        for (const never of ['CUDA_VISIBLE_DEVICES', 'vllm serve', 'rocm/vllm'])
+          assert.ok(!cmd.includes(never), `${where}: the ROCm command says ${never}`);
+        amd++;
+      }
+    }
+  }
+  assert.ok(amd >= 200 && nvidia >= 400, `checked ${amd} AMD and ${nvidia} NVIDIA commands`);
+});
+
+test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, falls back to BF16, and gives FP8 back', () => {
+  /* syncPrecision() itself, on a stub of the page's own <select>: the options are the
+     page's, read above, and the cards are the catalog's. A reader on FP8 who picks a
+     card vLLM can't run FP8 weights on gets BF16 and a disabled, relabelled FP8
+     option. Back on a card that runs it, FP8 is given back. A choice the reader made
+     is never turned into FP8. */
+  const decl = (re) => { const m = html.match(re); assert.ok(m, `${re} not found in index.html`); return m[0]; };
+  const src = [decl(/^const ROCM = \{[\s\S]*?\n\};$/m), decl(/^function fp8WeightsBlocked\(gpu\) \{[\s\S]*?\n\}$/m),
+               decl(/^let precisionForcedFromFp8 = false;$/m), decl(/^function syncPrecision\(\) \{[\s\S]*?\n\}$/m)].join('\n');
+  const page = () => {
+    const options = WEIGHT_OPTIONS.map(o => ({ value: String(o.bytesPerParam), dataset: { q: o.quantMethod },
+                                                disabled: false, textContent: '' }));
+    /* A single-select, as a browser runs one: selecting an option deselects the rest.
+       A plain property would let two options be selected at once, which no page can. */
+    const chosen = new Set();
+    for (const o of options)
+      Object.defineProperty(o, 'selected', {
+        get: () => chosen.has(o),
+        set: (v) => { if (v) { chosen.clear(); chosen.add(o); } else chosen.delete(o); },
+      });
+    const els = { 'gpu-model': { value: 'h100-80' }, 'weight-precision': { options } };
+    const api = new Function('document', 'GPU_TABLE', `${src}; return { syncPrecision };`)(
+      { getElementById: (id) => els[id] }, GPU_TABLE);
+    const fp8 = options.find(o => o.dataset.q === 'fp8');
+    return {
+      pick: (q) => { options.find(x => x.dataset.q === q).selected = true; },
+      picked: () => options.find(o => o.selected).dataset.q,
+      card: (slug) => { els['gpu-model'].value = slug; api.syncPrecision(); },
+      fp8,
+      options,
+    };
+  };
+  const gated = Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd' && !ROCM_ARCH[g.gfx].fp8Weights).map(([k]) => k);
+  assert.deepStrictEqual(gated.sort(), ['mi210-64', 'mi250x-128', 'rx7900xtx-24']);
+  for (const slug of Object.keys(GPU_TABLE)) {
+    const blocked = gated.includes(slug);
+    // FP8 chosen on a card that runs it, then this card, then back.
+    const p = page();
+    p.pick('fp8'); p.card('h100-80');
+    p.card(slug);
+    assert.strictEqual(p.fp8.disabled, blocked, `${slug}: FP8 ${blocked ? 'still offered' : 'withheld'}`);
+    assert.strictEqual(p.fp8.textContent, blocked ? 'FP8 — no vLLM FP8 weight kernel for this card' : 'FP8 (1.0 B/param)', `${slug}: the FP8 option's label`);
+    assert.strictEqual(p.picked(), blocked ? '' : 'fp8', `${slug}: the precision after the switch`);
+    p.card('h100-80');
+    assert.strictEqual(p.picked(), 'fp8', `${slug}: FP8 was not given back on a card that runs it`);
+    assert.ok(!p.fp8.disabled, `${slug}: FP8 still disabled on a card that runs it`);
+    /* Every other option the reader chose is left alone, both ways: BF16 and each
+       quantized one, each GGUF level its own option. Only BF16 was checked once, and
+       a gate that sent AWQ, GPTQ or GGUF to BF16 on a card that can't run FP8 passed. */
+    for (const [i, o] of page().options.entries()) {
+      if (o.dataset.q === 'fp8') continue;
+      const q = page();
+      const what = `${slug}: the reader's own ${o.dataset.q || 'bf16'} at ${o.value} B/param`;
+      q.options[i].selected = true; q.card('h100-80'); q.card(slug);
+      assert.ok(q.options[i].selected, `${what} was changed on the way to this card`);
+      q.card('h100-80');
+      assert.ok(q.options[i].selected, `${what} was changed on the way back`);
+    }
+    // Forced to BF16, then the reader picks AWQ there: AWQ stays when FP8 would come back.
+    if (blocked) {
+      const r = page();
+      r.pick('fp8'); r.card('h100-80'); r.card(slug); r.pick('awq'); r.card('h100-80');
+      assert.strictEqual(r.picked(), 'awq', `${slug}: a choice the reader made after the fallback was overridden`);
+    }
+  }
+});
+
+test('a local model is mounted into the ROCm container wherever it lives, and a hub id is not', () => {
+  /* The command test's own models held only /opt once, then three listed paths, and a
+     mount skipping any path with a dot, or deeper than four levels, passed. Paths
+     generated as the PDF's test generates them: roots in and out of /opt, crossed with
+     tails carrying dots, dashes, underscores, a hidden directory and deep nesting. */
+  const roots = ['/opt', '/mnt/nfs', '/data', '/home/user/.cache/huggingface/hub', '/srv/models.d', ''];
+  const tails = ['llama-8b', 'llama-3.1-8b', 'checkpoint_v2.1', 'models--meta-llama--Llama-3.1-8B/snapshots/0123abc',
+                 'Llama-3.1-8B-Instruct-Q4_K_M.gguf', 'a/b/c/d/e/f'];
+  const local = roots.flatMap(root => tails.map(tail => `${root}/${tail}`));
+  const hub = ['meta-llama/Llama-3.1-8B-Instruct', 'org/model.v2', 'Qwen/Qwen3-8B'];
+  let mounted = 0;
+  for (const [key, card] of Object.entries(GPU_TABLE).filter(([, g]) => g.vendor === 'amd')) {
+    const h = renderHarness();
+    const st = asState(card, 1, { ...dense8BPlan });
+    const c = h.computeInference(st);
+    if (!c.fits) continue;
+    for (const model of [...local, ...hub]) {
+      const lines = h.buildVllmCommand(st, c, model).split('\n');
+      assert.strictEqual(lines.includes(`    -v ${model}:${model} \\`), model.startsWith('/'), `${key}: ${model}`);
+      mounted += model.startsWith('/');
+    }
+  }
+  assert.ok(mounted >= 3 * local.length, `only ${mounted} local paths reached a command`);
+});
+
+test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn't know", () => {
+  /* No catalog row has such a target today, so a gate that let FP8 through there
+     passed every test. A target the table lacks, and no target at all. */
+  const h = renderHarness();
+  for (const gfx of ['gfx000', undefined]) {
+    const card = { ...GPU_TABLE['mi300x-192'], gfx, name: 'Unknown-target card' };
+    const st = asState(card, 1, { ...dense8BPlan, quantMethod: 'fp8', bytesPerParam: 1 });
+    const c = h.computeInference(st);
+    assert.ok(c.fits, 'an 8B plan should fit one MI300X, or this checks nothing');
+    assert.strictEqual(h.buildVllmCommand(st, c, 'm'),
+      "# vLLM v0.30.0 loads FP8 weights only on CDNA3 or newer, or RDNA4, and Unknown-target card's LLVM target is not one this planner knows. Choose BF16, AWQ or GPTQ.",
+      `gfx ${gfx}: FP8 weights were not refused`);
+  }
+});
+
+test('recalculate() syncs the interconnect and the precision controls before it reads the state', () => {
+  /* The two gates above are tested by calling them. What makes them reach the page is
+     the call in recalculate(), before readInputState(), so the state it reads, and
+     every figure and command built from it, already reflects the gate. A gate with no
+     call site passes its own tests and gates nothing. */
+  const start = html.indexOf('function recalculate() {');
+  const body = html.slice(start, html.indexOf('\n}\n', start));
+  const read = body.indexOf('readInputState()');
+  for (const call of ['syncInterconnect();', 'syncPrecision();']) {
+    const at = body.indexOf(call);
+    assert.ok(at > 0 && read > at, `recalculate() does not call ${call} before it reads the state`);
+  }
+});
+
+test('the ROCm lines under the command are the ones that apply, each with its source, and only on AMD', () => {
+  /* Which lines apply is re-derived here from the plan, not taken from the page:
+     always the image, the wheels, choosing GPUs and the both-set failure; the GCD
+     line on a board of two devices; AITER on or off by target; AWQ/GPTQ's docs and
+     source when either is chosen; the plugin for GGUF; the unverified FP8 KV path
+     where the target has one; and the notes. None when no command is printed. */
+  const L = ROCM_TABLE.lines;
+  const expected = (card, st) => {
+    if (card.vendor !== 'amd') return [];
+    const arch = ROCM_ARCH[card.gfx];
+    return [L.image, L.wheels, L.hip, L.hipBoth, ...(card.devices > 1 ? [L.gcd] : []),
+            ...(arch.aiter ? [L.aiterOn, L.aiterDefault] : [L.aiterOff]),
+            ...(arch.fp8Weights ? [] : [L.fp8Weights]),
+            ...(['awq', 'gptq'].includes(st.quantMethod) ? [L.awqDocs, L.awqSource] : []),
+            ...(st.quantMethod === 'gguf' ? [L.gguf] : []),
+            ...(st.kvBytesPerValue < 2 && arch.fp8KvUnverified ? [L.kvUnverified] : []), L.more];
+  };
+  const pageLine = ([text, source]) => `<div>${text.replace(/`([^`]+)`/g, '<code>$1</code>')} (<a href="${source}" target="_blank" style="color:var(--accent-text)">source</a>)</div>`;
+  let shown = 0;
+  /* Every catalog card, and a board of four devices, which no catalog row has: a block
+     that dropped its closing notes above two devices passed every card that exists. */
+  const fourDevices = ['mi300x-192 (four devices a board)', { ...GPU_TABLE['mi300x-192'], devices: 4 }];
+  for (const [key, card] of [...Object.entries(GPU_TABLE), fourDevices]) {
+    for (const opt of WEIGHT_OPTIONS) for (const kv of [2, 1]) for (const boards of [1, 2]) {
+      const h = renderHarness();
+      const st = asState(card, boards, { ...dense8BPlan, ...opt, kvBytesPerValue: kv });
+      const c = h.computeInference(st);
+      h.renderCommand(st, c);
+      const panel = h.out['command-output'] || '';
+      const report = h.exportSummary(st, c);
+      // No lines under a command that isn't printed: no fit, or FP8 refused.
+      const refused = card.vendor === 'amd' && !ROCM_ARCH[card.gfx].fp8Weights && (opt.quantMethod === 'fp8' || opt.bytesPerParam === 1);
+      const want = c.fits && !refused ? expected(card, st) : [];
+      const where = `${key} x${boards}, ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam}, KV ${kv}`;
+      for (const line of Object.values(L)) {
+        const on = want.includes(line);
+        assert.strictEqual(panel.includes(pageLine(line)), on, `${where}: the command panel ${on ? 'lacks' : 'shows'} "${line[0].slice(0, 60)}"`);
+      }
+      const section = report.includes('\n## Running on ROCm\n') ? report.split('\n## Running on ROCm\n')[1].split('\n## ')[0] : null;
+      if (want.length) {
+        assert.strictEqual(section, want.map(([t, s]) => `- ${t} (source: ${s})`).join('\n') + '\n', `${where}: the copied report's ROCm section`);
+        shown++;
+      } else assert.strictEqual(section, null, `${where}: a ROCm section where none applies`);
+    }
+  }
+  assert.ok(shown >= 50, `only ${shown} plans showed ROCm lines`);
 });
 
 console.log('\nShared links resolve to the card they named');
@@ -4260,6 +4869,15 @@ const goldenCases = () => {
      asState(t4, 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
     ['h100-80 x1 — 256 at 1K, so the KV queue warning',
      asState(h, 1, { ...dense8B, contextLength: 1024, concurrency: 256 })],
+    // ROCm: vLLM's own image, and the lines that apply to the plan.
+    ['mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines',
+     asState(GPU_TABLE['mi300x-192'], 1, { ...dense8B, bytesPerParam: 0.5, quantMethod: 'awq', hasNVLink: false })],
+    ['mi210-64 x1 — FP8 weights asked for, refused: vLLM has no FP8 weight kernel for gfx90a',
+     asState(GPU_TABLE['mi210-64'], 1, { ...dense8B, bytesPerParam: 1, quantMethod: 'fp8', hasNVLink: false })],
+    ['mi250x-128 x2 — four GCDs on two boards',
+     asState(GPU_TABLE['mi250x-128'], 2, { ...dense8B, hasNVLink: false })],
+    ['rx7900xtx-24 x1 — an FP8 KV cache on RDNA3, the unverified path, 4 users so it fits',
+     asState(GPU_TABLE['rx7900xtx-24'], 1, { ...dense8B, kvBytesPerValue: 1, concurrency: 4, hasNVLink: false })],
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
      asState(h, 1, { ...dense8B, contextLength: 32768, concurrency: 4,
                      sharedPrefix: 8192, prefixCaching: true })],
@@ -4365,6 +4983,14 @@ test('the golden records every catalog row, and the shapes that change what the 
       sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
     'AWQ weights, the default': sts => sts.some(st => st.quantMethod === 'awq'),
+    'a ROCm command with AITER on': sts => sts.some(st => st.vendor === 'amd' && st.gfx === 'gfx942'),
+    'FP8 weights refused on a card vLLM has no FP8 kernel for': sts =>
+      sts.some(st => st.quantMethod === 'fp8' && st.vendor === 'amd' && st.gfx !== 'gfx942'),
+    'a ROCm command on more than one dual-GCD board': sts =>
+      sts.some(st => st.vendor === 'amd' && st.gpuDevices > 1 && st.gpuCount > 1),
+    // Printed only under a command, so only a plan that fits records it.
+    'an FP8 KV cache on RDNA3': sts =>
+      sts.some(st => st.gfx === 'gfx1100' && st.kvBytesPerValue < 2 && computeInference(st).fits),
     'a shared prefix': sts => sts.some(st => st.sharedPrefix > 0),
     'a batch the KV cache cannot hold': sts =>
       sts.some(st => computeInference(st).batchLimitedByKV),

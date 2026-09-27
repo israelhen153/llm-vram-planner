@@ -122,10 +122,16 @@ One change lands first:
 - AMD never borrows NVIDIA's MBU/MFU constants. The published ROCm measurements are
   not yet enough to derive constants of its own, so AMD cards ship with full VRAM, fit,
   command and cost figures, and throughput marked as not modelled until they are
-- ROCm guidance: the `rocm/vllm` image and `HIP_VISIBLE_DEVICES`. **vLLM has no
-  `--device` flag** — an earlier draft of this roadmap promised one, and it does not
-  exist. Which accelerator you get is decided by the image and the environment.
-- FP8 gated off CDNA2 (MI210, MI250X); it needs CDNA3
+- ROCm guidance: the command runs vLLM's own ROCm image, `vllm/vllm-openai-rocm`, pinned
+  to the release it was checked against (AMD's `rocm/vllm` images are deprecated), and
+  says to choose GPUs with `HIP_VISIBLE_DEVICES`. **vLLM has no `--device` flag** — an
+  earlier draft of this roadmap promised one, and it does not exist. Which accelerator
+  you get is decided by the image and the environment.
+- FP8 weights gated off CDNA2 (MI210, MI250X) and RDNA3 (RX 7900 XTX): vLLM's FP8 weight
+  kernels need CDNA3 or newer, or RDNA4. The FP8 KV cache stays available
+- Every price tier says how its figure was reached: read by the weekly check, recorded
+  by hand, or why it has neither. A price found but not confirmed is shown as a lead,
+  with why, and used in no figure
 - Cost data for AMD GPUs, each price with a named, dated source
 - Benchmark data structure already supports it — it just needs entries
 
@@ -134,10 +140,17 @@ One change lands first:
 - Training estimation works identically
 - Import/export, comparison, PDF — all unchanged
 
-**ROCm-specific caveats to document:**
-- Flash Attention support varies by GPU arch (CDNA2 vs CDNA3)
-- Some quantization kernels (AWQ, GPTQ) have limited ROCm support
-- vLLM ROCm builds require specific Docker images or source builds
+**ROCm caveats, as the planner states them** (each with its source in
+[docs/research/vllm-rocm.md](docs/research/vllm-rocm.md)):
+- Attention kernels differ by architecture: AMD's AITER library is enabled only on
+  CDNA3 and newer, and vLLM leaves it off unless `VLLM_ROCM_USE_AITER=1` is set. The
+  planner sets it on MI300X and MI325X
+- AWQ and GPTQ: vLLM's quantization table marks them unsupported on AMD GPUs, while its
+  v0.30.0 ROCm platform accepts both. The planner shows both sources and has run neither
+- vLLM's ROCm wheels exist only for Python 3.12, and on any other version pip silently
+  installs the CUDA wheel, so the planner's ROCm command runs vLLM's own image
+- On RDNA3 an FP8 KV cache runs on a different kernel path from the default cache, one
+  this planner has not verified, and it says so
 
 ---
 

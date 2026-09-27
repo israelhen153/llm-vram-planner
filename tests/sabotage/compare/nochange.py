@@ -130,8 +130,23 @@ for gpu in SHARED:
         if no_nv and NEW.GPUS[gpu]["form"] != "sxm":
             continue  # nvlink_for() downgrades either way
         a = args_for(gpu, count, model, prec, fp8kv, ctx, conc, no_nv)
+        # A side may refuse a plan outright (FP8 weights on a card vLLM can't run them
+        # on, since feat/rocm-guidance). A refusal is an outcome to compare, not a
+        # crash: the same on both sides is no difference, a change is one.
+        refused = []
         with contextlib.redirect_stdout(io.StringIO()):
-            ca, cb = OLD.from_cli_args(a), NEW.from_cli_args(a)
+            for side in (OLD, NEW):
+                try:
+                    refused.append((side.from_cli_args(a), None))
+                except ValueError as e:
+                    refused.append((None, str(e)))
+        (ca, ra), (cb, rb) = refused
+        if ra or rb:
+            n += 1
+            if ra != rb:
+                cfg_diffs += 1
+                if len(samples) < 12: samples.append(f"{gpu} x{count} {model} {prec}: refused {ra!r} -> {rb!r}")
+            continue
         n += 1
         for k in set(ca) | set(cb):
             if k == "gpu":

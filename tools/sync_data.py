@@ -82,7 +82,10 @@ def load_benchmarks():
 # would reach both engines as "no constants" without anyone having decided so.
 GPU_FIELDS = ("gb", "bw", "hyper", "spec", "spot", "tflops", "name",
               "vendor", "perfKey", "devices", "form", "caps")
-GPU_OPTIONAL = ("default", "priceSource", "priceRecord")
+# priceNote is the third provenance kind: why a tier has neither of the other two.
+# priceLead is a price found for a null tier and not used, shown as such.
+# gfx is an AMD card's LLVM target, which the ROCm guidance keys on.
+GPU_OPTIONAL = ("default", "priceSource", "priceRecord", "priceNote", "priceLead", "gfx")
 # The only fields a GPU row may set to null: a price tier with no confirmed
 # hourly price for this card. Still required — a row has to say so, not leave
 # the tier out — and null nowhere else, so a missing value in any other field
