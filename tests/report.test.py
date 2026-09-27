@@ -2889,76 +2889,149 @@ def json_precision(quant, bpp):
     return (bpp, "fp8" if bpp == 1 and not q else q)
 
 
+class Absent:
+    """A key a JSON config leaves out, where None is the null it writes."""
+    def __repr__(self):
+        return "<absent>"
+
+
+ABSENT = Absent()
+JSON_METHODS = {q for _, q in PRECISIONS_CONTRACT.values() if q}
+# Every quantization a JSON config can give here: absent, null, empty, each method
+# --prec knows and another spelling, --prec's own tokens that aren't methods, and one
+# it doesn't know. A null was never given, so one read as the name "none" passed.
+JSON_QUANTS = [ABSENT, None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors",
+               *sorted(t for t in PRECISIONS_CONTRACT if t not in JSON_METHODS)]
+# Model ids that name a quantization, as real ones do (-FP8, -AWQ, -GGUF, a GGUF level):
+# one per method above and per GGUF level, and none, for the preset's own. The ids were
+# the presets', so a width read off a model id that names FP8 passed.
+JSON_MODEL_IDS = [None, *(f"org/model-{q}" for q in sorted(JSON_METHODS | {"compressed-tensors"})),
+                  *(f"org/model-{level}" for level in re.findall(r"(Q\w+) [\d.]+", JSON_WIDTH_GGUF))]
+# The smallest dense preset and the smallest MoE one, so most cards fit them and print
+# their command.
+JSON_SIZES = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
+JSON_MODELS = (min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=JSON_SIZES.get),
+               min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=JSON_SIZES.get))
+
+
+def json_config_outcome(config, raw):
+    """from_json() on this config, written to the file config: (bpp, quant), or the refusal."""
+    with open(config, "w") as f:
+        json.dump(raw, f)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            cfg = gr.from_json(config)
+    except gr.PlanRefused as refused:
+        return str(refused)
+    return cfg["bpp"], cfg.get("quant") or ""
+
+
+def json_precision_on(quant, bpp, row):
+    """json_precision() on this card: FP8 weights on a card that can't run them get the
+    FP8 refusal instead."""
+    want = json_precision(None if quant is ABSENT else quant, bpp)
+    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+        want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
+    return want
+
+
 def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
     """A JSON config without "bpp" was sized at 0.5 whatever it named: {"quant": "fp8"}
     planned half the weights its command loads, and a config naming nothing a quarter
-    of its BF16 checkpoint. Each quantization (none, empty, each method --prec knows,
-    another spelling, --prec's own tokens that aren't methods, one it doesn't know)
-    meets every card, both of from_json()'s branches, every width (none, 0, a negative,
-    and each the report can label), a dense model and a MoE one, and both KV caches. It
-    is planned at the width and with the --quantization the owner's rules give, or
-    refused with their words; FP8 on a card that can't run it gets the FP8 refusal. A
-    cold check kept a refusal to dense models, a default read off the KV cache, 0 read
-    as no width and --prec's tokens taken for methods green, because the sweep held
-    those fixed; it asserts now that each quantization met every value."""
-    methods = {q for _, q in PRECISIONS_CONTRACT.values() if q}
-    tokens = sorted(t for t in PRECISIONS_CONTRACT if t not in methods)
-    quants = [None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors", *tokens]
-    widths = [None, -1, 0, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
-    sizes = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
-    dense = min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=sizes.get)
-    moe = min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=sizes.get)
+    of its BF16 checkpoint. Each quantization above meets every card, both of
+    from_json()'s branches, every width (none, 0, a negative, and each the report can
+    label, each whole one written both as an integer and as a float), a dense model and
+    a MoE one, both KV caches, and the model ids above. It is planned at the width and
+    with the --quantization the owner's rules give, or refused with their words; FP8 on
+    a card that can't run it gets the FP8 refusal. A cold check kept a refusal to dense
+    models, a default read off the KV cache, 0 read as no width and --prec's tokens taken
+    for methods green, because the sweep held those fixed; a second kept 1.0
+    contradicting fp8, 1.0 alone planned as BF16 and 0.0 planned green, because every
+    width arrived as an integer. The sweep asserts each quantization met every value."""
+    labelled = sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})
+    widths = [None, *(w for b in (-1, 0, *labelled) for w in ((b, float(b)) if isinstance(b, int) else (b,)))]
+    dense, moe = JSON_MODELS
     cards = list(gr.GPUS.items())
-    planned, commanded, met = set(), set(), {}
-    for qi, quant in enumerate(quants):
-        # Model, KV cache and branch step in whole turns, and the width steps with the
-        # card inside each turn, so every quantization meets every width under every
-        # model, KV cache and branch: a default read off the KV cache showed only for no
-        # quantization, no width and an FP8 KV cache together, which a rotation missed.
-        for turn in range(8):
-            model, kv, branch = (dense if turn < 4 else moe), turn % 2, (turn // 2) % 2
-            for ci, (slug, row) in enumerate(cards):
-                bpp = widths[(ci + qi + 5 * turn) % len(widths)]
-                met.setdefault(quant, set()).update({("card", slug), ("combo", bpp, model, kv, branch)})
-                base = {"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model])
-                raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
-                if kv:
-                    raw["kv_bpp"] = 1
-                if quant is not None:
-                    raw["quant"] = quant
-                if bpp is not None:
-                    raw["bpp"] = bpp
-                want = json_precision(quant, bpp)
-                if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
-                    want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
-                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-                    json.dump(raw, f)
-                try:
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        cfg = gr.from_json(f.name)
-                    got = (cfg["bpp"], cfg.get("quant") or "")
-                    if model == dense:
-                        planned.add((quant, bpp))
-                    comp = gr.compute(cfg)
-                    if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
-                        flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
-                        assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
-                        if model == dense:
-                            commanded.add((quant, bpp))
-                except gr.PlanRefused as refused:
-                    got = str(refused)
-                finally:
-                    os.unlink(f.name)
-                assert got == want, (slug, branch, model, kv, quant, bpp, got, want)
     assert len(cards) >= len(widths), "each turn must reach every width"
-    everything = ({("card", s) for s, _ in cards}
-                  | {("combo", w, m, k, b) for w in widths for m in (dense, moe) for k in (0, 1) for b in (0, 1)})
+    planned, commanded, met = set(), set(), {}
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for qi, quant in enumerate(JSON_QUANTS):
+            # Model, KV cache and branch step in whole turns, and the width steps with the
+            # card inside each turn, so every quantization meets every width under every
+            # model, KV cache and branch: a default read off the KV cache showed only for no
+            # quantization, no width and an FP8 KV cache together, which a rotation missed.
+            # A width is keyed by its repr: 1 == 1.0.
+            for turn in range(8):
+                model, kv, branch = (dense if turn < 4 else moe), turn % 2, (turn // 2) % 2
+                for ci, (slug, row) in enumerate(cards):
+                    bpp = widths[(ci + qi + 5 * turn) % len(widths)]
+                    hf = JSON_MODEL_IDS[(turn * len(cards) + ci + qi) % len(JSON_MODEL_IDS)]
+                    met.setdefault(quant, set()).update({("card", slug), ("id", hf), ("combo", repr(bpp), model, kv, branch)})
+                    base = {"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model])
+                    raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
+                    if kv:
+                        raw["kv_bpp"] = 1
+                    if quant is not ABSENT:
+                        raw["quant"] = quant
+                    if bpp is not None:
+                        raw["bpp"] = bpp
+                    if hf:
+                        raw["hf_model"] = hf
+                    want = json_precision_on(quant, bpp, row)
+                    with open(config, "w") as f:
+                        json.dump(raw, f)
+                    try:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            cfg = gr.from_json(config)
+                        got = (cfg["bpp"], cfg.get("quant") or "")
+                        if model == dense:
+                            planned.add((quant, repr(bpp)))
+                        comp = gr.compute(cfg)
+                        if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
+                            flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
+                            assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                            if model == dense:
+                                commanded.add((quant, repr(bpp)))
+                    except gr.PlanRefused as refused:
+                        got = str(refused)
+                    assert got == want, (slug, branch, model, kv, quant, bpp, hf, got, want)
+    everything = ({("card", s) for s, _ in cards} | {("id", h) for h in JSON_MODEL_IDS}
+                  | {("combo", repr(w), m, k, b) for w in widths for m in (dense, moe) for k in (0, 1) for b in (0, 1)})
     missed = {q: sorted(everything - seen, key=str)[:3] for q, seen in met.items() if everything - seen}
     assert not missed, f"quantizations that missed a value: {missed}"
     assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"
 
 test("a JSON config's precision is the width its method fixes, BF16 when it names nothing, or refused",
      check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
+
+
+def check_a_model_id_never_sets_the_width():
+    """Where a JSON config gives no width, the rules resolve one, and real model ids
+    name a quantization (-FP8, -AWQ, a GGUF level). The rules must not read them: every
+    quantization above, without "bpp", under every model id above, is planned or
+    refused as it is without one, with the cards, models and branches rotating. The
+    sweep met the ids with a width given, mostly, so a no-width method sized at the
+    width its model id suggested passed."""
+    cards = list(gr.GPUS.items())
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for qi, quant in enumerate(JSON_QUANTS):
+            for hi, hf in enumerate(JSON_MODEL_IDS):
+                k = qi + hi
+                slug, row = cards[k % len(cards)]
+                model, branch = JSON_MODELS[k % 2], (k // 2) % 2
+                raw = dict({"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model]), gpu=slug)
+                if quant is not ABSENT:
+                    raw["quant"] = quant
+                if hf:
+                    raw["hf_model"] = hf
+                got = json_config_outcome(config, raw)
+                assert got == json_precision_on(quant, None, row), (slug, model, branch, quant, hf, got)
+
+test("a JSON config's model id never sets its width: without \"bpp\", every quantization is judged the same "
+     "whatever quantization its model id names",
+     check_a_model_id_never_sets_the_width)
 
 
 def check_the_cli_refuses_a_json_width_with_exit_2():
