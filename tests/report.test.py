@@ -2895,7 +2895,8 @@ test("the planner accepts exactly vLLM v0.30.0's quantizations per vendor, and k
 
 def json_precision(quant, bpp, vendor):
     """What a JSON config giving quant and bpp (None where absent) plans as on this
-    vendor's card, (bpp, quant), or the refusal it gets."""
+    vendor's card, (bpp, quant), or the refusal it gets, in the engine's order: the
+    vendor's list, a width of 0 or less, then the width rules."""
     widths = {}
     for b, q in PRECISIONS_CONTRACT.values():
         if q:
@@ -2907,6 +2908,8 @@ def json_precision(quant, bpp, vendor):
     if q and q not in served:
         return (f'"quant": {q!r} isn\'t a quantization vLLM v0.30.0 serves on {"AMD" if vendor == "amd" else "NVIDIA"} '
                 f'cards, so the printed command would stop at startup. Use one of: {", ".join(sorted(served))}.')
+    if bpp is not None and bpp <= 0:
+        return f'"bpp": {bpp} can\'t be a width: a weight takes more than 0 bytes per parameter.'
     if bpp is None:
         if q and q not in fixed:
             return (f'"quant": {q!r} has no single width, so the plan can\'t size the weights without "bpp", '
@@ -2923,59 +2926,91 @@ def json_precision(quant, bpp, vendor):
 
 
 def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
-    """A JSON config without "bpp" was sized at 0.5 whatever it named, and any name
-    went into --quantization. Every quantization on either of vLLM's lists, plus none,
-    empty, another spelling and names vLLM doesn't serve, meets every card through both
-    of from_json()'s branches and every width (none, and each the report can label):
-    it is planned at the width and with the --quantization the owner's rules give, or
-    refused with their words; FP8 on a card that can't run it gets the FP8 refusal. The
-    sweep asserts each name met every card, both branches and every width."""
+    """A JSON config without "bpp" was sized at 0.5 whatever it named, and any name went
+    into --quantization. Every quantization on either of vLLM's lists, plus none, empty,
+    two other spellings, --prec's own tokens that aren't methods and names vLLM doesn't
+    serve, meets every width (none, 0, a negative, and each the report can label) under
+    every model (the smallest dense and MoE presets), KV cache and branch, with the
+    cards rotating. It is planned at the width and with the --quantization the owner's
+    rules give, or refused with their words; FP8 on a card that can't run it gets the
+    FP8 refusal. The sweep asserts every quantization met every card and every width
+    under every model, KV cache and branch."""
     names = sorted(set(VLLM_QUANTIZATIONS_CONTRACT["nvidia"]) | set(VLLM_QUANTIZATIONS_CONTRACT["amd"]))
-    quants = [None, "", " FP8", "Fp8_Per_Block ", "float8", "bogus", *names]
-    widths = [None, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
+    methods = {q for _, q in PRECISIONS_CONTRACT.values() if q}
+    tokens = sorted(t for t in PRECISIONS_CONTRACT if t not in methods)
+    quants = [None, "", " FP8", "Fp8_Per_Block ", "float8", "bogus", *tokens, *names]
+    widths = [None, -1, 0, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
+    sizes = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
+    dense = min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=sizes.get)
+    moe = min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=sizes.get)
     cards = list(gr.GPUS.items())
-    # The smallest preset, so every card fits it and prints a command to check.
-    small = min(gr.PRESETS, key=lambda k: gr.arch_fields(gr.PRESETS[k])["params"])
+    assert len(cards) >= len(widths), "each turn must reach every width"
     planned, commanded, met = set(), set(), {}
-    for qi, quant in enumerate(quants):
-        for turn in (0, 1):
-            for ci, (slug, row) in enumerate(cards):
-                bpp = widths[(ci + qi + 5 * turn) % len(widths)]
-                branch = (ci + turn) % 2
-                met.setdefault(quant, set()).update({("card", slug), ("branch", branch), ("width", bpp)})
-                base = {"preset": small} if branch == 0 else gr.arch_fields(gr.PRESETS[small])
-                raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
-                if quant is not None:
-                    raw["quant"] = quant
-                if bpp is not None:
-                    raw["bpp"] = bpp
-                want = json_precision(quant, bpp, row["vendor"])
-                if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
-                    want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
-                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-                    json.dump(raw, f)
-                try:
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        cfg = gr.from_json(f.name)
-                    got = (cfg["bpp"], cfg.get("quant") or "")
-                    planned.add((quant, bpp))
-                    comp = gr.compute(cfg)
-                    if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
-                        flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
-                        assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
-                        commanded.add((quant, bpp))
-                except gr.PlanRefused as refused:
-                    got = str(refused)
-                finally:
-                    os.unlink(f.name)
-                assert got == want, (slug, branch, quant, bpp, got, want)
-    everything = {("card", s) for s, _ in cards} | {("branch", 0), ("branch", 1)} | {("width", w) for w in widths}
-    missed = {q: len(everything - seen) for q, seen in met.items() if everything - seen}
-    assert not missed, f"quantizations that missed a card, a branch or a width: {missed}"
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for qi, quant in enumerate(quants):
+            # Model, KV cache and branch step in whole turns, and the width steps with the
+            # card inside each turn, so every quantization meets every width under every
+            # model, KV cache and branch.
+            for turn in range(8):
+                model, kv, branch = (dense if turn < 4 else moe), turn % 2, (turn // 2) % 2
+                for ci, (slug, row) in enumerate(cards):
+                    bpp = widths[(ci + qi + 5 * turn) % len(widths)]
+                    met.setdefault(quant, set()).update({("card", slug), ("combo", bpp, model, kv, branch)})
+                    base = {"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model])
+                    raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
+                    if kv:
+                        raw["kv_bpp"] = 1
+                    if quant is not None:
+                        raw["quant"] = quant
+                    if bpp is not None:
+                        raw["bpp"] = bpp
+                    want = json_precision(quant, bpp, row["vendor"])
+                    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+                        want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
+                    with open(config, "w") as f:
+                        json.dump(raw, f)
+                    try:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            cfg = gr.from_json(config)
+                        got = (cfg["bpp"], cfg.get("quant") or "")
+                        if model == dense:
+                            planned.add((quant, bpp))
+                        comp = gr.compute(cfg)
+                        if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
+                            flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
+                            assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                            if model == dense:
+                                commanded.add((quant, bpp))
+                    except gr.PlanRefused as refused:
+                        got = str(refused)
+                    assert got == want, (slug, branch, model, kv, quant, bpp, got, want)
+    everything = ({("card", s) for s, _ in cards}
+                  | {("combo", w, m, k, b) for w in widths for m in (dense, moe) for k in (0, 1) for b in (0, 1)})
+    missed = {q: sorted(everything - seen, key=str)[:3] for q, seen in met.items() if everything - seen}
+    assert not missed, f"quantizations that missed a value: {missed}"
     assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"
 
 test("a JSON config's quantization is one vLLM serves on the card's vendor, sized by what its method fixes, or refused",
      check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
+
+
+def check_the_cli_refuses_a_json_width_with_exit_2():
+    """The command line itself, for a JSON config the width rules refuse: the reason on
+    stderr, exit status 2, and no PDF. Only --preset had been driven to a refusal, so a
+    --json refusal on stdout with exit 1 passed."""
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            json.dump({"preset": "llama31-8b", "gpu": "h100-80", "quant": "gguf"}, f)
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert f"error: {json_precision('gguf', None, 'nvidia')}" in run.stderr, run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses a JSON config's width with the reason and exit status 2, and writes no PDF",
+     check_the_cli_refuses_a_json_width_with_exit_2)
 
 
 test("the PDF cost table's tier names carry no provider parenthetical",
