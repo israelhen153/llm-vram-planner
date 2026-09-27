@@ -98,10 +98,21 @@ _building = []
 # One parsed paragraph per distinct markup and style, for story_strings() alone. Over
 # the suite it builds about 56,000 paragraphs from about 1,700 distinct markups, and
 # reportlab's markup parse was most of the suite's time. It never lays a story out, so
-# the stories it reads can share a parse; a parse that fails is never kept, so it fails
-# again every time. Builds that lay paragraphs out parse their own.
+# the stories it reads can share a parse, but only where nothing a paragraph reads
+# differs: the same markup, and a style equal attribute by attribute, not only by
+# name, since a paragraph with no bullet of its own takes its style's bulletText and a
+# build can change a style (a cold check planted a figure that way, and a memo keyed
+# on the name served every later card the first card's). A paragraph given anything
+# more than its markup and style parses its own, a parse that fails is never kept, and
+# builds that lay paragraphs out parse their own.
 _PARSED = {}
 _reading = []   # non-empty while story_strings() builds a story it only reads
+
+
+def style_state(style):
+    """Every attribute a style carries, but its parent, whose values reportlab has
+    already copied into it."""
+    return {k: v for k, v in vars(style).items() if k != "parent"}
 
 
 class RecordingParagraph(gr.Paragraph):
@@ -109,13 +120,13 @@ class RecordingParagraph(gr.Paragraph):
         if _building:
             _building[-1].update(COVER_CLOCK.findall(str(text)))
         if _reading and isinstance(text, str) and len(args) == 1 and not kwargs:
-            key = (text, args[0].name)
+            key, state = (text, args[0].name), style_state(args[0])
             parsed = _PARSED.get(key)
-            if parsed is None:
-                super().__init__(text, *args)
-                _PARSED[key] = self
-            else:
-                self.__dict__.update(parsed.__dict__)
+            if parsed is not None and parsed[1] == state:
+                self.__dict__.update(parsed[0].__dict__)
+                return
+            super().__init__(text, *args)
+            _PARSED[key] = (self, state)
             return
         super().__init__(text, *args, **kwargs)
 
@@ -1396,8 +1407,11 @@ def story_strings(cfg, comp=None):
 
 def check_the_parse_memo_changes_nothing_a_test_reads():
     """story_strings() shares one parse per markup and style, and that must change
-    nothing a test reads: a markup that fails to parse fails every time, the memo
-    serves only a story being read, and a paragraph built anywhere else parses its own."""
+    nothing a test reads: a markup that fails to parse fails every time; a style
+    changed since, under the same name, gets a parse of its own, bullet included (the
+    cold check's planted figure rode a style's bulletText); a bullet given by position
+    or by keyword is the paragraph's own, every time; and a paragraph built outside a
+    story being read parses its own."""
     style = gr.getSampleStyleSheet()["Normal"]
     _reading.append(True)
     try:
@@ -1410,12 +1424,21 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
                 raise AssertionError(f"attempt {attempt}: a markup that fails to parse was served from the memo")
         first, again = RecordingParagraph("<b>shared</b>", style), RecordingParagraph("<b>shared</b>", style)
         assert again.frags is first.frags, "a story being read parsed a markup it had parsed before"
+        changed = gr.getSampleStyleSheet()["Normal"]
+        changed.bulletText = "a figure riding the style"
+        got = RecordingParagraph("<b>shared</b>", changed)
+        assert got.bulletText == "a figure riding the style", f"a changed style was served an earlier bullet: {got.bulletText!r}"
+        for bullet in ("first", "second"):
+            by_position = RecordingParagraph("<b>shared</b>", style, bullet)
+            by_keyword = RecordingParagraph("<b>shared</b>", style, bulletText=bullet)
+            assert (by_position.bulletText, by_keyword.bulletText) == (bullet, bullet), (
+                bullet, by_position.bulletText, by_keyword.bulletText)
     finally:
         _reading.pop()
     outside = RecordingParagraph("<b>shared</b>", style)
     assert outside.frags is not first.frags, "a paragraph built outside story_strings() came from the memo"
 
-test("the parse memo changes nothing a test reads: a failing markup fails every time, and only read stories share",
+test("the parse memo changes nothing a test reads: failing markup, a changed style, a bullet of its own, a laid-out build",
      check_the_parse_memo_changes_nothing_a_test_reads)
 
 

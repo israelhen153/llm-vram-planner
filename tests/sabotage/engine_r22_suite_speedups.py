@@ -20,9 +20,8 @@ from harness import run_driver
 REPORT_TEST = "tests/report.test.py"
 SYNC_TEST = "tests/sync.test.py"
 
-MEMO_MISS = ('            if parsed is None:\n'
-             '                super().__init__(text, *args)\n'
-             '                _PARSED[key] = self\n')
+MEMO_MISS = ('            super().__init__(text, *args)\n'
+             '            _PARSED[key] = (self, state)\n')
 MEMO_GATE = '        if _reading and isinstance(text, str) and len(args) == 1 and not kwargs:\n'
 NODE_CONTEXT = '         "  try { return {ok: vm.runInNewContext("\n         f"\'(new Function(b + \\"; return {var};\\"))()\', {{b}})}}; }}"\n'
 NODE_FAILURE = '        assert "ok" in result, f"node could not evaluate block {i}:\\n{result[\'error\']}"\n'
@@ -31,9 +30,8 @@ NODE_RETURN = '    return [result["ok"] for result in results]\n'
 S = {
     "M1 report: the memo keeps a parse that failed, so the markup parses the second time": [
         (REPORT_TEST, MEMO_MISS,
-         '            if parsed is None:\n'
-         '                _PARSED[key] = self\n'
-         '                super().__init__(text, *args)\n', 1)],
+         '            _PARSED[key] = (self, state)\n'
+         '            super().__init__(text, *args)\n', 1)],
     "M2 report: the memo serves every build, not only a story being read": [
         (REPORT_TEST, MEMO_GATE, '        if isinstance(text, str) and len(args) == 1 and not kwargs:\n', 1)],
     "N1 sync: every block runs in one context": [

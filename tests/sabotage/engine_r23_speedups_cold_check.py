@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Round 23: the cold check of chore/corpus-speedups (688a490), against dcf6c60.
 
-The report suite's parse memo is keyed on a paragraph's markup and its style's NAME,
-and serves the first paragraph's whole __dict__ to the next. reportlab's Paragraph
+At 688a490 the report suite's parse memo was keyed on a paragraph's markup and its
+style's NAME, and served the first paragraph's whole __dict__ to the next. reportlab's Paragraph
 reads more off the style than its name: with no bulletText passed, the bullet is
 `style.bulletText`, and story_strings() harvests bulletText. So a figure carried by
 a style's bulletText is read from whichever config first built that markup — and
@@ -33,8 +33,8 @@ FIG = 'f"~{round(c[\'device_bw\'] * 0.7)} tokens/sec"'
 COST_SECTION = "        # ---- Cost ----\n"
 
 MEMO_GATE = '        if _reading and isinstance(text, str) and len(args) == 1 and not kwargs:\n'
-MEMO_KEY = '            key = (text, args[0].name)\n'
-MEMO_MISS = '                super().__init__(text, *args)\n'
+MEMO_REUSE = '            if parsed is not None and parsed[1] == state:\n'
+MEMO_MISS = '            super().__init__(text, *args)\n'
 
 NODE_VM = '         "const vm = require(\'vm\');"\n'
 NODE_CONTEXT = ('         "  try { return {ok: vm.runInNewContext("\n'
@@ -64,16 +64,16 @@ S = {
         (REPORT_PY, COST_SECTION,
          '        if not c["throughput_modelled"]:\n'
          f'            self.styles["Small"].bulletText = {FIG}\n' + COST_SECTION, 1)],
-    "M3 report: the memo's key drops the style's name": [
-        (REPORT_TEST, MEMO_KEY, '            key = text\n', 1)],
+    "M3 report: the memo compares a style by its name only, the bug round 23 found": [
+        (REPORT_TEST, MEMO_REUSE, '            if parsed is not None and parsed[1]["name"] == state["name"]:\n', 1)],
     "M4 report: the memo no longer requires exactly one positional argument": [
         (REPORT_TEST, MEMO_GATE, '        if _reading and isinstance(text, str) and args and not kwargs:\n', 1)],
     "M5 report: the memo no longer refuses keyword arguments": [
         (REPORT_TEST, MEMO_GATE, '        if _reading and isinstance(text, str) and len(args) == 1:\n', 1),
-        (REPORT_TEST, MEMO_MISS, '                super().__init__(text, *args, **kwargs)\n', 1)],
+        (REPORT_TEST, MEMO_MISS, '            super().__init__(text, *args, **kwargs)\n', 1)],
     "M6 report+py: M5, and the figure as a keyword bulletText (E3k) with it": [
         (REPORT_TEST, MEMO_GATE, '        if _reading and isinstance(text, str) and len(args) == 1:\n', 1),
-        (REPORT_TEST, MEMO_MISS, '                super().__init__(text, *args, **kwargs)\n', 1),
+        (REPORT_TEST, MEMO_MISS, '            super().__init__(text, *args, **kwargs)\n', 1),
         (REPORT_PY, PY_COST_HEAD, E3K, 1)],
     "M7 report+py: M4, and the figure as a positional bulletText (E3) with it": [
         (REPORT_TEST, MEMO_GATE, '        if _reading and isinstance(text, str) and args and not kwargs:\n', 1),
