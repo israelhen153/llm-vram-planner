@@ -95,10 +95,28 @@ PAGE_DATES = []   # the bare dates each page callback drew
 _building = []
 
 
+# One parsed paragraph per distinct markup and style, for story_strings() alone. Over
+# the suite it builds about 56,000 paragraphs from about 1,700 distinct markups, and
+# reportlab's markup parse was most of the suite's time. It never lays a story out, so
+# the stories it reads can share a parse; a parse that fails is never kept, so it fails
+# again every time. Builds that lay paragraphs out parse their own.
+_PARSED = {}
+_reading = []   # non-empty while story_strings() builds a story it only reads
+
+
 class RecordingParagraph(gr.Paragraph):
     def __init__(self, text, *args, **kwargs):
         if _building:
             _building[-1].update(COVER_CLOCK.findall(str(text)))
+        if _reading and isinstance(text, str) and len(args) == 1 and not kwargs:
+            key = (text, args[0].name)
+            parsed = _PARSED.get(key)
+            if parsed is None:
+                super().__init__(text, *args)
+                _PARSED[key] = self
+            else:
+                self.__dict__.update(parsed.__dict__)
+            return
         super().__init__(text, *args, **kwargs)
 
 
@@ -1350,6 +1368,7 @@ def story_strings(cfg, comp=None):
 
     real_doc = gr.SimpleDocTemplate
     printed, complained = io.StringIO(), io.StringIO()
+    _reading.append(True)
     try:
         gr.SimpleDocTemplate = DocSpy
         with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(complained):
@@ -1357,6 +1376,7 @@ def story_strings(cfg, comp=None):
         for item in captured.get("story", []):
             harvest(item)
     finally:
+        _reading.pop()
         gr.SimpleDocTemplate = real_doc
     # Every string the document was named with, whatever the keyword was called.
     seen.extend(v for v in list(captured.get("doc_args", ())) + list(captured.get("doc_kw", {}).values())
