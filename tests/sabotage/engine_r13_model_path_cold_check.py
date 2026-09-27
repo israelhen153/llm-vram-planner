@@ -9,6 +9,15 @@ only with paths that carry no whitespace; the CLI test sends one tilde path. So
 each gate below keys the refusal to one of those fixed values, and each entry
 sabotage moves it to where only the real CLI, or a whitespace-bearing answer,
 would notice.
+
+Fourteen of the round's 23 survived e8865f0's tests; the tests that catch them
+now generate their paths from parts and their plans from the catalog. One more
+survivor is not kept: T1 moved the path refusal after the FP8 refusal, so a plan
+with both problems names the FP8 one first. The path is never printed either
+way, so the order is left free.
+
+Then the fix's own addition, a JSON config's model path read with the spaces
+round it trimmed, gets two sabotages of its own (S1, S2).
 """
 import os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
@@ -24,6 +33,8 @@ MAIN_OUTPUT = '    output = args.output\n'
 MAIN_PRINT_ERR = '        print(f"error: {refused}", file=sys.stderr)\n'
 MAIN_EXIT = '        sys.exit(2)\n'
 MAIN_GENERATED = '    print(f"\\nReport generated: {path}")\n'
+JSON_PATH_TRIM = ('    if isinstance(cfg.get("hf_model"), str):\n'
+                  '        cfg["hf_model"] = cfg["hf_model"].strip()\n')
 VALIDATE_FP8_RETURN = ('    # weight kernel for: refused, not planned.\n'
                        '    return refuse_fp8_where_vllm_cannot(cfg)\n')
 
@@ -69,11 +80,6 @@ S = {
          '    except PlanRefused as refused:\n        print(f"warning: {refused}", file=sys.stderr)\n'
          '        cfg["hf_model"] = "/opt/models/YourModel"\n', 1)],
     # ---- the check made later ----
-    "T1 py: the path refusal runs after the FP8 refusal": [
-        (REPORT_PY, PY_PATH_REFUSE_JSON, "", 1),
-        (REPORT_PY, VALIDATE_FP8_RETURN,
-         '    # weight kernel for: refused, not planned.\n    refuse_fp8_where_vllm_cannot(cfg)\n'
-         '    return refuse_model_path_the_server_cannot_resolve(cfg)\n', 1)],
     "T2 py: the PDF is written before the path is refused": [
         (REPORT_PY, PY_PATH_REFUSE_JSON, "", 1),
         (REPORT_PY, MAIN_GENERATED,
@@ -110,6 +116,11 @@ S = {
         (REPORT_PY, PY_PATH_REFUSE_MENU,
          '        if unresolvable_model_path(hf_model):\n'
          '            raise PlanRefused(f"The model path {hf_model!r} {unresolvable_model_path(hf_model)}.")\n', 1)],
+    # ---- round 2: the trim the fix added ----
+    "S1 py: a JSON config's model path is read untrimmed": [
+        (REPORT_PY, JSON_PATH_TRIM, "", 1)],
+    "S2 py: a JSON config's model path is trimmed on the left only": [
+        (REPORT_PY, JSON_PATH_TRIM, JSON_PATH_TRIM.replace(".strip()", ".lstrip()"), 1)],
 }
 
 if __name__ == "__main__":
