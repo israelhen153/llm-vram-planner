@@ -7,6 +7,15 @@
 # A driver that prints "N caught, 0 survived" found no gap. A survivor is a
 # sabotage the suite did not notice, which is the finding — not an error here.
 set -uo pipefail
+# A laptop that suspends mid-run stretches it without a word: a driver that takes
+# 3.6 min took 86 on 2026-09-24, and was first blamed for it. Where systemd provides
+# one, the whole run holds a sleep lock. Closing the lid still suspends: logind's
+# default (LidSwitchIgnoreInhibited=yes) lets the lid ignore sleep locks.
+if [ -z "${SABOTAGE_INHIBITED:-}" ] && command -v systemd-inhibit >/dev/null 2>&1 \
+   && systemd-inhibit --what=sleep:idle --who=sabotage-corpus --why=probe true >/dev/null 2>&1; then
+  SABOTAGE_INHIBITED=1 exec systemd-inhibit --what=sleep:idle --who=sabotage-corpus \
+    --why="sabotage corpus" --mode=block bash "$0" "$@"
+fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
 cd "$ROOT"
