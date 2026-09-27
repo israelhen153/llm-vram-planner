@@ -183,6 +183,7 @@ def write_json(obj):
 # the bug this suite exists to catch.
 REQ = {"gpu": "h100-80", "ctx": 16384, "conc": 4, "n_gpu": 1, "nvlink": True, "kv_bpp": 2}
 BPP = 0.5  # awq, in both from_cli_args (via --prec) and from_json (via "bpp")
+QUANT = "awq"  # and named: a JSON width without its method is refused, not guessed
 
 
 def expected_cfg(pd):
@@ -200,7 +201,7 @@ def expected_cfg(pd):
     """
     cfg = gr.arch_fields(pd)
     cfg.update({
-        "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
+        "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
         "gpu": gr.GPUS[REQ["gpu"]], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
         # Off the card, as every builder copies it. Not an architecture field,
         # but compute() reads it, so a builder that dropped it would differ
@@ -252,7 +253,7 @@ for key, pd in gr.PRESETS.items():
 
     def check_json(key=key, want=want):
         path = write_json({
-            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"],
+            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"],
             "conc": REQ["conc"], "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"],
             "kv_bpp": REQ["kv_bpp"],
         })
@@ -446,7 +447,7 @@ def check_preset_branch_raw_override_wins():
     # with a coincidental match.
     path = write_json({
         "preset": "gemma4-31b", "attn": "standard", "gpu": REQ["gpu"],
-        "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
+        "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
         "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -470,7 +471,7 @@ def check_preset_branch_honors_hf_model_override():
     # the merge — they must actually win over the preset's own value there.
     path = write_json({
         "preset": "llama31-8b", "hf_model": "/opt/models/my-local-copy",
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -490,7 +491,7 @@ test("from_json: an explicit hf_model in the JSON overrides the selected preset'
 def check_preset_branch_honors_model_name_override():
     path = write_json({
         "preset": "llama31-8b", "model_name": "My Local 8B",
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -514,7 +515,7 @@ def check_standard_preset_overridden_to_swa_gets_real_kv():
     # out empty instead of the requested number.
     path = write_json({
         "preset": "llama31-8b", "attn": "swa", "swa_win": 4096, "swa_local": 16,
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -538,7 +539,7 @@ def check_standard_preset_overridden_to_mla_gets_real_kv():
     # confident kv_gb of 0.0 and fits=True instead of the requested number.
     path = write_json({
         "preset": "llama31-8b", "attn": "mla", "mla_dim": 576,
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -559,7 +560,7 @@ def check_preset_branch_honors_runtime_overrides():
     # raw (non-preset) branch already honoured them via dict(raw) — the same
     # inconsistency as the attn override, for a different field class.
     path = write_json({
-        "preset": "llama31-8b", "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"],
+        "preset": "llama31-8b", "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"],
         "conc": REQ["conc"], "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"],
         "kv_bpp": REQ["kv_bpp"], "shared_prefix": 4096, "prefix_caching": True,
     })
@@ -762,7 +763,7 @@ def check_unrecognised_field_reaches_every_builder():
         assert cli_cfg.get("attn_sink") == 4, f"from_cli_args dropped attn_sink: {cli_cfg}"
 
         path = write_json({
-            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"],
+            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"],
             "conc": REQ["conc"], "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"],
             "kv_bpp": REQ["kv_bpp"],
         })
@@ -2815,8 +2816,8 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
     """from_json() accepted {"bpp": 1} with no quant, and compute() sized it as FP8
     while the command named no quantization, so it loaded BF16. One byte per
     parameter is FP8, by compute()'s own test, so the command now says so. A width
-    that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is left as the config
-    gave it, and an explicit quant is never overridden. Both of from_json()'s
+    that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is refused without a
+    quantization, and an explicit quant is never overridden. Both of from_json()'s
     branches, a preset's and a config's own fields: the fill once moved into the
     preset branch alone and every test passed. A quantization in another case is
     written in vLLM's."""
@@ -2832,8 +2833,12 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
         branch = "preset" if "preset" in base else "own fields"
         cfg, cmd = plan({"bpp": 1})
         assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
-        cfg, cmd = plan({"bpp": 0.5})
-        assert not cfg.get("quant") and "--quantization" not in cmd, (branch, cfg.get("quant"), cmd)
+        try:
+            plan({"bpp": 0.5})
+        except gr.PlanRefused:
+            pass
+        else:
+            raise AssertionError(f"{branch}: bpp 0.5 with no quantization was planned")
         cfg, cmd = plan({"bpp": 1, "quant": "fp8"})
         assert cfg["quant"] == "fp8", (branch, cfg.get("quant"))
         cfg, cmd = plan({"bpp": 0.5, "quant": "gptq"})
@@ -2847,8 +2852,85 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
         cfg, cmd = plan({"bpp": 0.5, "quant": " gptq "})
         assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
 
-test("a JSON config at one byte per parameter is FP8 in the command; other widths are left as given",
+test("a JSON config at one byte per parameter is FP8 in the command; a width without a method is refused",
      check_a_one_byte_json_config_is_fp8_in_the_command)
+
+
+# A JSON config's precision, as the owner decided it (2026-09-27, decision desk A2):
+# the width comes from the method where the method fixes it (a method with one width
+# in --prec's table), the plan never guesses, and a config naming nothing is the BF16
+# checkpoint its command loads. The refusals' words are the contract.
+JSON_WIDTH_GGUF = " (GGUF: Q2_K 0.35, Q4_K_M 0.63, Q5_K_M 0.71, Q6_K 0.82, Q8_0 1.1)"
+
+
+def json_precision(quant, bpp):
+    """What a JSON config giving quant and bpp (None where absent) plans as, (bpp,
+    quant), or the refusal it gets."""
+    widths = {}
+    for b, q in PRECISIONS_CONTRACT.values():
+        if q:
+            widths.setdefault(q, set()).add(b)
+    fixed = {q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1}
+    q = (quant or "").strip().lower()
+    if bpp is None:
+        if q and q not in fixed:
+            return (f'"quant": {q!r} has no single width, so the plan can\'t size the weights without "bpp", '
+                    f'their bytes per parameter. Give it{JSON_WIDTH_GGUF if q == "gguf" else ""}.')
+        return (fixed.get(q, 2), q)
+    if q in fixed and bpp != fixed[q]:
+        w = fixed[q]
+        return (f'"quant": {q!r} is {w:g} byte{"" if w == 1 else "s"} per parameter, but "bpp" says {bpp}. '
+                f'Drop "bpp", or make the two agree.')
+    if not q and bpp not in (1, 2):
+        return (f'"bpp": {bpp} names no quantization, so the printed command would load the BF16 checkpoint '
+                f'at 2 bytes per parameter. Add "quant" (awq, gptq or gguf), or give "bpp": 2 for BF16.')
+    return (bpp, "fp8" if bpp == 1 and not q else q)
+
+
+def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
+    """A JSON config without "bpp" was sized at 0.5 whatever it named: {"quant": "fp8"}
+    planned half the weights its command loads, and a config naming nothing a quarter
+    of its BF16 checkpoint. Every quantization (none, empty, each method --prec knows,
+    another spelling, one it doesn't) crossed with every width (none, and each the
+    report can label), through both of from_json()'s branches on every card, is
+    planned at the width and with the --quantization the owner's rules give, or
+    refused with their words; FP8 on a card that can't run it gets the FP8 refusal."""
+    quants = [None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors"]
+    widths = [None, *sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})]
+    planned, commanded = set(), set()
+    for n, (slug, row) in enumerate(gr.GPUS.items()):
+        for base in ({"preset": "llama31-8b"}, gr.arch_fields(gr.PRESETS["llama31-8b"])):
+            for quant in quants:
+                for bpp in widths:
+                    raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[n % len(BOARD_SAMPLE)])
+                    if quant is not None:
+                        raw["quant"] = quant
+                    if bpp is not None:
+                        raw["bpp"] = bpp
+                    want = json_precision(quant, bpp)
+                    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+                        want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
+                    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                        json.dump(raw, f)
+                    try:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            cfg = gr.from_json(f.name)
+                        got = (cfg["bpp"], cfg.get("quant") or "")
+                        planned.add((quant, bpp))
+                        comp = gr.compute(cfg)
+                        if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
+                            flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
+                            assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                            commanded.add((quant, bpp))
+                    except gr.PlanRefused as refused:
+                        got = str(refused)
+                    finally:
+                        os.unlink(f.name)
+                    assert got == want, (slug, "preset" in base, quant, bpp, got, want)
+    assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)}"
+
+test("a JSON config's precision is the width its method fixes, BF16 when it names nothing, or refused",
+     check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
 
 
 test("the PDF cost table's tier names carry no provider parenthetical",
