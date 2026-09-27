@@ -158,15 +158,15 @@ JS_EXEC_COST_SOURCE = ("Cost source</span><span class=\"exec-value\" style=\"fon
                        "font-weight:400;color:var(--text-muted)\">Hyper: "
                        "${priceSourceLabel(state, 'hyper')} · Spec: ${priceSourceLabel(state, 'spec')} "
                        "· Spot: ${priceSourceLabel(state, 'spot')}</span>")
-JS_CMP_RANGE = ("<span class=\"val\">$${Math.min(...cmpCosts).toFixed(2)}"
-                "–$${Math.max(...cmpCosts).toFixed(2)}</span>")
+JS_CMP_RANGE = ("`$${Math.min(...cmpCosts).toFixed(2)}"
+                "–$${Math.max(...cmpCosts).toFixed(2)}`")
 JS_EXEC_RANGE = "const monthlyCheapest = Math.round(Math.min(...execCosts) * 730);\n"
 PY_PRICE_LABEL_RET = "    return f\"{provider} · {src['sku']} · {src['region']} · read {src['date']}\"\n"
 PY_TIER_HYPERSCALER = "            [\"Hyperscaler\",\n"
 PY_SOURCE_HYPER_LINE = "            f\"Source — Hyperscaler: {price_source_label(gpu, 'hyper')}. \"\n"
 PY_NOTES_COMPOSITE_OPEN = ("        notes.append(\"GPU prices are mid-2026 per-board/hr figures "
                            "across 3 tiers: hyperscaler, \"\n")
-SYNC_OPTIONAL = "GPU_OPTIONAL = (\"default\", \"priceSource\")\n"
+SYNC_OPTIONAL = "GPU_OPTIONAL = (\"default\", \"priceSource\", \"priceRecord\")\n"
 PRICE_CROSS_CHECK_THRESHOLD = "CROSS_CHECK_FLAG_THRESHOLD = 0.20\n"
 PRICE_APPLY_LOOP = "    new_text = raw_text\n    for slug, row in gpus_data.items():\n"
 PRICE_FIELD_LINE = "            \"price\": round(oc.reading.price_per_gpu, 2),\n"
@@ -200,6 +200,44 @@ JS_GGUF_RELEASE_SRC = "   'https://github.com/vllm-project/vllm/releases/tag/v0.
 PY_GGUF_RELEASE_SRC = "     \"https://github.com/vllm-project/vllm/releases/tag/v0.24.0\"),\n"
 
 # The engine files a sabotage edits.
+
+# feat/amd-gpus: what engine_r6_amd_rows.py attacks — the null price tier, the
+# interconnect's name, the vendor sections, and price_check's null-tier rules.
+JS_TIER_COST = "  const tierCost = (perBoard) => (perBoard == null ? null : perBoard * gpuCount);\n"
+JS_HOURLY_HYPER = "  const hourlyHyper = tierCost(gpuHyperCost);\n"
+JS_NULL_LABEL = "  if (state[TIER_COST_FIELD[tier]] === null) return NO_PRICE;\n"
+JS_CMP_COSTS = "    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot].filter(v => v != null);\n"
+JS_EXEC_COSTS = ("  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot]"
+                 ".filter(v => v != null);\n")
+JS_USD_DASH = "  if (v == null) return '—';\n"
+JS_INTERCONNECT_NAME = "  return state.hasNVLink ? 'NVLink' : state.gpuForm === 'oam' ? 'Infinity Fabric' : 'PCIe';\n"
+JS_SHARDING_ONE = ("    : (fabric !== 'PCIe' ? fabric + ' — sharded ' + computed.deviceCount + '-way, each device "
+                   "holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}"
+                   "</div>`;\n")
+JS_SYNC_OAM_LABEL = "  sel.options[1].textContent = gpu && gpu.form === 'oam' ? 'Infinity Fabric' : 'PCIe only';\n"
+JS_VENDORS = "  const vendors = [...new Set(rows.map(([, gpu]) => gpu.vendor))];\n"
+JS_STATE_FORM = "    gpuForm: gpu.form,\n"
+PY_HOURLY_HYPER = "    hourly_hyper = None if gpu[\"hyper\"] is None else gpu[\"hyper\"] * n_gpu\n"
+PY_NULL_LABEL = "    if tier in gpu and gpu[tier] is None:\n        return NO_PRICE\n"
+PY_INTERCONNECT_NAME = "    return \"Infinity Fabric\" if cfg[\"gpu\"].get(\"form\") == \"oam\" else \"PCIe\"\n"
+PY_INTERCONNECT_ROW = "            [\"Interconnect\", interconnect_name(cfg)],\n"
+PY_MENU_SPAN = "        if v[\"spot\"] is not None and v[\"hyper\"] is not None:\n"
+PRICE_SPOT_SKU = "    recorded_sku = f\"{sku} ({kind})\" if kind else sku\n"
+PRICE_NULL_GUARD = "            if row.get(tier) is None:\n"
+PRICE_NULL_REFUSAL = "    on_null = automated_null_tiers(catalog[\"data\"], SOURCE_MAP)\n    if on_null:\n"
+# The first cold check of feat/amd-gpus (engine_r7_amd_cold_check.py): the page's
+# catalog-to-state path, the hand record's tier lookup, the fabric's gate, and
+# price_check's writer.
+JS_GETSPEC_PRICES = "  return { key: el.value, gb: g.gb, bw: g.bw, hyper: g.hyper, spec: g.spec, spot: g.spot,\n"
+JS_STATE_SPOT = "    gpuSpotCost: gpu.spot,\n"
+JS_REC_LOOKUP = "  const rec = !src && state.priceRecord && state.priceRecord[tier];\n"
+JS_FABRIC = "  const fabric = interconnectName(state);\n"
+PY_REC_LOOKUP = "    rec = None if src else (gpu.get(\"priceRecord\") or {}).get(tier)\n"
+PRICE_DUMP_ROW = "    parts = \", \".join(f\"{json.dumps(k)}: {_dump_json_value(v)}\" for k, v in row.items())\n"
+PRICE_DUMP_VALUE = ("        return \"{ \" + \", \".join(f\"{json.dumps(k)}: {_dump_json_value(x)}\" for k, x in v.items())"
+                    " + \" }\"\n")
+PRICE_APPLY_MOVED = "        if oc.status == \"MOVED\":\n            row[oc.tier] = oc.proposed\n"
+
 INDEX_HTML = "index.html"
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"

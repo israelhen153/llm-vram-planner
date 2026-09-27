@@ -211,7 +211,13 @@ def fetch_azure(sku, region, meter_name, divisor):
         raise SourceError(f"azure {sku}: retailPrice is not numeric: {price!r}")
     per_gpu = price / divisor
     _check_band(per_gpu, f"azure:{sku}")
-    return Reading(provider="azure", sku=sku, region=region, price_per_gpu=per_gpu, date=today(),
+    # A spot or low-priority meter is a different price for the same SKU. The
+    # recorded SKU says which, so two tiers read off one SKU — MI300X's
+    # hyperscaler and spot, both ND96isr_MI300X_v5 — never show one label
+    # beside two prices.
+    kind = next((k for k in ("Spot", "Low Priority") if meter_name.endswith(" " + k)), None)
+    recorded_sku = f"{sku} ({kind})" if kind else sku
+    return Reading(provider="azure", sku=recorded_sku, region=region, price_per_gpu=per_gpu, date=today(),
                     evidence=f"${price:.4f}/hr / {divisor} GPUs, meterName={meter_name!r}")
 
 
@@ -613,6 +619,51 @@ SOURCE_MAP = {
         "spot": {"primary": {"kind": "vast", "gpuName": "H100 SXM", "divisor": 1,
                               "minSample": 5, "numGpus": 1}},
     },
+    # ---- AMD, read 2026-09-23 (docs/research/amd-gpu-pricing.md). A tier the
+    # catalog records as null says here why no price qualified; a tier priced
+    # from a page no reader here can fetch says where its hand record came from.
+    "rx7900xtx-24": {
+        "hyper": {"manual": "no hyperscaler rents this card (checked 2026-09-23)"},
+        "spec": {"manual": "no hourly rate anywhere: HOSTKEY rents it only monthly, as a pre-order "
+                           "(checked 2026-09-23)"},
+        "spot": {"manual": "Vast.ai lists no RX 7900 XTX offers (checked 2026-09-23)"},
+    },
+    "mi210-64": {
+        "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
+                            "AWS or GCP (checked 2026-09-23)"},
+        "spec": {"manual": "Runcrate's MI210 page advertises $0.82/hr on demand, 'available now', but "
+                           "Runcrate's own pricing page lists no AMD GPU among its 20 SKUs and the MI210 page "
+                           "misstates AMD's figures (47.9 TFLOPS FP16 against AMD's 181.0), so the offer could not "
+                           "be confirmed (checked 2026-09-23)"},
+        "spot": {"manual": "no spot or marketplace offer found (checked 2026-09-23)"},
+    },
+    "mi250x-128": {
+        "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
+                            "AWS or GCP (checked 2026-09-23)"},
+        "spec": {"manual": "Cirrascale lists the MI250, not the MI250X, and only monthly. Runcrate's MI250X page "
+                           "advertises $1.35/hr, but Runcrate's own pricing page lists no AMD GPU and the page "
+                           "misstates AMD's figures (95.7 TFLOPS against AMD's 383.0), so the offer could not be "
+                           "confirmed (checked 2026-09-23)"},
+        "spot": {"manual": "no spot or marketplace offer found (checked 2026-09-23)"},
+    },
+    "mi300x-192": {
+        "hyper": {"primary": {"kind": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2",
+                              "meterName": "ND96isrMI300Xv5", "divisor": 8}},
+        # The lowest confirmed on-demand price, which no reader here can fetch;
+        # recorded by hand in data/gpus.json's priceRecord, with its page.
+        "spec": {"manual": "RunPod Secure Cloud list price, recorded by hand in priceRecord: no RunPod "
+                           "reader in this build"},
+        "spot": {"primary": {"kind": "azure", "sku": "Standard_ND96isr_MI300X_v5", "region": "eastus2",
+                             "meterName": "ND96isrMI300Xv5 Spot", "divisor": 8}},
+    },
+    "mi325x-256": {
+        "hyper": {"manual": "no hyperscaler rents this card: none in the Azure API, Oracle's price list, "
+                            "AWS or GCP (checked 2026-09-23)"},
+        "spec": {"manual": "DigitalOcean list price, recorded by hand in priceRecord: no DigitalOcean "
+                           "reader in this build"},
+        "spot": {"manual": "Vultr lists a preemptible price, but no location offers the plan "
+                           "(checked 2026-09-23)"},
+    },
     "rtxpro-96": {
         "hyper": {"manual": "no hyperscaler rents this card"},
         "spec": {"primary": {"kind": "coreweave", "productSlug": "nvidia-rtx-pro-6000-blackwell-server-edition",
@@ -768,6 +819,22 @@ def _cross_check_disagreement(reading, secondary_readings):
 # and the label stays.
 
 
+# A catalog tier recorded as null has no confirmed hourly price. An automated
+# source cannot introduce one: there is nothing to confirm or move, and a price
+# appearing where the catalog declared none is a decision for a person.
+NULL_TIER_NOTE = ("the catalog records no confirmed hourly price for this tier (null), so an "
+                  "automated source has nothing to confirm or move; a null tier needs a manual "
+                  "SOURCE_MAP entry")
+
+
+def automated_null_tiers(catalog_data, source_map):
+    """Every slug/tier SOURCE_MAP would fetch although the catalog records it as null."""
+    return sorted(f"{slug}/{tier}" for slug, tiers in source_map.items()
+                  for tier, cfg in tiers.items()
+                  if "primary" in cfg and tier in catalog_data.get(slug, {})
+                  and catalog_data[slug][tier] is None)
+
+
 def run(gpus_data, source_map, shared, only=None, slugs=None):
     outcomes = []
     for slug, row in gpus_data.items():
@@ -781,6 +848,11 @@ def run(gpus_data, source_map, shared, only=None, slugs=None):
                 continue
             if "manual" in cfg:
                 outcomes.append(Outcome(slug, tier, "MANUAL", current=row.get(tier), note=cfg["manual"]))
+                continue
+            if row.get(tier) is None:
+                # main() refuses this map before any fetch; this is the same rule
+                # for a caller that hands run() a map directly.
+                outcomes.append(Outcome(slug, tier, "ABORTED", current=None, note=NULL_TIER_NOTE))
                 continue
             primary = cfg["primary"]
             if only is not None and primary["kind"] not in only:
@@ -1012,6 +1084,11 @@ def main(argv=None):
     if missing:
         raise SystemExit(f"SOURCE_MAP names slug(s) {sorted(missing)} that data/gpus.json no longer "
                           "has — the map has drifted from the catalog and needs fixing before this can run")
+
+    on_null = automated_null_tiers(catalog["data"], SOURCE_MAP)
+    if on_null:
+        raise SystemExit(f"SOURCE_MAP automates {on_null}, which data/gpus.json records as null — "
+                         f"{NULL_TIER_NOTE}")
 
     slugs = None
     if args.slug:

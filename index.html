@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LLM VRAM Planner — GPU Memory, Throughput & Deployment Tool</title>
 <meta name="description" content="Plan GPU memory for LLM inference and training. Generate vLLM commands, compare costs across AWS/GCP/Lambda/spot, copy a Markdown report. Works offline. Open source.">
-<meta name="keywords" content="LLM VRAM calculator, GPU memory planner, vLLM, A100, H100, B200, inference, LoRA, QLoRA, training VRAM, KV cache, tensor parallel">
+<meta name="keywords" content="LLM VRAM calculator, GPU memory planner, vLLM, A100, H100, B200, AMD, MI300X, MI325X, inference, LoRA, QLoRA, training VRAM, KV cache, tensor parallel">
 <meta property="og:title" content="LLM VRAM Planner — GPU Memory & Deployment Tool">
 <meta name="google-site-verification" content="UTFrSv4vzRAmIhM2G-hjunlk02SxiKYJzL_dbC7WAWI" />
 <meta property="og:description" content="Check whether a model fits your GPUs, then get the vllm serve command to run it. VRAM breakdown, per-user and aggregate throughput, 3-tier cost comparison, Markdown report export. Free, offline, open source.">
@@ -342,7 +342,7 @@ body.exec-mode .exec-summary { display: block; }
       </select>
     </div>
     <div class="field"><label>GPU count <span class="info-tip" tabindex="0" role="img" aria-label="How many GPUs. Weights shard across the tensor-parallel group, and above 8 devices the split adds data-parallel replicas — a dense model is copied into each, while a mixture-of-experts model spreads its routed experts across every device instead. KV cache always spreads across every device. Pipeline parallelism is never used." data-tip="How many GPUs. Weights shard across the tensor-parallel group, and above 8 devices the split adds data-parallel replicas — a dense model is copied into each, while a mixture-of-experts model spreads its routed experts across every device instead. KV cache always spreads across every device. Pipeline parallelism is never used."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label><div class="slider-row"><input type="range" min="1" max="128" value="1" step="1" id="gpu-count" oninput="recalculate()"><span class="slider-value" id="gpu-count-display">1</span></div></div>
-    <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
+    <div class="field engineer-only"><label>Interconnect <span class="info-tip" tabindex="0" role="img" aria-label="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism, as Infinity Fabric does on AMD OAM boards. PCIe is much slower and can bottleneck it." data-tip="NVLink/NVSwitch gives fast GPU-to-GPU bandwidth for tensor parallelism, as Infinity Fabric does on AMD OAM boards. PCIe is much slower and can bottleneck it."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <select id="interconnect" onchange="recalculate()"><option value="1">NVLink / NVSwitch</option><option value="0">PCIe only</option></select>
     </div>
   </div>
@@ -542,6 +542,11 @@ const GPU_TABLE = {
   'rtxpro-96': { gb:96, bw:1792, hyper:5.0, spec:2.5, spot:2.0, tflops:504, name:'RTX PRO 6000 96 GB', vendor:'nvidia', perfKey:'nvidia', devices:1, form:'pcie', caps:{ fp8: true }, priceSource:{ spec: { provider: 'coreweave', sku: 'NVIDIA RTX PRO 6000 Blackwell Server Edition (High Memory)', region: 'global', date: '2026-09-22', price: 2.5 } } },
   'h200-141': { gb:141, bw:4800, hyper:7.91, spec:6.31, spot:2.5, tflops:990, name:'H200 141 GB', vendor:'nvidia', perfKey:'nvidia', devices:1, form:'sxm', caps:{ fp8: true }, priceSource:{ hyper: { provider: 'aws', sku: 'p5en.48xlarge', region: 'US East (N. Virginia)', date: '2026-09-22', price: 7.91 }, spec: { provider: 'coreweave', sku: 'NVIDIA HGX H200', region: 'global', date: '2026-09-22', price: 6.31 } } },
   'b200-192': { gb:192, bw:8000, hyper:14.24, spec:6.69, spot:2.12, tflops:2250, name:'B200 192 GB', vendor:'nvidia', perfKey:'nvidia', devices:1, form:'sxm', caps:{ fp8: true }, priceSource:{ hyper: { provider: 'aws', sku: 'p6-b200.48xlarge', region: 'US East (N. Virginia)', date: '2026-09-22', price: 14.24 }, spec: { provider: 'lambda', sku: 'NVIDIA B200 SXM6 (180 GB, 208 vCPU tier)', region: 'global', date: '2026-09-22', price: 6.69 } } },
+  'rx7900xtx-24': { gb:24, bw:960, hyper:null, spec:null, spot:null, tflops:123, name:'RX 7900 XTX 24 GB', vendor:'amd', perfKey:'rdna3', devices:1, form:'consumer', caps:{ fp8: false } },
+  'mi210-64': { gb:64, bw:1638.4, hyper:null, spec:null, spot:null, tflops:181, name:'MI210 64 GB', vendor:'amd', perfKey:'cdna2', devices:1, form:'pcie', caps:{ fp8: false } },
+  'mi250x-128': { gb:128, bw:3276.8, hyper:null, spec:null, spot:null, tflops:383, name:'MI250X 128 GB', vendor:'amd', perfKey:'cdna2', devices:2, form:'oam', caps:{ fp8: false } },
+  'mi300x-192': { gb:192, bw:5325, hyper:6.0, spec:2.39, spot:1.11, tflops:1307.4, name:'MI300X 192 GB', vendor:'amd', perfKey:'cdna3', devices:1, form:'oam', caps:{ fp8: true }, priceSource:{ hyper: { provider: 'azure', sku: 'Standard_ND96isr_MI300X_v5', region: 'eastus2', date: '2026-09-23', price: 6.0 }, spot: { provider: 'azure', sku: 'Standard_ND96isr_MI300X_v5 (Spot)', region: 'eastus2', date: '2026-09-23', price: 1.11 } }, priceRecord:{ spec: { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' } } },
+  'mi325x-256': { gb:256, bw:6000, hyper:null, spec:3.8, spot:null, tflops:1307.4, name:'MI325X 256 GB', vendor:'amd', perfKey:'cdna3', devices:1, form:'oam', caps:{ fp8: true }, priceRecord:{ spec: { provider: 'DigitalOcean', sku: 'AMD Instinct™ MI325X', region: 'global', date: '2026-09-23', price: 3.8, url: 'https://www.digitalocean.com/pricing/gpu-droplets' } } },
 };
 /* GPU_TABLE:END */
 
@@ -613,8 +618,9 @@ function bandwidthLabel(gbs) { return String(Number(gbs.toPrecision(6))); }
 function formatContext(v) { return v >= 1024 ? Math.round(v / 1024) + 'K' : v + ''; }
 function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math.round(t) + ''; }
 
-/* Only SXM boards in this catalog carry NVLink. Seven of the twelve cards — T4,
-   L4, RTX 4090, RTX 5090, RTX 6000 Ada, L40S, RTX PRO 6000 — have no NVLink at
+/* Only SXM boards in this catalog carry NVLink. Seven of the twelve NVIDIA cards —
+   T4, L4, RTX 4090, RTX 5090, RTX 6000 Ada, L40S, RTX PRO 6000 — and every AMD
+   card (Infinity Fabric on the OAM boards, PCIe otherwise) have no NVLink at
    all, and the interconnect dropdown defaulted to "NVLink / NVSwitch" for every
    one of them, applying a 0.85 multi-GPU scaling factor those machines cannot
    earn. Read from the catalog's `form` rather than a list of names here, so an
@@ -622,6 +628,20 @@ function formatTokens(t) { return t >= 1000 ? (t / 1000).toFixed(1) + 'K' : Math
    Mirrored by supports_nvlink() in generate_report.py; the parity suite compares
    the two answers card by card. */
 function supportsNVLink(gpu) { return gpu.form === 'sxm'; }
+
+/* The link a multi-device configuration's devices actually talk over, named as
+   the vendor names it: NVLink where the board has it and it is selected,
+   Infinity Fabric on an OAM board — AMD's link is part of that platform rather
+   than an option on it — and PCIe otherwise. Every surface that names the
+   interconnect reads this; branching on hasNVLink alone printed "PCIe" for OAM
+   boards whose devices never talk over PCIe. The arithmetic still reads
+   hasNVLink, so Infinity Fabric is priced like any other non-NVLink link: no
+   measurement gives it a speed of its own, and no OAM row carries throughput
+   constants for one to apply to. Mirrored by interconnect_name() in
+   generate_report.py; the parity suite compares the two form by form. */
+function interconnectName(state) {
+  return state.hasNVLink ? 'NVLink' : state.gpuForm === 'oam' ? 'Infinity Fabric' : 'PCIe';
+}
 
 function getGpuSpec() {
   const el = document.getElementById('gpu-model');
@@ -647,7 +667,9 @@ function getGpuSpec() {
            // this is the one place readInputState() draws every GPU field
            // from. Absent on most rows today, which is a supported state:
            // priceSourceLabel() renders "not recorded" for a missing tier.
-           priceSource: g.priceSource };
+           priceSource: g.priceSource,
+           // The hand-recorded kind, for a tier no automated source reads.
+           priceRecord: g.priceRecord };
 }
 
 /* Builds the GPU dropdown's <option> elements from GPU_TABLE at load time — the
@@ -660,13 +682,22 @@ function getGpuSpec() {
    a catalog that forgot the flag working instead of rendering an empty
    dropdown. */
 const DEFAULT_GPU_KEY = Object.keys(GPU_TABLE).find(k => GPU_TABLE[k].default) || Object.keys(GPU_TABLE)[0];
+/* Section headings for the GPU dropdown, by the catalog's vendor id. An id with
+   no entry here shows as itself rather than disappearing. */
+const VENDOR_NAMES = { nvidia: 'NVIDIA', amd: 'AMD' };
 function renderGpuOptions() {
   const sel = document.getElementById('gpu-model');
-  let html = '';
-  for (const [key, gpu] of Object.entries(GPU_TABLE)) {
-    html += `<option value="${key}"${key === DEFAULT_GPU_KEY ? ' selected' : ''}>${gpu.name}</option>`;
-  }
-  sel.innerHTML = html;
+  const rows = Object.entries(GPU_TABLE);
+  const option = ([key, gpu]) => `<option value="${key}"${key === DEFAULT_GPU_KEY ? ' selected' : ''}>${gpu.name}</option>`;
+  /* One vendor needs no headings, so a one-vendor catalog renders the flat
+     list it always did. More than one gets a group each, in the order the
+     catalog first lists them, with each group's cards in catalog order: the
+     catalog's own order still decides everything, and a card is never listed
+     twice or dropped. */
+  const vendors = [...new Set(rows.map(([, gpu]) => gpu.vendor))];
+  sel.innerHTML = vendors.length < 2 ? rows.map(option).join('')
+    : vendors.map(v => `<optgroup label="${VENDOR_NAMES[v] || v}">` +
+        rows.filter(([, gpu]) => gpu.vendor === v).map(option).join('') + '</optgroup>').join('');
 }
 
 /* =============================================================================
@@ -926,11 +957,19 @@ function readInputState() {
        rather than throwing. tests/model.test.js's stateFor()/asState() carry
        this too, so a hand-built test state exercises the same path. */
     priceSource: gpu.priceSource,
+    /* A price a person read off the provider's own page, for a tier no
+       automated source reads — named and dated like priceSource, and said to
+       be hand-recorded wherever it is shown. Undefined on most rows. */
+    priceRecord: gpu.priceRecord,
     gpuName: gpu.name,
     // How many accelerator devices this board presents. 1 for every NVIDIA card
     // here; a multi-GCD board like the MI250X is one row with devices: 2,
     // because that is how it is bought, priced and racked.
     gpuDevices: gpu.devices,
+    // The board's form factor, which names the link its devices share — see
+    // interconnectName(). hasNVLink below is the NVLink gate; this is what the
+    // interconnect is called when that gate is closed.
+    gpuForm: gpu.form,
     // The catalog slug, carried through so nothing downstream has to reverse
     // the display name back into one.
     gpuKey: gpu.key,
@@ -1347,9 +1386,13 @@ function computeInference(state) {
   // Cost
   // Boards, not devices: the catalog prices a board and a dual-GCD module is
   // one line item. Billing per device double-counts it.
-  const hourlyHyper = gpuHyperCost * gpuCount;
-  const hourlySpec = gpuSpecCost * gpuCount;
-  const hourlySpot = gpuSpotCost * gpuCount;
+  /* A tier with no confirmed hourly price is null in the catalog and stays
+     null here. null * gpuCount is 0 in JavaScript, which every cost surface
+     would print as a free cluster. */
+  const tierCost = (perBoard) => (perBoard == null ? null : perBoard * gpuCount);
+  const hourlyHyper = tierCost(gpuHyperCost);
+  const hourlySpec = tierCost(gpuSpecCost);
+  const hourlySpot = tierCost(gpuSpotCost);
 
   return {
     isMoE, weightsGB, kvCacheGB, activationsGB, totalOverhead, totalGB,
@@ -1472,7 +1515,7 @@ function renderStrategyBadges(state, computed) {
   /* The percentage comes from the interconnect curve the throughput figures
      are priced with — a speed claim like them, so a card with no constants gets
      the fact without the number. */
-  if (computed.deviceCount > 1 && !state.hasNVLink) html += `<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${computed.throughputModelled ? 'PCIe — 45-60% perf loss, worse with more devices' : 'PCIe — no NVLink; the speed cost is not modelled for this hardware'}</span>`;
+  if (computed.deviceCount > 1 && interconnectName(state) === 'PCIe') html += `<span class="badge" style="background:var(--warning-bg);color:var(--warning-text)"><svg class="ti-ico" style="font-size:13px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg> ${computed.throughputModelled ? 'PCIe — 45-60% perf loss, worse with more devices' : 'PCIe — no NVLink; the speed cost is not modelled for this hardware'}</span>`;
   if (computed.isMoE) html += `<span class="badge" style="background:var(--success-bg);color:var(--success-text)">MoE (${state.activePercent}% active${state.sharedExperts ? ', ' + state.sharedExperts + ' shared' : ''})</span>`;
   if (state.kvBytesPerValue < 2) html += '<span class="badge" style="background:var(--success-bg);color:var(--success-text)">FP8 KV cache</span>';
   html += '</div>';
@@ -1485,6 +1528,9 @@ function renderGPUCards(state, computed) {
   // below, because the NVLink/PCIe sharding line at the bottom of this
   // function applies to every gpuCount > 1, individual cards included.
   const { tp, dp } = computed;
+  // The link the badges and the sharding line name — one reading, so the
+  // three places that say it cannot disagree about which fabric this is.
+  const fabric = interconnectName(state);
   const maxBarValue = Math.max(perGPU.total, computed.deviceGB) * 1.05;
   const weightsPct = Math.max(perGPU.weights / maxBarValue * 100, 0.5);
   const kvPct = Math.max(perGPU.kvCache / maxBarValue * 100, 0.5);
@@ -1515,7 +1561,7 @@ function renderGPUCards(state, computed) {
       const layerEnd = Math.floor(state.layers / computed.deviceCount * (i + 1)) - 1;
       html += '<div class="gpu-card">';
       html += `<p class="gpu-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-device-desktop"></use></svg>Device ${i}`;
-      if (computed.deviceCount > 1 && state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
+      if (computed.deviceCount > 1 && fabric !== 'PCIe') html += `<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${fabric}</span>`;
       html += '</p>';
       html += buildBar(14);
       html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)${computed.deviceCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
@@ -1527,7 +1573,7 @@ function renderGPUCards(state, computed) {
 
     html += '<div class="gpu-card" style="margin:10px 0">';
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
-    if (state.hasNVLink) html += '<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>NVLink</span>';
+    if (fabric !== 'PCIe') html += `<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${fabric}</span>`;
     html += '</p>';
     html += `<div style="font-size:12px;color:var(--text-secondary);margin:0 0 8px">Each device — ${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)</div>`;
     html += buildBar(10);
@@ -1583,8 +1629,8 @@ function renderGPUCards(state, computed) {
          optimistic") is gone because the figures above are now computed the
          way the command below shards. */
       const note = computed.isMoE
-        ? `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Per-device weights here is divided by all ${computed.deviceCount} devices: under --enable-expert-parallel the routed experts do spread that way, but attention, embeddings and the dense layers shard only ${tp} ways, so for an MoE this figure is optimistic by an amount that depends on the expert fraction. Dense models on this page divide by ${tp}.`
-        : `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by ${tp}, the sharding the command performs; KV cache is divided by all ${computed.deviceCount}, because data parallelism partitions the request stream rather than replicating the cache.`;
+        ? `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node ${interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric' : 'NVLink'} vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Per-device weights here is divided by all ${computed.deviceCount} devices: under --enable-expert-parallel the routed experts do spread that way, but attention, embeddings and the dense layers shard only ${tp} ways, so for an MoE this figure is optimistic by an amount that depends on the expert fraction. Dense models on this page divide by ${tp}.`
+        : `${computed.deviceCount} devices likely span ${Math.ceil(computed.deviceCount / 8)}+ nodes. TP=${tp} × DP=${dp} is a starting point; the optimal split depends on intra-node ${interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric' : 'NVLink'} vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by ${tp}, the sharding the command performs; KV cache is divided by all ${computed.deviceCount}, because data parallelism partitions the request stream rather than replicating the cache.`;
       html += `<div style="font-size:11px;color:var(--warning-text);background:var(--warning-bg);border-radius:var(--radius);padding:6px 10px;margin:6px 0"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-alert-triangle"></use></svg>${note}</div>`;
     }
     html += '</div>';
@@ -1597,8 +1643,8 @@ function renderGPUCards(state, computed) {
   // this sentence names both groups rather than saying "across devices".
   // Below 9 GPUs (dp === 1) there is one group and nothing here changes.
   if (computed.deviceCount > 1) html += `<div style="text-align:center;font-size:11px;color:var(--text-muted);margin:-2px 0 4px"><svg class="ti-ico" style="font-size:13px;vertical-align:-2px;margin-right:3px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${dp > 1
-    ? (state.hasNVLink ? 'NVLink — all-reduce inside each ' + tp + '-device TP group, ' + dp + ' replicas across the fabric' : 'PCIe — 5-12x slower all-reduce')
-    : (state.hasNVLink ? 'NVLink — sharded ' + computed.deviceCount + '-way, each device holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
+    ? (fabric !== 'PCIe' ? fabric + ' — all-reduce inside each ' + tp + '-device TP group, ' + dp + ' replicas across the fabric' : 'PCIe — 5-12x slower all-reduce')
+    : (fabric !== 'PCIe' ? fabric + ' — sharded ' + computed.deviceCount + '-way, each device holds 1/' + computed.deviceCount + ' of model' : 'PCIe — same sharding, 5-12x slower all-reduce')}</div>`;
   setHTML('gpu-cards', html);
 }
 
@@ -1816,6 +1862,19 @@ function renderThroughput(state, computed) {
    tier names themselves. */
 const PROVIDER_NAMES = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda', coreweave: 'CoreWeave', vast: 'Vast.ai' };
 
+/* What a price tier the catalog records as null says, on every surface: no
+   provider's own page confirmed an hourly price for this card in this tier.
+   One string so every view says the same thing, and never a dollar figure in
+   its place. Mirrored by NO_PRICE in generate_report.py. */
+const NO_PRICE = 'no confirmed hourly price';
+const TIER_COST_FIELD = { hyper: 'gpuHyperCost', spec: 'gpuSpecCost', spot: 'gpuSpotCost' };
+/* A dollar figure, or the dash that holds a null tier's place in a table:
+   digits 2 for a rate, 0 for a rounded monthly total. */
+function usd(v, digits) {
+  if (v == null) return '—';
+  return digits === 0 ? '$' + Math.round(v).toLocaleString() : '$' + v.toFixed(digits);
+}
+
 /* Two states for a cost figure's provenance, and only two: sourced — name
    the provider, its own SKU string verbatim, the region, and the day it was
    read — or "not recorded", said plainly. This is what replaced the old
@@ -1830,19 +1889,31 @@ const PROVIDER_NAMES = { azure: 'Azure', aws: 'AWS', lambda: 'Lambda', coreweave
    check their own engine's surfaces independently — there is no shared
    render path between an HTML page and a PDF to diff against. */
 function priceSourceLabel(state, tier) {
+  // No price, so no source either way: "not recorded" would imply a figure
+  // that exists without provenance. Explicit null only — what a catalog row
+  // carries — so a state that never held the tier's price is not read as one
+  // that has none.
+  if (state[TIER_COST_FIELD[tier]] === null) return NO_PRICE;
   const src = state.priceSource && state.priceSource[tier];
+  /* Read by a person rather than by tools/price_check.py: named and dated the
+     same way, and saying so, because nothing re-reads it on a schedule. Only
+     where no automated reading exists — the catalog tests refuse both on one
+     tier, and an automated reading wins here if one ever slips through. */
+  const rec = !src && state.priceRecord && state.priceRecord[tier];
+  if (rec) return `${rec.provider} · ${rec.sku} · ${rec.region} · recorded by hand ${rec.date}, not re-checked weekly`;
   if (!src) return 'not recorded';
   const provider = PROVIDER_NAMES[src.provider] || src.provider;
   return `${provider} · ${src.sku} · ${src.region} · read ${src.date}`;
 }
 
 function renderCost(state, computed) {
-  const monthlyH = computed.hourlyHyper * 730, monthlyS = computed.hourlySpec * 730, monthlySp = computed.hourlySpot * 730;
+  const monthly = (hourly) => (hourly == null ? null : hourly * 730);
+  const monthlyH = monthly(computed.hourlyHyper), monthlyS = monthly(computed.hourlySpec), monthlySp = monthly(computed.hourlySpot);
   let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">';
   html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px;color:var(--text-secondary);font-size:12px">Provider tier</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Per board/hr</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Total/hr (${state.gpuCount}×)</td><td style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">Monthly (730h)</td></tr>`;
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuHyperCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlyHyper.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${Math.round(monthlyH).toLocaleString()}</td></tr>`;
-  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuSpecCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlySpec.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${Math.round(monthlyS).toLocaleString()}</td></tr>`;
-  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span></td><td style="padding:8px 10px;font-weight:500">$${state.gpuSpotCost.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500">$${computed.hourlySpot.toFixed(2)}</td><td style="padding:8px 10px;font-weight:500;color:var(--success)">$${Math.round(monthlySp).toLocaleString()}</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Hyperscaler</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'hyper')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuHyperCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlyHyper, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyH, 0)}</td></tr>`;
+  html += `<tr style="border-bottom:.5px solid var(--border)"><td style="padding:8px 10px"><b>Specialized</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spec')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpecCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpec, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(monthlyS, 0)}</td></tr>`;
+  html += `<tr><td style="padding:8px 10px"><b>Spot / marketplace</b><br><span style="font-size:11px;color:var(--text-muted)">${priceSourceLabel(state, 'spot')}</span></td><td style="padding:8px 10px;font-weight:500">${usd(state.gpuSpotCost, 2)}</td><td style="padding:8px 10px;font-weight:500">${usd(computed.hourlySpot, 2)}</td><td style="padding:8px 10px;font-weight:500${monthlySp == null ? '' : ';color:var(--success)'}">${usd(monthlySp, 0)}</td></tr>`;
   html += '</table></div>';
   html += '<div style="font-size:11px;color:var(--text-muted);padding:4px 10px">Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand.</div>';
   setHTML('cost-output', html);
@@ -2060,8 +2131,12 @@ function renderComparisons() {
        tier ($1.86), and rtx4090-24's spot ($0.54) sits above its specialized
        tier ($0.45). A range has to span whichever tier is actually cheapest
        and priciest, not whichever tier is cheapest and priciest by name. */
-    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot];
-    html += `<div class="row"><span class="label">Cost/hr</span><span class="val">$${Math.min(...cmpCosts).toFixed(2)}–$${Math.max(...cmpCosts).toFixed(2)}</span></div>`;
+    // Only the tiers with a price: a null tier has no figure to bound a range.
+    const cmpCosts = [c.hourlyHyper, c.hourlySpec, c.hourlySpot].filter(v => v != null);
+    const cmpRange = cmpCosts.length === 0 ? NO_PRICE
+      : cmpCosts.length === 1 ? `$${cmpCosts[0].toFixed(2)}`
+      : `$${Math.min(...cmpCosts).toFixed(2)}–$${Math.max(...cmpCosts).toFixed(2)}`;
+    html += `<div class="row"><span class="label">Cost/hr</span><span class="val">${cmpRange}</span></div>`;
     /* One card can hold a sourced tier beside an unrecorded one (h100-80 today
        has hyper+spec sourced and spot not), so this is per snapshot like the
        two rows above, not a page-level fact. Three short lines rather than
@@ -2087,13 +2162,18 @@ function renderNotes(state, computed) {
   if (state.sharedExperts > 0) notes += `Shared experts (${state.sharedExperts}) always active, included in activation memory. `;
   // The PCIe decode loss is the interconnect curve's, withheld with the
   // throughput figures it prices — see renderStrategyBadges.
-  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ') + 'NCCL buffers ~0.3 GB/peer. ';
+  if (state.gpuCount * (state.gpuDevices || 1) > 1) notes += (state.hasNVLink ? 'NVLink 600-900 GB/s. ' : interconnectName(state) === 'Infinity Fabric' ? 'Infinity Fabric between devices. ' : computed.throughputModelled ? 'PCIe 64-128 GB/s — 45-60% decode loss, growing with device count. ' : 'PCIe 64-128 GB/s. ') + 'NCCL buffers ~0.3 GB/peer. ';
   notes += 'Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. ';
   // Never "estimates": a sourced tier's price is a dated, attributed figure,
   // not a guess, and this note used to call every tier one regardless — the
   // same shape of overclaim the deleted composite sub-labels were. renderCost
   // above already names each tier's source or says "not recorded"; this note
   // only points there rather than re-describing what it found.
+  /* The table's wording for a tier with no price, explained where the notes
+     explain the table's other wording (cold check, round 1: the note named
+     "not recorded" and nothing else). Only on a card that has such a tier. */
+  if ([state.gpuHyperCost, state.gpuSpecCost, state.gpuSpotCost].includes(null))
+    notes += '"No confirmed hourly price" marks a tier for which no provider\'s own page prices this card by the hour. ';
   notes += 'GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier\'s source, or "not recorded" where it has no confirmed source. Reserved typically 30-60% off on-demand. ';
   if (trainingEnabled) notes += 'Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation. ';
   setHTML('notes-output', notes);
@@ -2119,6 +2199,7 @@ function syncInterconnect() {
   const supported = !gpu || supportsNVLink(gpu);
   sel.options[0].disabled = !supported;
   sel.options[0].textContent = supported ? 'NVLink / NVSwitch' : 'NVLink — not on this card';
+  sel.options[1].textContent = gpu && gpu.form === 'oam' ? 'Infinity Fabric' : 'PCIe only';
   if (!supported) {
     if (sel.value !== '0') interconnectForcedToPCIe = true;
     sel.value = '0';
@@ -2180,9 +2261,13 @@ function renderExecutiveSummary(state, computed) {
   // is above its specialized tier). A range has to span whichever tier is
   // actually cheapest and priciest, not whichever tier is cheapest and
   // priciest by name — see the same fix in renderComparisons.
-  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot];
+  // Only the tiers with a price, as in renderComparisons.
+  const execCosts = [computed.hourlyHyper, computed.hourlySpec, computed.hourlySpot].filter(v => v != null);
   const monthlyCheapest = Math.round(Math.min(...execCosts) * 730);
   const monthlyExpensive = Math.round(Math.max(...execCosts) * 730);
+  const monthlyRange = execCosts.length === 0 ? NO_PRICE
+    : execCosts.length === 1 ? `$${monthlyCheapest.toLocaleString()}/mo`
+    : `$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo`;
 
   let html = `<p class="exec-headline"><svg class="ti-ico" style="color:var(${verdictColor});margin-right:6px" aria-hidden="true" focusable="false"><use href="#${verdictIcon}"></use></svg>${modelName}</p>`;
 
@@ -2219,7 +2304,7 @@ function renderExecutiveSummary(state, computed) {
        another architecture's. */
     html += `<div class="exec-row"><span class="exec-label">Speed and server throughput</span><span class="exec-value">Not modelled <span style="color:var(--warning-text);font-weight:500">· no measured utilisation for this hardware, and an estimate would borrow constants that do not transfer</span></span></div>`;
   }
-  html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">$${monthlyCheapest.toLocaleString()} – $${monthlyExpensive.toLocaleString()}/mo</span></div>`;
+  html += `<div class="exec-row"><span class="exec-label">Monthly cost range</span><span class="exec-value">${monthlyRange}</span></div>`;
   // Which tier is cheapest and which is priciest now varies by card (see
   // execCosts above), so a fixed "Spot: ... Hyperscaler: ..." label would
   // sometimes name the wrong two tiers as the ones behind the range, or
@@ -2274,7 +2359,7 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
   report += `- Precision: ${state.bytesPerParam} bytes/param\n- KV cache: ${state.kvBytesPerValue < 2 ? 'FP8' : 'BF16'}\n`;
   report += `- Layers: ${state.layers}, KV heads: ${state.kvHeads}, head dim: ${state.headDim}\n`;
   if (state.sharedExperts) report += `- Shared experts: ${state.sharedExperts}\n`;
-  report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${computed.deviceCount > 1 ? (state.hasNVLink ? ' (NVLink)' : ' (PCIe)') : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
+  report += `\n## GPU\n- ${state.gpuCount}× ${state.gpuName}${computed.deviceCount > 1 ? ' (' + interconnectName(state) + ')' : ''}\n- Total VRAM: ${computed.totalVRAM} GiB\n`;
   // Cluster-scoped and summing, exactly as the on-screen breakdown row does —
   // this is the same four numbers in text, and a reader pastes it somewhere the
   // page cannot explain itself.
@@ -2304,7 +2389,10 @@ function exportSummary(state = readInputState(), computed = computeInference(sta
   // report is the one surface a reader can paste somewhere else entirely,
   // so the provenance has to travel with the number in the same text block
   // rather than living only on the page next to it.
-  report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n- Hyperscaler: $${computed.hourlyHyper.toFixed(2)}/hr · $${Math.round(computed.hourlyHyper * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'hyper')})\n- Specialized: $${computed.hourlySpec.toFixed(2)}/hr · $${Math.round(computed.hourlySpec * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'spec')})\n- Spot: $${computed.hourlySpot.toFixed(2)}/hr · $${Math.round(computed.hourlySpot * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, 'spot')})\n`;
+  const costLine = (label, hourly, tier) => hourly == null
+    ? `- ${label}: ${NO_PRICE}\n`
+    : `- ${label}: $${hourly.toFixed(2)}/hr · $${Math.round(hourly * 730).toLocaleString()}/mo (source: ${priceSourceLabel(state, tier)})\n`;
+  report += `\n## Cost (${state.gpuCount}× ${state.gpuName})\n${costLine('Hyperscaler', computed.hourlyHyper, 'hyper')}${costLine('Specialized', computed.hourlySpec, 'spec')}${costLine('Spot', computed.hourlySpot, 'spot')}`;
   /* The command box's own <code>, not the panel's first one: a banner above the box
      can hold <code> spans of its own (the GGUF one does), and '#command-output code'
      quoted the first of those, so a GGUF plan's report carried `vllm serve` where

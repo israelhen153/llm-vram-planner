@@ -78,6 +78,15 @@ function load(file) {
 const NEW = load(path.join(ROOT, 'index.html'));       // the working tree
 const OLD = load(atRef(BASE_REF, 'index.html'));
 
+/* The cards both versions have. A card only one side has cannot show "no
+   change" — master's own readInputState() has no row to read for it, and
+   feeding master a row it never had compares nothing it ever shipped — so it
+   is named here instead of compared, and the comparison below is of the cards
+   that exist on both sides. */
+const SHARED = Object.keys(NEW.GPU_TABLE).filter(k => Object.hasOwn(OLD.GPU_TABLE, k));
+console.log(`cards only in new: [${Object.keys(NEW.GPU_TABLE).filter(k => !SHARED.includes(k)).join(', ')}]` +
+            `  only in ${BASE_REF}: [${Object.keys(OLD.GPU_TABLE).filter(k => !Object.hasOwn(NEW.GPU_TABLE, k)).join(', ')}]`);
+
 // ---- readInputState through a DOM stub, each version's own -------------------
 const domStub = (gpuKey, interconnect, prec = '2', q = '') => {
   const el = (v, extra = {}) => ({ value: v, style: {}, options: [], ...extra });
@@ -103,7 +112,7 @@ const readInputStateFor = (v, gpuKey, interconnect, prec, q) => {
   return fn();
 };
 let stateDiffs = 0, stateChecked = 0;
-for (const key of Object.keys(NEW.GPU_TABLE)) {
+for (const key of SHARED) {
   for (const ic of ['1', '0']) for (const [prec, q] of [['2', ''], ['1', 'fp8'], ['0.5', 'awq'], ['0.63', 'gguf']]) {
     const a = readInputStateFor(OLD, key, ic, prec, q), b = readInputStateFor(NEW, key, ic, prec, q);
     stateChecked++;
@@ -136,6 +145,8 @@ function stateFor(key, g, count, model, [bpp, q], kv, [ctx, conc], nv, [pre, pc]
     gpuHyperCost: g.hyper, gpuSpecCost: g.spec, gpuSpotCost: g.spot, gpuName: g.name.replace(/ GB$/, 'GB'),
     gpuDevices: g.devices, gpuKey: key, perfKey: g.perfKey, vendor: g.vendor,
     gpuFp8: !!(g.caps && g.caps.fp8), hasNVLink: g.form === 'sxm' && nv, kvBytesPerValue: kv,
+    // Carried the way readInputState() carries them, so the renderers read what a real state holds.
+    gpuForm: g.form, priceSource: g.priceSource, priceRecord: g.priceRecord,
     presetKey: '', hfModelId: null, attnMode: p.attn || 'standard', swaWindow: p.swaWin || 0,
     swaLocalLayers: Math.min(p.swaLocal || 0, p.l), mlaLatentDim: p.mlaDim || 0, modelMaxCtx: p.maxCtx || 131072,
   };
@@ -159,7 +170,7 @@ const renderAll = (v, st) => {
   if (!c.fits) res['(advice)'] = v.boardsAdvice(st, c);
   return res;
 };
-for (const [key, g] of Object.entries(NEW.GPU_TABLE))
+for (const [key, g] of Object.entries(NEW.GPU_TABLE).filter(([k]) => SHARED.includes(k)))
   for (const count of COUNTS) for (const model of MODELS) for (const prec of PRECS) for (const kv of KVS)
     for (const ctx of CTX) for (const nv of NV) for (const pre of PREFIX) {
       if (!nv && g.form !== 'sxm') continue; // hasNVLink is false either way; skip the duplicate

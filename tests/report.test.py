@@ -1409,6 +1409,194 @@ test("the parallelism row says single device exactly when the command asks for n
      check_parallelism_row_agrees_with_the_command)
 
 
+# ---- the interconnect, named on every form ---------------------------------
+# Every value the catalog's `form` may take. The contract tests/model.test.js
+# checks every row against; tests/parity.test.py carries the same four.
+FORMS = ("sxm", "pcie", "consumer", "oam")
+
+
+def check_every_pdf_surface_names_the_link_the_devices_use():
+    """What the PDF prints, not what interconnect_name() returns: the title, the
+    GPU configuration row and the notes each name the link, and on an OAM board
+    none of them may say PCIe or NVLink under any wording — the downgrade note
+    included. Every form, NVLink asked for and not, one domain and past it, with
+    constants and without."""
+    base = gr.GPUS["b200-192"]
+    seen, checked = set(), 0
+    for form in FORMS:
+        for boards in (2, 16):
+            for asked in (True, False):
+                for perf_key in ("nvidia", "no-such-key"):
+                    card = dict(base, form=form, perfKey=perf_key, name=f"probe {form} 192 GB")
+                    with contextlib.redirect_stdout(io.StringIO()) as said:
+                        nvlink = gr.nvlink_for(card, asked)
+                    want = "NVLink" if nvlink else "Infinity Fabric" if form == "oam" else "PCIe"
+                    cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
+                               n_gpu=boards, gpu=card, nvlink=nvlink, kv_bpp=2, vendor=card["vendor"],
+                               perfKey=perf_key, hf_model="m", model_name="M")
+                    texts = story_strings(cfg)
+                    label = (f"{form} x{boards}, NVLink {'asked for' if asked else 'not asked for'}, "
+                             f"perfKey {perf_key}")
+                    assert want in texts, f"{label}: no GPU configuration cell reads {want!r}"
+                    assert any(f"({want})" in t for t in texts), f"{label}: the title does not name {want}"
+                    # Notes are bulleted ("• …"), so the sentence is found, not anchored.
+                    assert any(f"{want} interconnect assumed." in t for t in texts), (
+                        f"{label}: the notes do not name {want}")
+                    if form == "oam":
+                        for other in ("PCIe", "NVLink"):
+                            hit = [t for t in texts + [said.getvalue()] if other in t
+                                   and not t.startswith("Note: ")]
+                            assert not hit, f"{label}: an OAM board's PDF mentions {other}: {hit[0][:160]!r}"
+                        if asked:
+                            assert "using Infinity Fabric instead" in said.getvalue(), (
+                                f"{label}: the downgrade note reads {said.getvalue()!r}")
+                    else:
+                        hit = [t for t in texts + [said.getvalue()] if "Infinity Fabric" in t]
+                        assert not hit, f"{label}: a {form} board's PDF mentions Infinity Fabric: {hit[0][:160]!r}"
+                    seen.add(want)
+                    checked += 1
+    assert seen == {"NVLink", "Infinity Fabric", "PCIe"}, f"the grid reached only {sorted(seen)}"
+    assert checked == len(FORMS) * 2 * 2 * 2
+    # And every real row, at several boards: the probes above are one-device
+    # boards, so the MI250X — two devices a board — was never named above one
+    # board, and a gate keyed on devices and count at once passed (cold check,
+    # round 1). NVLink as every builder grants it.
+    rows = 0
+    for slug, row in gr.GPUS.items():
+        for boards in (2, 3, 16):
+            for asked in (True, False):
+                nvlink = gr.supports_nvlink(row) and asked
+                want = "NVLink" if nvlink else "Infinity Fabric" if row["form"] == "oam" else "PCIe"
+                cfg = dict(gr.arch_fields(gr.PRESETS["llama31-70b"]), bpp=2, ctx=8192, conc=16,
+                           n_gpu=boards, gpu=row, nvlink=nvlink, kv_bpp=2, vendor=row["vendor"],
+                           perfKey=row["perfKey"], hf_model="m", model_name="M")
+                texts = story_strings(cfg)
+                label = f"{slug} x{boards}, NVLink {'asked for' if asked else 'not asked for'}"
+                assert want in texts, f"{label}: no GPU configuration cell reads {want!r}"
+                assert any(f"({want})" in t for t in texts), f"{label}: the title does not name {want}"
+                assert any(f"{want} interconnect assumed." in t for t in texts), f"{label}: the notes do not name {want}"
+                rows += 1
+    assert any(r["form"] == "oam" and r["devices"] > 1 for r in gr.GPUS.values()), (
+        "no real row is a multi-device OAM board, so the case that failed is not in the grid")
+    assert rows == len(gr.GPUS) * 3 * 2
+
+
+test("every PDF surface names the link the devices actually talk over, on every form",
+     check_every_pdf_surface_names_the_link_the_devices_use)
+
+
+def check_interactive_names_an_oam_boards_fabric():
+    """The interactive CLI skips the NVLink question on a board without it and
+    says what it assumes instead — which, on an OAM board, is its fabric."""
+    card = dict(gr.GPUS["b200-192"], form="oam", name="probe oam 192 GB")
+    buf = io.StringIO()
+    with unittest.mock.patch.dict(gr.GPUS, {"probe-oam": card}):
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1),
+                   str(list(gr.GPUS).index("probe-oam") + 1), "2",
+                   "3", "n", str(REQ["ctx"]), str(REQ["conc"])]
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(buf):
+            cfg = gr.interactive_mode()
+    out = buf.getvalue()
+    assert cfg["nvlink"] is False, f"an OAM board came out of the CLI with nvlink={cfg['nvlink']!r}"
+    assert "probe oam 192 GB has no NVLink — its devices use Infinity Fabric." in out, out[-400:]
+    assert "assuming PCIe" not in out, "the CLI told an OAM board's reader it would assume PCIe"
+
+
+test("the interactive CLI names an OAM board's fabric when it skips the NVLink question",
+     check_interactive_names_an_oam_boards_fabric)
+
+
+# ---- a price tier with no confirmed price ---------------------------------
+NO_PRICE = "no confirmed hourly price"
+TIER_ROWS = (("hyper", "Hyperscaler", "hourly_hyper"), ("spec", "Specialized", "hourly_spec"),
+             ("spot", "Spot / marketplace", "hourly_spot"))
+
+
+def check_a_null_tier_stays_none_and_every_pdf_surface_says_so():
+    """A tier the catalog records as null has no confirmed hourly price. compute()
+    keeps it None, the cost table prints a dash in each figure's place, the
+    Source line says why, and nothing in the report reads "None", "nan" or
+    "$0.00" — nor a neighbouring tier's price in the empty row. Every non-empty
+    set of null tiers, one board and three. The card carries h100-80's
+    provenance, so a source attached to a null tier would show."""
+    base = gr.GPUS["h100-80"]
+    checked = 0
+    for mask in range(1, 8):
+        for boards in (1, 3):
+            card = dict(base)
+            nulls = [t for i, (t, _, _) in enumerate(TIER_ROWS) if mask & (1 << i)]
+            for t in nulls:
+                card[t] = None
+            label = f"null {'+'.join(nulls)}, {boards} board{'s' if boards > 1 else ''}"
+            cfg = dict(gr.arch_fields(gr.PRESETS["llama31-8b"]), bpp=2, ctx=8192, conc=16,
+                       n_gpu=boards, gpu=card, nvlink=True, kv_bpp=2, vendor=card["vendor"],
+                       perfKey=card["perfKey"], hf_model="m", model_name="M")
+            c = gr.compute(cfg)
+            texts = story_strings(cfg)
+            for tier, row_label, field in TIER_ROWS:
+                at = texts.index(row_label)
+                cells = texts[at + 1:at + 4]
+                if tier in nulls:
+                    assert c[field] is None, f"{label}: compute() {field} is {c[field]!r}, not None"
+                    assert cells == ["—", "—", "—"], f"{label}: the {row_label} row reads {cells}"
+                else:
+                    assert c[field] == card[tier] * boards, f"{label}: {field}"
+                    assert cells[0] == f"${card[tier]:.2f}" and cells[1] == f"${card[tier] * boards:.2f}", (
+                        f"{label}: the {row_label} row reads {cells}")
+            source = next(t for t in texts if t.startswith("Source — "))
+            for tier, row_label, _ in TIER_ROWS:
+                name = {"hyper": "Hyperscaler", "spec": "Specialized", "spot": "Spot"}[tier]
+                if tier in nulls:
+                    assert f"{name}: {NO_PRICE}." in source, f"{label}: the Source line reads {source!r}"
+            for bad in ("None", "nan", "$0.00", "$0 "):
+                hit = [t for t in texts if bad in t]
+                assert not hit, f"{label}: the report prints {bad!r}: {hit[0][:160]!r}"
+            if "hyper" in nulls:
+                assert not any(base["priceSource"]["hyper"]["sku"] in t for t in texts), (
+                    f"{label}: a null hyper tier still names its source")
+            assert any('"No confirmed hourly price" marks a tier' in t for t in texts), (
+                f"{label}: the notes do not explain the wording a null tier shows")
+            checked += 1
+    assert checked == 7 * 2
+    priced = story_strings(dict(gr.arch_fields(gr.PRESETS["llama31-8b"]), bpp=2, ctx=8192, conc=16,
+                                n_gpu=1, gpu=base, nvlink=True, kv_bpp=2, vendor=base["vendor"],
+                                perfKey=base["perfKey"], hf_model="m", model_name="M"))
+    assert not any("No confirmed hourly price" in t for t in priced), (
+        "a card with every tier priced explains a wording it never shows")
+
+
+test("a price tier with no confirmed price stays None, and every PDF surface says so",
+     check_a_null_tier_stays_none_and_every_pdf_surface_says_so)
+
+
+def check_the_cli_menu_prints_only_the_prices_a_card_has():
+    """The interactive GPU menu shows each card's spot-to-hyperscaler span. A card
+    with a null tier shows the tiers it does price, cheapest tier first, and a
+    card with none says so — never "$None". Cards priced on both ends keep the
+    line they always had."""
+    base = gr.GPUS["h100-80"]
+    shapes = {"probe-none": (None, None, None), "probe-spec": (None, 3.8, None),
+              "probe-no-hyper": (None, 2.39, 1.11), "probe-all": (6.0, 2.39, 1.11)}
+    extra = {k: dict(base, hyper=h, spec=sp, spot=st, priceSource={}, name=f"{k} 80 GB")
+             for k, (h, sp, st) in shapes.items()}
+    buf = io.StringIO()
+    with unittest.mock.patch.dict(gr.GPUS, extra):
+        answers = [str(list(gr.PRESETS).index("llama31-8b") + 1), str(list(gr.GPUS).index("h100-80") + 1),
+                   "1", "3", "n", str(REQ["ctx"]), str(REQ["conc"])]
+        with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(buf):
+            gr.interactive_mode()
+    menu = {line.split(".", 1)[1].split()[0]: line for line in buf.getvalue().splitlines()
+            if re.match(r"^\s+\d+\. ", line)}
+    want = {"probe-none": f"({base['bw']} GB/s, {NO_PRICE})", "probe-spec": f"({base['bw']} GB/s, $3.8/hr)",
+            "probe-no-hyper": f"({base['bw']} GB/s, $1.11-$2.39/hr)", "probe-all": f"({base['bw']} GB/s, $1.11-$6.0/hr)"}
+    for k, tail in want.items():
+        assert menu[k].endswith(tail), f"{k}: the menu line reads {menu[k]!r}, expected it to end {tail!r}"
+    assert not any("None" in line for line in menu.values()), "the menu printed None"
+
+
+test("the CLI menu prints only the prices a card has", check_the_cli_menu_prints_only_the_prices_a_card_has)
+
+
 # ---- the VRAM breakdown row adds up ---------------------------------------
 # A reader adds a breakdown up. Before the weights divisor was corrected this
 # row did add up, because nothing replicated; correcting it broke the relation
@@ -1799,6 +1987,26 @@ def check_price_source_label_format_is_a_fixed_expectation():
     assert gr.price_source_label(leaky, "hyper") == "not recorded", (
         "a sourced spec tier must not leak into a hyper lookup")
 
+    # A price read by hand off the provider's page: named and dated, and saying so.
+    hand = {"provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+            "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}
+    assert gr.price_source_label({"spec": 2.39, "priceRecord": {"spec": hand}}, "spec") == (
+        "RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly")
+    assert gr.price_source_label({"spec": 2.39, "priceRecord": {"spot": hand}}, "spec") == "not recorded", (
+        "a hand record on another tier leaked into this one")
+    assert gr.price_source_label(dict(gpu, priceRecord={"hyper": hand}), "hyper") == (
+        "Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-16"), "a hand record displaced a reading"
+    assert gr.price_source_label({"spot": None, "priceRecord": {"spot": hand}}, "spot") == (
+        "no confirmed hourly price"), "a null tier rendered the hand record attached to it"
+    # Looked up by the tier asked about: a lookup hard-wired to "spec" passed
+    # while every real record sat on spec (cold check, round 1).
+    for on in ("hyper", "spec", "spot"):
+        for asked in ("hyper", "spec", "spot"):
+            got = gr.price_source_label({"hyper": 1, "spec": 1, "spot": 1, "priceRecord": {on: hand}}, asked)
+            want = ("RunPod · MI300X (Secure Cloud) · global · recorded by hand 2026-09-23, not re-checked weekly"
+                    if asked == on else "not recorded")
+            assert got == want, f"a record on {on}, asked about {asked}: {got!r}"
+
 test("price_source_label formats provider, SKU, region and date — a fixed expectation",
      check_price_source_label_format_is_a_fixed_expectation)
 
@@ -1824,6 +2032,12 @@ def check_pdf_cost_section_names_a_source_or_says_not_recorded():
         ("none recorded (real rtx5090-32)", dict(gr.GPUS["rtx5090-32"]), "none"),
         ("all sourced (synthetic)",
          dict(gr.GPUS["h100-80"], priceSource={"hyper": sourced, "spec": sourced, "spot": sourced}), "all"),
+        # h100-80's unsourced spot tier, recorded by hand: the Source line must
+        # carry that label for that tier, exactly as price_source_label() renders it.
+        ("hand-recorded spot (synthetic)",
+         dict(gr.GPUS["h100-80"], priceRecord={"spot": {
+             "provider": "RunPod", "sku": "MI300X (Secure Cloud)", "region": "global",
+             "date": "2026-09-23", "price": 2.39, "url": "https://www.runpod.io/gpu-models/mi300x"}}), "mixed"),
     ]
     # A dollar figure, or the dedicated provenance line: reportlab's cost
     # table is plain strings per cell, so the tier's price ("$12.30") and its
@@ -2016,11 +2230,20 @@ def check_interactive_gpu_menu_marks_sourced_prices():
     for i, (k, v) in enumerate(gr.GPUS.items()):
         line = menu_lines.get(str(i + 1))
         assert line and k in line, f"{k}: not found on its own numbered menu line: {line!r}"
+        # Either kind of named, dated source earns the mark.
+        ps = {**(v.get("priceRecord") or {}), **(v.get("priceSource") or {})}
+        checked += 1
+        if v["spot"] is None or v["hyper"] is None:
+            # A card with a null end shows the tiers it does price, cheapest tier
+            # first, each marked the same way, or the null wording — never "$None".
+            priced = [(t, v[t]) for t in ("spot", "spec", "hyper") if v[t] is not None]
+            want = ("-".join(f"${p}{'*' if t in ps else ''}" for t, p in priced) + "/hr"
+                    if priced else "no confirmed hourly price")
+            assert line.endswith(f", {want})"), f"{k}: menu line should end ', {want})': {line!r}"
+            continue
         price_m = MENU_PRICE_RE.search(line)
         assert price_m, f"{k}: menu line does not carry a $spot-$hyper/hr figure: {line!r}"
         spot_starred, hyper_starred = bool(price_m.group(1)), bool(price_m.group(2))
-        ps = v.get("priceSource") or {}
-        checked += 1
         assert spot_starred == ("spot" in ps), (
             f"{k}: spot price starred={spot_starred}, but priceSource carries spot={('spot' in ps)}: {line!r}")
         assert hyper_starred == ("hyper" in ps), (
@@ -2080,16 +2303,21 @@ PROBE_CARDS = [
     ("T4 16GB (no FP8 cores)", gr.GPUS["t4-16"]),
     ("B200 192GB", gr.GPUS["b200-192"]),
     ("dual-GCD board (2 devices)", DUAL),
-    # Two cards whose vendor is not nvidia, under names no current row has.
-    # data/gpus.json documents `vendor` as the hook for vendor-specific guidance
-    # and the rows that come next are vendor "amd", so a report branching on the
-    # vendor — or on the card's name — is the designed extension rather than a
-    # hypothetical. Their perfKey is one PERF has, because a probe is a pair and
-    # the constants are what the pair varies: fixing the key isolates the vendor.
-    ("MI300X 192GB (amd, oam)",
-     dict(gr.GPUS["b200-192"], name="MI300X 192 GB", vendor="amd", form="oam")),
+    # Two cards whose vendor is not nvidia, under names no catalog row has, so a
+    # report branching on the vendor — or on a name it has never seen — is probed
+    # apart from the real rows below. Their perfKey is one PERF has, because a
+    # probe is a pair and the constants are what the pair varies: fixing the key
+    # isolates the vendor.
+    ("MI355X 288GB (amd, oam, not in the catalog)",
+     dict(gr.GPUS["b200-192"], name="MI355X 288 GB", vendor="amd", form="oam")),
     ("Radeon PRO W7900 (amd, workstation)",
      dict(gr.GPUS["rtx6000ada-48"], name="Radeon PRO W7900 48 GB", vendor="amd")),
+] + [
+    # And every real row whose vendor is not nvidia, derived from the catalog so
+    # a row added later joins the grid: their real names, forms, device counts
+    # and unpriced tiers, given a key PERF has for the side with constants.
+    (f"{g['name']} (catalog, {g['vendor']}, {g['form']})", dict(g, perfKey="nvidia"))
+    for g in gr.GPUS.values() if g["vendor"] != "nvidia"
 ]
 PROBE_PRESETS = [("8B dense", "llama31-8b"), ("70B dense", "llama31-70b"),
                  ("30B MoE", "qwen3-30b"), ("26B SWA", "gemma4-26b"), ("671B MLA", "dsr1-671b")]
@@ -2111,9 +2339,13 @@ PROBE_LOADS = [
      {"ctx": 32768, "conc": 4, "shared_prefix": 8192, "prefix_caching": False}),
 ]
 # More than one key with no PERF entry, because a leak can be gated on the key
-# itself rather than on its absence — and the keys that arrive next are named:
-# cdna2, cdna3, rdna3.
-PROBE_UNKNOWN_KEYS = ["no-such-key", "cdna3"]
+# itself rather than on its absence. Every key a catalog row names that PERF has
+# no entry for — the AMD architectures — derived rather than typed, plus a
+# placeholder no row will ever name.
+PROBE_UNKNOWN_KEYS = ["no-such-key"] + sorted({g["perfKey"] for g in gr.GPUS.values()
+                                                if g["perfKey"] not in gr.PERF})
+assert len(PROBE_UNKNOWN_KEYS) >= 2, "no catalog row names a key PERF lacks, so only the placeholder is probed"
+CATALOG_NAMES = {g["name"] for g in gr.GPUS.values()}
 
 
 def absent_pairs():
@@ -2211,8 +2443,7 @@ def check_without_constants_only_the_figures_that_need_them_go():
         axes["a shared prefix with caching off"] += bool(kcfg.get("shared_prefix")) and not bool(
             kcfg.get("prefix_caching"))
         axes["a vendor that is not nvidia"] += kcfg["gpu"]["vendor"] != "nvidia"
-        axes["a card name unlike the catalog's"] += bool(
-            re.search(r"MI300|Radeon", kcfg["gpu"]["name"]))
+        axes["a card name unlike the catalog's"] += kcfg["gpu"]["name"] not in CATALOG_NAMES
         axes["the placeholder unknown key"] += ucfg["perfKey"] == "no-such-key"
         axes["an unknown key that is not the placeholder"] += ucfg["perfKey"] != "no-such-key"
         for q in ("gguf", "gptq", "awq", "fp8"):
@@ -2383,6 +2614,9 @@ REASON = [
 SHORTENED = [
     "Above one NVLink domain both the split and the interconnect factor priced against it are "
     "heuristics; nothing here is measured above 2 devices.",
+    # The same sentence on an OAM board, whose domain is its Infinity Fabric.
+    "Above one Infinity Fabric domain both the split and the interconnect factor priced against it "
+    "are heuristics; nothing here is measured above 2 devices.",
 ]
 
 
@@ -2656,7 +2890,10 @@ def golden_cases():
         base.update(over)
         return base
 
-    cases = [(f"{slug} — 8B bf16, 16 at 8K", cfg(gr.GPUS[slug], 1))
+    # NVLink as every builder sets it: asked for, and granted only to a board
+    # that has it (nvlink_for). Left on for every card, the MI250X — two devices
+    # on one board with no NVLink — recorded a report the tool cannot produce.
+    cases = [(f"{slug} — 8B bf16, 16 at 8K", cfg(gr.GPUS[slug], 1, nvlink=gr.supports_nvlink(gr.GPUS[slug])))
              for slug in sorted(gr.GPUS)]
     h, t4 = gr.GPUS["h100-80"], gr.GPUS["t4-16"]
     keyless_h, keyless_t4 = dict(h, perfKey="no-such-key"), dict(t4, perfKey="no-such-key")
@@ -2671,7 +2908,7 @@ def golden_cases():
         ("h100-80 x1 — fp8 weights on silicon that has the tensor cores",
          cfg(h, 1, bpp=1, quant="fp8")),
         ("t4-16 x1 — fp8 weights on silicon that does not, so the caveat",
-         cfg(t4, 1, bpp=1, quant="fp8")),
+         cfg(t4, 1, bpp=1, quant="fp8", nvlink=False)),
         ("h100-80 x1 — GGUF weights, so the plugin guidance under the command",
          cfg(h, 1, bpp=0.63, quant="gguf")),
         ("h100-80 x1 — AWQ weights, the CLI's default precision", cfg(h, 1, bpp=0.5, quant="awq")),
@@ -2686,7 +2923,7 @@ def golden_cases():
         ("(no constants) h100-80 x8 PCIe — 70B bf16, past one domain",
          cfg(keyless_h, 8, seventy, preset="llama31-70b", nvlink=False)),
         ("(no constants) t4-16 x1 — fp8 on silicon without the tensor cores",
-         cfg(keyless_t4, 1, bpp=1, quant="fp8")),
+         cfg(keyless_t4, 1, bpp=1, quant="fp8", nvlink=False)),
     ]
     return cases
 
@@ -2775,11 +3012,19 @@ def check_the_golden_records_the_shapes_that_matter():
     named = [label for label, _ in cases]
     missing = [slug for slug in gr.GPUS if not any(n.startswith(slug + " ") for n in named)]
     assert not missing, f"the golden stopped recording catalog rows: {missing}"
+    # Every case is a report the tool can produce: NVLink only on a board that has it.
+    unreachable = [label for label, c in cases if c.get("nvlink") and not gr.supports_nvlink(c["gpu"])]
+    assert not unreachable, f"the golden records NVLink on a board without it: {unreachable}"
 
     def comp(cfg):
         return gr.compute(cfg)
 
     shapes = {
+        "an OAM board with more than one device": lambda cs: any(
+            c["gpu"].get("form") == "oam" and gr.device_count_for(c) > 1 for c in cs),
+        "a price tier with no confirmed price": lambda cs: any(
+            c["gpu"].get(t) is None for c in cs for t in ("hyper", "spec", "spot")),
+        "a price recorded by hand": lambda cs: any(c["gpu"].get("priceRecord") for c in cs),
         "a card with constants": lambda cs: any(comp(c)["throughput_modelled"] for c in cs),
         "a card with none": lambda cs: any(not comp(c)["throughput_modelled"] for c in cs),
         "one board": lambda cs: any(c["n_gpu"] == 1 for c in cs),
