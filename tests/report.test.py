@@ -1433,10 +1433,13 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
             by_keyword = RecordingParagraph("<b>shared</b>", style, bulletText=bullet)
             assert (by_position.bulletText, by_keyword.bulletText) == (bullet, bullet), (
                 bullet, by_position.bulletText, by_keyword.bulletText)
+        # A markup of its own, so nothing above has replaced its entry: the check below
+        # passed with the memo serving every build, because the changed style had.
+        inside = RecordingParagraph("<i>laid out elsewhere</i>", style)
     finally:
         _reading.pop()
-    outside = RecordingParagraph("<b>shared</b>", style)
-    assert outside.frags is not first.frags, "a paragraph built outside story_strings() came from the memo"
+    outside = RecordingParagraph("<i>laid out elsewhere</i>", style)
+    assert outside.frags is not inside.frags, "a paragraph built outside story_strings() came from the memo"
 
 test("the parse memo changes nothing a test reads: failing markup, a changed style, a bullet of its own, a laid-out build",
      check_the_parse_memo_changes_nothing_a_test_reads)
