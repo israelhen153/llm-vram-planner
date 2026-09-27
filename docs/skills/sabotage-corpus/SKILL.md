@@ -45,13 +45,20 @@ tests/sabotage/chain.sh                          # every driver in series, in th
 python3 tests/sabotage/engine_r1_throughput_leaks.py W11   # one sabotage by name
 ```
 
-**What a full run costs**, measured at 567 sabotages on this 4-core, 8-thread laptop:
+**What a full run costs** on this 4-core, 8-thread laptop:
 
-| Runner | Wall clock | Measured |
-|---|---:|---|
-| `chain.sh` | 2 h 12 min of running | 2026-09-24, at `d99f1b6` |
-| `parallel.py`, 8 workers | 31.2 min | 2026-09-25, at `d99f1b6`, cold checks running alongside part of it |
-| `parallel.py --early-exit`, 8 workers | 11.7 min | 2026-09-25, at `d99f1b6`, a cold check running alongside |
+| Runner | Sabotages | Wall clock | Measured |
+|---|---:|---:|---|
+| `chain.sh` | 567 | 2 h 12 min of running | 2026-09-24, at `d99f1b6` |
+| `parallel.py`, 8 workers | 567 | 31.2 min | 2026-09-25, at `d99f1b6`, cold checks running alongside part of it |
+| `parallel.py --early-exit`, 8 workers | 609 | 12.1 min | 2026-09-27, at `dcf6c60`, before the suite speed-ups, nothing else running |
+| `parallel.py --early-exit`, 8 workers | 609 | 9.5 min | 2026-09-27, at `54c29cf`, after them, nothing else running |
+| `parallel.py --early-exit`, 6 workers | 609 | 10.1 min | the same |
+| `parallel.py --early-exit`, 4 workers | 609 | 11.2 min | the same |
+
+Fewer workers finish later but use less of the machine: at `54c29cf`, 4 workers judged in 43.6
+worker-minutes against 8 workers' 72.6. The default stays one worker per CPU thread; `--jobs 6`
+keeps two threads free for other work at about 6% more wall clock.
 
 Estimate a run from its sabotage count and a pace you measured, never from a figure written down:
 this file said ~15 min when the real figure was 2 h 12 min, and the suites keep growing. Both runners
