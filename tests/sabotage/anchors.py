@@ -292,6 +292,16 @@ PRICE_DUMP_VALUE = ("        return \"{ \" + \", \".join(f\"{json.dumps(k)}: {_d
 PRICE_APPLY_MOVED = "        if oc.status == \"MOVED\":\n            row[oc.tier] = oc.proposed\n"
 
 INDEX_HTML = "index.html"
+# A JSON config's width (fix/json-precision-width, engine_r15).
+PY_WIDTH_IF_MISSING = '    if bpp is None:\n'
+PY_WIDTH_NO_SINGLE = '        if quant and quant not in METHOD_WIDTH:\n'
+PY_WIDTH_GGUF_HINT = '                f\'"bpp", their bytes per parameter. Give it{gguf_widths() if quant == "gguf" else ""}.\')\n'
+PY_WIDTH_DEFAULT = '        cfg["bpp"] = METHOD_WIDTH.get(quant, 2)\n'
+PY_WIDTH_CONTRADICTION = '    elif quant in METHOD_WIDTH and bpp != METHOD_WIDTH[quant]:\n'
+PY_WIDTH_NO_METHOD = '    elif not quant and bpp not in (1, 2):\n'
+PY_WIDTH_JSON_GIVEN = '        if "bpp" in raw:\n            cfg["bpp"] = raw["bpp"]\n'
+PY_WIDTH_ONE_ONLY = '    return {quant: next(iter(ws)) for quant, ws in widths.items() if len(ws) == 1}\n'
+
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
 PRICE_PY = "tools/price_check.py"
