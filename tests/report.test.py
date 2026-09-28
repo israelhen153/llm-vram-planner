@@ -183,6 +183,7 @@ def write_json(obj):
 # the bug this suite exists to catch.
 REQ = {"gpu": "h100-80", "ctx": 16384, "conc": 4, "n_gpu": 1, "nvlink": True, "kv_bpp": 2}
 BPP = 0.5  # awq, in both from_cli_args (via --prec) and from_json (via "bpp")
+QUANT = "awq"  # and named: a JSON width without its method is refused, not guessed
 
 
 def expected_cfg(pd):
@@ -200,7 +201,7 @@ def expected_cfg(pd):
     """
     cfg = gr.arch_fields(pd)
     cfg.update({
-        "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
+        "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
         "gpu": gr.GPUS[REQ["gpu"]], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
         # Off the card, as every builder copies it. Not an architecture field,
         # but compute() reads it, so a builder that dropped it would differ
@@ -252,7 +253,7 @@ for key, pd in gr.PRESETS.items():
 
     def check_json(key=key, want=want):
         path = write_json({
-            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"],
+            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"],
             "conc": REQ["conc"], "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"],
             "kv_bpp": REQ["kv_bpp"],
         })
@@ -446,7 +447,7 @@ def check_preset_branch_raw_override_wins():
     # with a coincidental match.
     path = write_json({
         "preset": "gemma4-31b", "attn": "standard", "gpu": REQ["gpu"],
-        "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
+        "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"], "n_gpu": REQ["n_gpu"],
         "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -470,7 +471,7 @@ def check_preset_branch_honors_hf_model_override():
     # the merge — they must actually win over the preset's own value there.
     path = write_json({
         "preset": "llama31-8b", "hf_model": "/opt/models/my-local-copy",
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -490,7 +491,7 @@ test("from_json: an explicit hf_model in the JSON overrides the selected preset'
 def check_preset_branch_honors_model_name_override():
     path = write_json({
         "preset": "llama31-8b", "model_name": "My Local 8B",
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -514,7 +515,7 @@ def check_standard_preset_overridden_to_swa_gets_real_kv():
     # out empty instead of the requested number.
     path = write_json({
         "preset": "llama31-8b", "attn": "swa", "swa_win": 4096, "swa_local": 16,
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -538,7 +539,7 @@ def check_standard_preset_overridden_to_mla_gets_real_kv():
     # confident kv_gb of 0.0 and fits=True instead of the requested number.
     path = write_json({
         "preset": "llama31-8b", "attn": "mla", "mla_dim": 576,
-        "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"], "conc": REQ["conc"],
+        "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"], "conc": REQ["conc"],
         "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"], "kv_bpp": REQ["kv_bpp"],
     })
     try:
@@ -559,7 +560,7 @@ def check_preset_branch_honors_runtime_overrides():
     # raw (non-preset) branch already honoured them via dict(raw) — the same
     # inconsistency as the attn override, for a different field class.
     path = write_json({
-        "preset": "llama31-8b", "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"],
+        "preset": "llama31-8b", "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"],
         "conc": REQ["conc"], "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"],
         "kv_bpp": REQ["kv_bpp"], "shared_prefix": 4096, "prefix_caching": True,
     })
@@ -762,7 +763,7 @@ def check_unrecognised_field_reaches_every_builder():
         assert cli_cfg.get("attn_sink") == 4, f"from_cli_args dropped attn_sink: {cli_cfg}"
 
         path = write_json({
-            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "ctx": REQ["ctx"],
+            "preset": key, "gpu": REQ["gpu"], "bpp": BPP, "quant": QUANT, "ctx": REQ["ctx"],
             "conc": REQ["conc"], "n_gpu": REQ["n_gpu"], "nvlink": REQ["nvlink"],
             "kv_bpp": REQ["kv_bpp"],
         })
@@ -2555,6 +2556,200 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
      check_a_local_model_is_mounted_wherever_it_lives)
 
 
+# Model paths, generated from their parts: every start a path can have, crossed with
+# bodies that carry a dot, a dash, a space, a ~ inside, a hidden directory, deep
+# nesting, a trailing / and a doubled one, plus the bare forms and every path the
+# mount test plans. Two cold checks found shapes a listed set had left out: a bare ~,
+# $MODEL with no /, a dotted three-part relative path, absolute paths with a ~ or a
+# space inside, then models/llama/, a//b, x$ and a path with both a ~ and a $.
+PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
+PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
+               "models/llama/x.gguf", "a/b/c/d/e/f", "models/llama/", "a//b")
+BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/")
+MODEL_PATHS = sorted({start + body for start in PATH_STARTS for body in PATH_BODIES}
+                     | set(BARE_PATHS) | set(LOCAL_MODEL_PATHS) | set(HUB_MODEL_IDS))
+# Whitespace round a path, as a JSON config or a typed answer might carry it.
+PATH_PADDINGS = ("{}", " {}", "{} ", "\t{}", "{}\n", " \t{} \n")
+# The refusal's words, as the contract: why, by kind of path, and the fix. A path
+# with both a shell variable and a leading ~ is refused for the variable.
+MODEL_PATH_REASONS = {
+    "variable": "names a shell variable, which the printed command quotes, so the GPU server never expands it",
+    "tilde": "starts with ~, which the printed command quotes, so the GPU server never expands it",
+    "relative": ("is relative, so it depends on the directory the command runs from, and inside "
+                 "the ROCm container that is /vllm-workspace"),
+}
+MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
+
+
+def path_kind(path):
+    """The requirement, restated: the reason a path is refused for, or None when it is
+    planned. A shell variable anywhere, a leading ~, or a relative path (., .., ./ or
+    ../ first, or three or more parts) is refused; an absolute path, or a name with at
+    most one / (a Hugging Face id's shape), is planned."""
+    if "$" in path:
+        return "variable"
+    if path.startswith("/"):
+        return None
+    if path.startswith("~"):
+        return "tilde"
+    if path in (".", "..") or path.startswith(("./", "../")) or len(path.split("/")) >= 3:
+        return "relative"
+    return None
+
+
+def model_path_refusal(path):
+    kind = path_kind(path)
+    return f"The model path {path!r} {MODEL_PATH_REASONS[kind]}. {MODEL_PATH_FIX}" if kind else None
+
+
+def check_the_generated_model_paths_cover_every_kind():
+    """The generated set holds each kind many times over, and every shape a past
+    round found missing."""
+    counts = {kind: sum(path_kind(p) == kind for p in MODEL_PATHS) for kind in (*MODEL_PATH_REASONS, None)}
+    assert all(n >= 5 for n in counts.values()), counts
+    for shape in ("~", "$MODEL", "x$", "~/$HOME/m", "models/llama/x.gguf", "models/llama/", "a//b",
+                  "/opt/a~b/c", "/opt/my models/llama", ".", "..", "~user/m", "/data/$USER/m"):
+        assert shape in MODEL_PATHS, shape
+
+test("the generated model paths hold every kind, and every shape a past round found missing",
+     check_the_generated_model_paths_cover_every_kind)
+
+
+def refusal_of(plan):
+    """plan()'s PlanRefused message, or None when it plans."""
+    try:
+        plan()
+    except gr.PlanRefused as refused:
+        return str(refused)
+    return None
+
+
+# What a JSON plan can vary besides its model path, each axis derived where the
+# catalog, the presets or the board sample define it. The refusal must not depend on
+# any of them: two cold checks passed refusals skipped on a two-device board, on the
+# MI300X, at two or four boards, over NVLink, on FP8, at 0.5 bytes per parameter,
+# with an FP8 KV cache, at another context length and on a MoE model.
+DENSE = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100)
+MOE = next(k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100)
+PLAN_AXES = {
+    "card": list(gr.GPUS),
+    "boards": list(BOARD_SAMPLE),
+    "precision": [{}, {"bpp": 0.5, "quant": "awq"}, {"bpp": 1, "quant": "fp8"}, {"bpp": 2}],
+    "kv": [{}, {"kv_bpp": 1}],
+    "ctx": [{}, {"ctx": 4096}, {"ctx": 131072}],
+    "conc": [{}, {"conc": 16}],
+    "nvlink": [{}, {"nvlink": False}],
+    "model": [DENSE, MOE],
+    "branch": ["preset", "raw"],
+    "padding": list(PATH_PADDINGS),
+}
+# Stride per axis, each coprime to its axis's size, so the axes do not move in step.
+PLAN_STRIDES = {"card": 1, "boards": 7, "precision": 3, "kv": 1, "ctx": 2, "conc": 1, "nvlink": 1,
+                "model": 1, "branch": 1, "padding": 5}
+PLAN_OFFSETS = {axis: n for n, axis in enumerate(PLAN_AXES)}
+
+
+def plans_for(p):
+    """The configurations model path number p is judged under: as many as the largest
+    axis has values, each axis stepping by its stride from an offset of its own, so
+    this path meets every value of every axis."""
+    rounds = max(len(values) for values in PLAN_AXES.values())
+    for r in range(rounds):
+        pick = {axis: (p * (PLAN_OFFSETS[axis] + 1) + r * PLAN_STRIDES[axis]) % len(values)
+                for axis, values in PLAN_AXES.items()}
+        yield pick
+
+
+def check_a_model_path_is_judged_by_its_kind_alone_under_every_plan():
+    """Every generated path, through a JSON config, meets every value of every axis
+    above: each card, each board count in the board sample, each precision (FP8 only
+    where the card runs it), both KV caches, three context lengths, two concurrencies,
+    NVLink on and off, a dense model and a MoE one, both of from_json()'s branches and
+    every whitespace round it. Each time it is refused with its kind's reason and the
+    fix, or planned with the spaces trimmed. The sweep asserts it met every value."""
+    assert all(math.gcd(PLAN_STRIDES[a], len(v)) == 1 for a, v in PLAN_AXES.items()), PLAN_STRIDES
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for p, path in enumerate(MODEL_PATHS):
+            met = {axis: set() for axis in PLAN_AXES}
+            for pick in plans_for(p):
+                for axis, i in pick.items():
+                    met[axis].add(i)
+                v = {axis: PLAN_AXES[axis][i] for axis, i in pick.items()}
+                card = v["card"]
+                prec = v["precision"]
+                if prec.get("bpp") == 1 and gr.fp8_weights_blocked(gr.GPUS[card]):
+                    prec = {"bpp": 2}
+                base = ({"preset": v["model"]} if v["branch"] == "preset"
+                        else gr.arch_fields(gr.PRESETS[v["model"]]))
+                raw = dict(base, gpu=card, n_gpu=v["boards"], hf_model=v["padding"].format(path),
+                           **prec, **v["kv"], **v["ctx"], **v["conc"], **v["nvlink"])
+                with open(config, "w") as f:
+                    json.dump(raw, f)
+                cfg = {}
+                with contextlib.redirect_stdout(io.StringIO()):
+                    got = refusal_of(lambda: cfg.update(gr.from_json(config)))
+                assert got == model_path_refusal(path), (path, {a: v[a] for a in PLAN_AXES}, got)
+                assert got or cfg["hf_model"] == path, (path, raw["hf_model"], cfg.get("hf_model"))
+            missed = {axis: len(PLAN_AXES[axis]) - len(seen) for axis, seen in met.items() if len(seen) < len(PLAN_AXES[axis])}
+            assert not missed, f"{path!r} missed values on {missed}"
+
+test("a JSON config's model path is refused or planned by its kind alone, on every value of every plan axis",
+     check_a_model_path_is_judged_by_its_kind_alone_under_every_plan)
+
+
+MENU_CUSTOM = ["custom", "8", "100", "32", "8", "128", "0"]
+MENU_REST = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
+
+
+def check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed():
+    """The menu's custom model took any text as its HuggingFace ID. Every generated
+    path, typed with every whitespace round it, is refused right after it is typed with
+    its kind's reason, or planned trimmed. A refusal that read the untrimmed answer let
+    "  ~/llama" through, and a menu that trimmed only spaces was never typed a tab."""
+    for path in MODEL_PATHS:
+        for padding in PATH_PADDINGS:
+            typed = padding.format(path)
+            answers = unittest.mock.Mock(side_effect=MENU_CUSTOM + [typed] + MENU_REST)
+            cfg = {}
+            with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
+                got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
+            assert got == model_path_refusal(path), (typed, got)
+            if got:
+                assert answers.call_count == len(MENU_CUSTOM) + 1, f"{typed!r}: refused after {answers.call_count} answers"
+            else:
+                assert cfg.get("hf_model") == path, (typed, cfg.get("hf_model"))
+
+test("the interactive menu refuses or plans a model path by its kind as soon as it is typed, any whitespace trimmed",
+     check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed)
+
+
+def check_the_cli_refuses_a_model_path_with_exit_2_by_either_route():
+    """The command line itself, by both routes a model path arrives: a JSON config on
+    an AMD card, and the menu fed on stdin. The reason on stderr, exit status 2, no PDF.
+    The menu was driven only in-process, so a menu refusal that escaped main()'s
+    handler, with a traceback and exit 1, passed."""
+    slug = next(s for s, row in gr.GPUS.items() if row["vendor"] == "amd")
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            json.dump({"preset": "llama31-8b", "gpu": slug, "hf_model": "~/models/llama", "bpp": 2}, f)
+        runs = {
+            "json": subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config,
+                                    "-o", out], capture_output=True, text=True),
+            "menu": subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "-o", out],
+                                   input="\n".join(MENU_CUSTOM + ["  ~/models/llama"]) + "\n",
+                                   capture_output=True, text=True),
+        }
+        for route, run in runs.items():
+            assert run.returncode == 2, (route, run.returncode, run.stderr[-300:])
+            assert f"error: {model_path_refusal('~/models/llama')}" in run.stderr, (route, run.stderr[-400:])
+            assert not os.path.exists(out), f"{route}: a PDF was written for a refused plan"
+
+test("the CLI refuses an unresolvable model path from a JSON config or the menu, with the reason and exit status 2",
+     check_the_cli_refuses_a_model_path_with_exit_2_by_either_route)
+
+
 def check_the_rocm_block_holds_on_a_board_of_four_devices():
     """No catalog board has more than two devices, so a ROCm block that dropped its
     closing notes above two passed every card that exists. A board of four, built
@@ -2815,8 +3010,8 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
     """from_json() accepted {"bpp": 1} with no quant, and compute() sized it as FP8
     while the command named no quantization, so it loaded BF16. One byte per
     parameter is FP8, by compute()'s own test, so the command now says so. A width
-    that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is left as the config
-    gave it, and an explicit quant is never overridden. Both of from_json()'s
+    that isn't unambiguous (0.5 is AWQ, GPTQ or a GGUF level) is refused without a
+    quantization, and an explicit quant is never overridden. Both of from_json()'s
     branches, a preset's and a config's own fields: the fill once moved into the
     preset branch alone and every test passed. A quantization in another case is
     written in vLLM's."""
@@ -2832,8 +3027,12 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
         branch = "preset" if "preset" in base else "own fields"
         cfg, cmd = plan({"bpp": 1})
         assert cfg["quant"] == "fp8" and "    --quantization fp8 \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
-        cfg, cmd = plan({"bpp": 0.5})
-        assert not cfg.get("quant") and "--quantization" not in cmd, (branch, cfg.get("quant"), cmd)
+        try:
+            plan({"bpp": 0.5})
+        except gr.PlanRefused:
+            pass
+        else:
+            raise AssertionError(f"{branch}: bpp 0.5 with no quantization was planned")
         cfg, cmd = plan({"bpp": 1, "quant": "fp8"})
         assert cfg["quant"] == "fp8", (branch, cfg.get("quant"))
         cfg, cmd = plan({"bpp": 0.5, "quant": "gptq"})
@@ -2847,8 +3046,285 @@ def check_a_one_byte_json_config_is_fp8_in_the_command():
         cfg, cmd = plan({"bpp": 0.5, "quant": " gptq "})
         assert cfg["quant"] == "gptq" and "    --quantization gptq \\" in cmd.split("\n"), (branch, cfg.get("quant"), cmd)
 
-test("a JSON config at one byte per parameter is FP8 in the command; other widths are left as given",
+test("a JSON config at one byte per parameter is FP8 in the command; a width without a method is refused",
      check_a_one_byte_json_config_is_fp8_in_the_command)
+
+
+# A JSON config's precision, as the owner decided it (2026-09-27, decision desk A2):
+# the width comes from the method where the method fixes it (a method with one width
+# in --prec's table), the plan never guesses, and a config naming nothing is the BF16
+# checkpoint its command loads. The refusals' words are the contract.
+JSON_WIDTH_GGUF = " (GGUF: Q2_K 0.35, Q4_K_M 0.63, Q5_K_M 0.71, Q6_K 0.82, Q8_0 1.1)"
+
+
+def json_precision(quant, bpp):
+    """What a JSON config giving quant and bpp (None where absent) plans as, (bpp,
+    quant), or the refusal it gets."""
+    widths = {}
+    for b, q in PRECISIONS_CONTRACT.values():
+        if q:
+            widths.setdefault(q, set()).add(b)
+    fixed = {q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1}
+    q = (quant or "").strip().lower()
+    if bpp is not None and bpp <= 0:
+        return f'"bpp": {bpp} can\'t be a width: a weight takes more than 0 bytes per parameter.'
+    if bpp is None:
+        if q and q not in fixed:
+            return (f'"quant": {q!r} has no single width, so the plan can\'t size the weights without "bpp", '
+                    f'their bytes per parameter. Give it{JSON_WIDTH_GGUF if q == "gguf" else ""}.')
+        return (fixed.get(q, 2), q)
+    if q in fixed and bpp != fixed[q]:
+        w = fixed[q]
+        return (f'"quant": {q!r} is {w:g} byte{"" if w == 1 else "s"} per parameter, but "bpp" says {bpp}. '
+                f'Drop "bpp", or make the two agree.')
+    if not q and bpp not in (1, 2):
+        return (f'"bpp": {bpp} names no quantization, so the printed command would load the BF16 checkpoint '
+                f'at 2 bytes per parameter. Add "quant" (awq, gptq or gguf), or give "bpp": 2 for BF16.')
+    return (bpp, "fp8" if bpp == 1 and not q else q)
+
+
+class Absent:
+    """A key a JSON config leaves out, where None is the null it writes."""
+    def __repr__(self):
+        return "<absent>"
+
+
+ABSENT = Absent()
+JSON_METHODS = {q for _, q in PRECISIONS_CONTRACT.values() if q}
+# Every quantization a JSON config can give here: absent, null, empty, each method
+# --prec knows and another spelling, --prec's own tokens that aren't methods, and one
+# it doesn't know. A null was never given, so one read as the name "none" passed.
+JSON_QUANTS = [ABSENT, None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors",
+               *sorted(t for t in PRECISIONS_CONTRACT if t not in JSON_METHODS)]
+# Model ids that name a quantization, as real ones do (-FP8, -AWQ, -GGUF, a GGUF level):
+# one per method above and per GGUF level, and none, for the preset's own. The ids were
+# the presets', so a width read off a model id that names FP8 passed.
+JSON_MODEL_IDS = [None, *(f"org/model-{q}" for q in sorted(JSON_METHODS | {"compressed-tensors"})),
+                  *(f"org/model-{level}" for level in re.findall(r"(Q\w+) [\d.]+", JSON_WIDTH_GGUF))]
+# The smallest dense preset and the smallest MoE one, so most cards fit them and print
+# their command.
+JSON_SIZES = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
+JSON_MODELS = (min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=JSON_SIZES.get),
+               min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=JSON_SIZES.get))
+
+
+def json_config_outcome(config, raw):
+    """from_json() on this config, written to the file config: (bpp, quant), or the refusal."""
+    with open(config, "w") as f:
+        json.dump(raw, f)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            cfg = gr.from_json(config)
+    except gr.PlanRefused as refused:
+        return str(refused)
+    return cfg["bpp"], cfg.get("quant") or ""
+
+
+def json_precision_on(quant, bpp, row):
+    """json_precision() on this card: FP8 weights on a card that can't run them get the
+    FP8 refusal instead."""
+    want = json_precision(None if quant is ABSENT else quant, bpp)
+    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+        want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
+    return want
+
+
+def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
+    """A JSON config without "bpp" was sized at 0.5 whatever it named: {"quant": "fp8"}
+    planned half the weights its command loads, and a config naming nothing a quarter
+    of its BF16 checkpoint. Each quantization above meets every card, both of
+    from_json()'s branches, every width (none, 0, a negative, and each the report can
+    label, each whole one written both as an integer and as a float), a dense model and
+    a MoE one, both KV caches, and the model ids above. It is planned at the width and
+    with the --quantization the owner's rules give, or refused with their words; FP8 on
+    a card that can't run it gets the FP8 refusal. A cold check kept a refusal to dense
+    models, a default read off the KV cache, 0 read as no width and --prec's tokens taken
+    for methods green, because the sweep held those fixed; a second kept 1.0
+    contradicting fp8, 1.0 alone planned as BF16 and 0.0 planned green, because every
+    width arrived as an integer. The sweep asserts each quantization met every value."""
+    labelled = sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})
+    widths = [None, *(w for b in (-1, 0, *labelled) for w in ((b, float(b)) if isinstance(b, int) else (b,)))]
+    dense, moe = JSON_MODELS
+    cards = list(gr.GPUS.items())
+    assert len(cards) >= len(widths), "each turn must reach every width"
+    planned, commanded, met = set(), set(), {}
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for qi, quant in enumerate(JSON_QUANTS):
+            # Model, KV cache and branch step in whole turns, and the width steps with the
+            # card inside each turn, so every quantization meets every width under every
+            # model, KV cache and branch: a default read off the KV cache showed only for no
+            # quantization, no width and an FP8 KV cache together, which a rotation missed.
+            # A width is keyed by its repr: 1 == 1.0.
+            for turn in range(8):
+                model, kv, branch = (dense if turn < 4 else moe), turn % 2, (turn // 2) % 2
+                for ci, (slug, row) in enumerate(cards):
+                    bpp = widths[(ci + qi + 5 * turn) % len(widths)]
+                    hf = JSON_MODEL_IDS[(turn * len(cards) + ci + qi) % len(JSON_MODEL_IDS)]
+                    met.setdefault(quant, set()).update({("card", slug), ("id", hf), ("combo", repr(bpp), model, kv, branch)})
+                    base = {"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model])
+                    raw = dict(base, gpu=slug, n_gpu=BOARD_SAMPLE[(ci + qi) % len(BOARD_SAMPLE)])
+                    if kv:
+                        raw["kv_bpp"] = 1
+                    if quant is not ABSENT:
+                        raw["quant"] = quant
+                    if bpp is not None:
+                        raw["bpp"] = bpp
+                    if hf:
+                        raw["hf_model"] = hf
+                    want = json_precision_on(quant, bpp, row)
+                    with open(config, "w") as f:
+                        json.dump(raw, f)
+                    try:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            cfg = gr.from_json(config)
+                        got = (cfg["bpp"], cfg.get("quant") or "")
+                        if model == dense:
+                            planned.add((quant, repr(bpp)))
+                        comp = gr.compute(cfg)
+                        if comp["fits"]:  # a plan that doesn't fit prints a note, not a command
+                            flags = [line for line in gr.build_vllm_cmd(cfg, comp).split("\n") if "--quantization" in line]
+                            assert flags == ([f"    --quantization {got[1]} \\"] if got[1] else []), (slug, raw, flags)
+                            if model == dense:
+                                commanded.add((quant, repr(bpp)))
+                    except gr.PlanRefused as refused:
+                        got = str(refused)
+                    assert got == want, (slug, branch, model, kv, quant, bpp, hf, got, want)
+    everything = ({("card", s) for s, _ in cards} | {("id", h) for h in JSON_MODEL_IDS}
+                  | {("combo", repr(w), m, k, b) for w in widths for m in (dense, moe) for k in (0, 1) for b in (0, 1)})
+    missed = {q: sorted(everything - seen, key=str)[:3] for q, seen in met.items() if everything - seen}
+    assert not missed, f"quantizations that missed a value: {missed}"
+    assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"
+
+test("a JSON config's precision is the width its method fixes, BF16 when it names nothing, or refused",
+     check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
+
+
+def check_a_model_id_never_sets_the_width():
+    """Where a JSON config gives no width, the rules resolve one, and real model ids
+    name a quantization (-FP8, -AWQ, a GGUF level). The rules must not read them: every
+    quantization above, without "bpp", under every model id above, is planned or
+    refused as it is without one, with the cards, models and branches rotating. The
+    sweep met the ids with a width given, mostly, so a no-width method sized at the
+    width its model id suggested passed."""
+    cards = list(gr.GPUS.items())
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for qi, quant in enumerate(JSON_QUANTS):
+            for hi, hf in enumerate(JSON_MODEL_IDS):
+                k = qi + hi
+                slug, row = cards[k % len(cards)]
+                model, branch = JSON_MODELS[k % 2], (k // 2) % 2
+                raw = dict({"preset": model} if branch == 0 else gr.arch_fields(gr.PRESETS[model]), gpu=slug)
+                if quant is not ABSENT:
+                    raw["quant"] = quant
+                if hf:
+                    raw["hf_model"] = hf
+                got = json_config_outcome(config, raw)
+                assert got == json_precision_on(quant, None, row), (slug, model, branch, quant, hf, got)
+
+test("a JSON config's model id never sets its width: without \"bpp\", every quantization is judged the same "
+     "whatever quantization its model id names",
+     check_a_model_id_never_sets_the_width)
+
+
+def check_the_cli_refuses_a_json_width_with_exit_2():
+    """The command line itself, for a JSON config the width rules refuse: the reason on
+    stderr, exit status 2, and no PDF. Only --preset had been driven to a refusal, so a
+    --json refusal on stdout with exit 1 passed."""
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            json.dump({"preset": "llama31-8b", "gpu": "h100-80", "quant": "gguf"}, f)
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert f"error: {json_precision('gguf', None)}" in run.stderr, run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses a JSON config's width with the reason and exit status 2, and writes no PDF",
+     check_the_cli_refuses_a_json_width_with_exit_2)
+
+
+# JSON's non-finite literals as Python's json reads them, and a number too large for a
+# float, which it reads as Infinity: each with what the refusal shows.
+NON_FINITE_JSON = {"NaN": "NaN", "Infinity": "Infinity", "-Infinity": "-Infinity", "1e400": "Infinity",
+                   "-1e400": "-Infinity"}
+
+
+def non_finite_refusal(label, shown):
+    return f"{label}: {shown} isn't a finite number, so the plan can't be sized from it. Give a number."
+
+
+def check_a_non_finite_json_number_is_refused_by_name():
+    """A JSON config's NaN or Infinity crashed the sizing with a traceback (bpp beside
+    gguf, ctx, conc, n_gpu, kv_bpp), and as "nvlink" planned NVLink. Every key a config
+    can carry, and one the planner has never heard of, given each non-finite literal
+    through both of from_json()'s branches, with the cards rotating, is refused naming
+    the key."""
+    keys = sorted(set(gr.ARCH_TYPES) | gr.REQUEST_KEYS | {"not_a_field"})
+    cards = list(gr.GPUS)
+    bases = {"preset": {"preset": "llama31-8b"}, "raw": gr.arch_fields(gr.PRESETS["llama31-8b"])}
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for k, key in enumerate(keys):
+            for branch, base in bases.items():
+                for literal, shown in NON_FINITE_JSON.items():
+                    raw = dict(base, gpu=cards[k % len(cards)])
+                    raw[key] = "@NUMBER@"
+                    with open(config, "w") as f:
+                        f.write(json.dumps(raw).replace('"@NUMBER@"', literal))
+                    try:
+                        gr.from_json(config)
+                        got = None
+                    except gr.PlanRefused as refused:
+                        got = str(refused)
+                    assert got == non_finite_refusal(json.dumps(key), shown), (key, branch, literal, got)
+
+test("a JSON config's NaN or Infinity is refused, naming its key, on every key and both branches",
+     check_a_non_finite_json_number_is_refused_by_name)
+
+
+def check_the_menu_refuses_a_non_finite_number_when_it_is_typed():
+    """The menu's two float answers, the parameter count and the MoE active share, took
+    "nan" and "inf" and crashed the sizing. Each spelling float() reads as NaN or
+    Infinity, typed at either, is refused before the model id is asked for."""
+    rest = ["/opt/models/m", "", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
+    for at, label in ((1, "Parameters (B)"), (2, "MoE active %")):
+        for typed in ("nan", "NaN", "inf", "-inf", "Infinity", "1e400"):
+            custom = ["custom", "8", "100", "32", "8", "128", "0"]
+            custom[at] = typed
+            answers = unittest.mock.Mock(side_effect=custom + rest)
+            try:
+                with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
+                    gr.interactive_mode()
+                got = None
+            except gr.PlanRefused as refused:
+                got = str(refused)
+            assert got == non_finite_refusal(label, json.dumps(float(typed))), (label, typed, got)
+            assert answers.call_count == len(custom), f"{label} {typed!r}: refused after {answers.call_count} answers"
+
+test("the interactive menu refuses a NaN or Infinity as soon as it is typed",
+     check_the_menu_refuses_a_non_finite_number_when_it_is_typed)
+
+
+def check_the_cli_refuses_a_non_finite_json_number_with_exit_2():
+    """The command line itself, with the cold check's own reproduction: GGUF on an AMD
+    card at "bpp": NaN, which ended in a ValueError traceback and exit 1. The reason on
+    stderr, exit status 2, no PDF."""
+    slug = next(s for s, row in gr.GPUS.items() if row["vendor"] == "amd")
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            f.write(json.dumps({"preset": "llama31-8b", "gpu": slug, "quant": "gguf", "bpp": "@"}).replace('"@"', "NaN"))
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 2, (run.returncode, run.stderr[-300:])
+        assert f"error: {non_finite_refusal(json.dumps('bpp'), 'NaN')}" in run.stderr, run.stderr[-400:]
+        assert not os.path.exists(out), "a PDF was written for a refused plan"
+
+test("the CLI refuses a JSON config's NaN with the reason and exit status 2, and writes no PDF",
+     check_the_cli_refuses_a_non_finite_json_number_with_exit_2)
 
 
 test("the PDF cost table's tier names carry no provider parenthetical",
