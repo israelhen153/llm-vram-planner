@@ -1537,6 +1537,7 @@ def interactive_mode():
             "h_dim": int(input("  Head dimension: ")),
             "shared_exp": int(input("  Shared experts (0 if none): ") or "0"),
         }
+        refuse_non_finite({"Parameters (B)": arch["params"], "MoE active %": arch["active"]})
         hf_model = input("  HuggingFace model ID: ").strip() or "/opt/models/YourModel"
         refuse_model_path_the_server_cannot_resolve({"hf_model": hf_model})
         model_name = input("  Display name: ").strip() or f"{arch['params']}B model"
@@ -1712,6 +1713,31 @@ def validate_arch(cfg):
     if isinstance(cfg.get("quant"), str):
         cfg["quant"] = cfg["quant"].strip().lower()
 
+    # A JSON config's weights (the owner's decision, 2026-09-27): the width comes from
+    # the method where the method fixes it, and the plan never guesses. A config that
+    # gave no "bpp" was sized at 0.5 whatever it named, so {"quant": "fp8"} planned
+    # half the weights its command loads, and a config naming nothing planned a
+    # quarter of the BF16 checkpoint its command loads.
+    quant, bpp = cfg.get("quant") or "", cfg.get("bpp")
+    # A width of 0 or less sized the weights at 0 GB or below whenever a method took any
+    # width (GGUF, or one the planner doesn't know), and wrote a PDF for it.
+    if bpp is not None and bpp <= 0:
+        raise PlanRefused(f'"bpp": {bpp} can\'t be a width: a weight takes more than 0 bytes per parameter.')
+    if bpp is None:
+        if quant and quant not in METHOD_WIDTH:
+            raise PlanRefused(
+                f'"quant": {quant!r} has no single width, so the plan can\'t size the weights without '
+                f'"bpp", their bytes per parameter. Give it{gguf_widths() if quant == "gguf" else ""}.')
+        cfg["bpp"] = METHOD_WIDTH.get(quant, 2)
+    elif quant in METHOD_WIDTH and bpp != METHOD_WIDTH[quant]:
+        width = METHOD_WIDTH[quant]
+        raise PlanRefused(f'"quant": {quant!r} is {width:g} byte{"" if width == 1 else "s"} per parameter, but '
+                          f'"bpp" says {bpp}. Drop "bpp", or make the two agree.')
+    elif not quant and bpp not in (1, 2):
+        raise PlanRefused(f'"bpp": {bpp} names no quantization, so the printed command would load the BF16 '
+                          f'checkpoint at 2 bytes per parameter. Add "quant" (awq, gptq or gguf), or give '
+                          f'"bpp": 2 for BF16.')
+
     # One byte per parameter is FP8, the same test compute() uses, so a config that
     # says so without naming a quantization gets --quantization fp8 in its command.
     # Without it the command loaded BF16 weights, twice what the report sized. Other
@@ -1732,9 +1758,23 @@ def validate_arch(cfg):
     return refuse_fp8_where_vllm_cannot(cfg)
 
 
+def refuse_non_finite(named):
+    """NaN and Infinity size nothing: they crashed the sizing with a traceback, or, as
+    "nvlink", planned NVLink. Python's json reads NaN, Infinity and -Infinity, which
+    the JSON standard doesn't have, and reads a number too large for a float, such as
+    1e400, as Infinity; the menu's float() takes "nan" and "inf". named maps each
+    field's label to its value."""
+    for label, value in named.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise PlanRefused(f"{label}: {json.dumps(value)} isn't a finite number, so the plan can't be "
+                              f"sized from it. Give a number.")
+
+
 def from_json(path):
     with open(path) as f:
         raw = json.load(f)
+    if isinstance(raw, dict):
+        refuse_non_finite({json.dumps(key): value for key, value in raw.items()})
     gpu_key = raw.get("gpu", DEFAULT_GPU_KEY)
     gpu = GPUS.get(gpu_key, GPUS[DEFAULT_GPU_KEY])
     preset = raw.get("preset")
@@ -1745,8 +1785,11 @@ def from_json(path):
         # ctx/conc/kv_bpp/etc. already follow below. Selecting a preset sets
         # defaults, it doesn't lock them.
         cfg.update({k: v for k, v in raw.items() if k not in REQUEST_KEYS})
+        # The width only if the JSON gave one: validate_arch() decides a missing one.
+        if "bpp" in raw:
+            cfg["bpp"] = raw["bpp"]
         cfg.update({
-            "bpp": raw.get("bpp", 0.5), "ctx": raw.get("ctx", 8192),
+            "ctx": raw.get("ctx", 8192),
             "conc": raw.get("conc", 1), "n_gpu": raw.get("n_gpu", 1),
             "gpu": gpu, "nvlink": nvlink_for(gpu, raw.get("nvlink", True)),
             # Not request fields: both are whatever the chosen card is, and
@@ -1782,7 +1825,6 @@ def from_json(path):
     cfg.setdefault("active", 100)
     cfg.setdefault("h_dim", 128)
     cfg.setdefault("shared_exp", 0)
-    cfg.setdefault("bpp", 0.5)
     cfg.setdefault("ctx", 8192)
     cfg.setdefault("conc", 1)
     cfg.setdefault("n_gpu", 1)
@@ -1799,6 +1841,26 @@ def from_json(path):
 # a word.
 PRECISIONS = {"bf16": (2, ""), "fp8": (1, "fp8"), "int4": (0.5, "awq"), "awq": (0.5, "awq"),
               "gptq": (0.5, "gptq"), "q4km": (0.63, "gguf"), "q6k": (0.82, "gguf"), "q8": (1.1, "gguf")}
+
+
+def method_widths():
+    """The width a method fixes on its own, derived from --prec's table: a method with
+    one width there (fp8, awq, gptq) fixes it. GGUF has a width per level, and a method
+    the table doesn't know has none the planner can vouch for."""
+    widths = {}
+    for bpp, quant in PRECISIONS.values():
+        if quant:
+            widths.setdefault(quant, set()).add(bpp)
+    return {quant: next(iter(ws)) for quant, ws in widths.items() if len(ws) == 1}
+
+
+METHOD_WIDTH = method_widths()
+
+
+def gguf_widths():
+    """The GGUF levels the report can name, with their bytes per parameter."""
+    levels = sorted((bpp, label.split()[-1]) for bpp, label in PREC_LABELS.items() if label.startswith("GGUF"))
+    return " (GGUF: " + ", ".join(f"{name} {bpp:g}" for bpp, name in levels) + ")"
 
 
 def from_cli_args(args):
