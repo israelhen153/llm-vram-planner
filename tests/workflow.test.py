@@ -50,11 +50,33 @@ def test(name, fn):
         fail_ct += 1
 
 
+class StrictLoader(yaml.SafeLoader):
+    """SafeLoader that refuses a key given twice in one mapping. pyyaml keeps the
+    last value and says nothing; GitHub refuses the whole workflow. The second
+    cold check of the off-the-hour fix wrote `on:` twice with the schedule only in
+    the second: every rule here read a complete schedule, from a file GitHub
+    would never have run."""
+
+
+def no_duplicate_keys(loader, node, deep=False):
+    seen = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        assert key not in seen, (
+            f"line {key_node.start_mark.line + 1}: {key!r} is given twice in one mapping. "
+            f"pyyaml keeps the last; GitHub refuses the workflow.")
+        seen.add(key)
+    return loader.construct_mapping(node, deep=deep)
+
+
+StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_duplicate_keys)
+
+
 def load(path):
     """Parse, and fail loudly on anything that is not a workflow. A file GitHub
     would reject must fail here too rather than be skipped."""
     with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
+        doc = yaml.load(fh, Loader=StrictLoader)
     assert isinstance(doc, dict), f"{os.path.basename(path)}: not a mapping"
     assert isinstance(doc.get("jobs"), dict), f"{os.path.basename(path)}: no jobs"
     return doc
