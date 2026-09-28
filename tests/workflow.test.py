@@ -372,6 +372,41 @@ test("every step after the suite carries one of the two permitted conditions",
      check_every_delivery_condition_is_one_of_the_two_permitted)
 
 
+# A contract, so it is a literal: what every step between the gate and the suite
+# is allowed to be conditioned on.
+GATE_IF = "steps.diff.outputs.changed == 'true'"
+
+
+def check_a_scheduled_run_takes_the_same_path_as_a_manual_one():
+    """The rule above pins every step after the suite, and nothing pinned the
+    ones before it. The first cold check of the off-the-hour fix put
+    `if: github.event_name == 'workflow_dispatch'` on the fetch step, then on
+    the gate: the job stayed scheduled, every Monday's run skipped the fetch (so
+    nothing moved) or the gate (so `changed` was never set and every delivery
+    step skipped), and every rule passed. A job that runs on schedule and does
+    nothing looks exactly like a job with nothing to report.
+
+    So the rest of the job is pinned by position too. Every step up to and
+    including the gate runs unconditionally, and every step after it, through
+    the suite, carries the gate's own condition and nothing else. Whatever
+    triggered the run, it takes the same path."""
+    steps = STEPS()
+    g, s = steps.index(gate_step()), steps.index(suite_step())
+    assert g < s, "the gate no longer comes before the suite"
+    for st in steps[:g + 1]:
+        assert "if" not in st, (
+            f"step {label(st)!r} carries if: {st['if']!r}. Up to and including the "
+            f"gate, a condition decides whether a run does anything at all, and a "
+            f"scheduled run must do what a manual one does.")
+    for st in steps[g + 1:s + 1]:
+        assert st.get("if") == GATE_IF, (
+            f"step {label(st)!r} has if: {st.get('if')!r}. Between the gate and the "
+            f"suite every step carries exactly {GATE_IF!r}.")
+
+test("a scheduled run takes the same path as a manual one, through the suite",
+     check_a_scheduled_run_takes_the_same_path_as_a_manual_one)
+
+
 def check_no_delivery_step_swallows_its_own_failure():
     """continue-on-error on the PR step turns "no pull request was opened" into
     a green run. The one step allowed to fail quietly is the suite."""
