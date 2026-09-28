@@ -510,6 +510,43 @@ test("the head of the job, up to the gate, is pinned whole",
      check_the_head_of_the_job_is_pinned_whole)
 
 
+# A contract, so it is a literal: the shape around the price job.
+PRICE_TOP_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
+PRICE_JOB_KEYS = {"runs-on", "permissions", "steps"}
+PRICE_RUNNER = "ubuntu-latest"
+
+
+def check_the_price_job_runs_alone_on_a_runner_that_exists():
+    """Two of the second cold check's survivors sat outside the steps: `runs-on:`
+    chosen by an expression, so a scheduled run queues for a runner nobody has,
+    and `needs:` on a new job that fails on schedule, so the price job is
+    skipped. Every step rule stayed green through both. A third of the same kind
+    waits a level up: `defaults: run: shell:` on the workflow or the job changes
+    what every pinned shell does without touching one of them.
+
+    So the envelope is a literal too. The workflow carries only its name,
+    triggers, concurrency, permissions and jobs; it has exactly one job; and
+    that job carries only its runner, its permissions and its steps, on
+    ubuntu-latest."""
+    top = {"on" if k is True else k for k in price()}
+    assert top == PRICE_TOP_KEYS, (
+        f"the price workflow carries {sorted(map(str, top))}, and nothing but "
+        f"{sorted(PRICE_TOP_KEYS)}: a `defaults:` or `env:` here changes what every "
+        f"pinned step does.")
+    assert len(JOBS()) == 1, (
+        f"the price workflow has the jobs {sorted(JOBS())}, and it has one: a job the "
+        f"price job `needs:` can skip it on every scheduled run.")
+    job = JOB()
+    assert set(job) == PRICE_JOB_KEYS, (
+        f"the price job carries {sorted(job)}, and nothing but {sorted(PRICE_JOB_KEYS)}.")
+    assert job["runs-on"] == PRICE_RUNNER, (
+        f"the price job runs on {job['runs-on']!r}, and it runs on {PRICE_RUNNER!r}: "
+        f"an expression there can send a scheduled run to a runner nobody has.")
+
+test("the price job runs alone, on a runner that exists, with nothing around it",
+     check_the_price_job_runs_alone_on_a_runner_that_exists)
+
+
 def check_no_delivery_step_swallows_its_own_failure():
     """continue-on-error on the PR step turns "no pull request was opened" into
     a green run. The one step allowed to fail quietly is the suite."""
