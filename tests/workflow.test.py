@@ -455,6 +455,61 @@ test("a scheduled run takes the same path as a manual one, through the suite",
      check_a_scheduled_run_takes_the_same_path_as_a_manual_one)
 
 
+# A contract, so it is a literal: every step before the gate, in order. An action
+# may move to a newer version; nothing else in these steps changes without this.
+HEAD_STEPS = [
+    {"uses": "actions/checkout"},
+    {"uses": "actions/setup-python", "with": {"python-version": "3.x"}},
+    {"uses": "actions/setup-node", "with": {"node-version": "lts/*"}},
+    {"name": "Fetch, validate, and (where confirmed or moved) apply",
+     "run": 'python3 tools/price_check.py --apply --report-out "$RUNNER_TEMP/price-check-report.md"\n'},
+    {"name": "Re-sync generated blocks from data/gpus.json",
+     "run": "python3 tools/sync_data.py"},
+]
+GATE_KEYS = {"name", "id", "run"}
+ACTION_VERSION = r"@(v[0-9]+(\.[0-9]+){0,2}|[0-9a-f]{40})"
+
+
+def check_the_head_of_the_job_is_pinned_whole():
+    """The rule above pins every condition, and the second cold check went
+    around it without writing one: `--apply` chosen by an expression inside the
+    fetch's `run:`, the fetch wrapped in a shell `if` on GITHUB_EVENT_NAME,
+    `--apply` dropped, `--slug` narrowing a scheduled run to one card, a re-sync
+    that throws the moves away on schedule, and a new step before the fetch that
+    fails on schedule. Each left the job scheduled and every rule green, and no
+    scheduled run proposed anything again.
+
+    No rule about what a command may contain can list every way a shell can ask
+    how it was started, so the head of the job is pinned whole, as the suite's,
+    the gate's and the PR body's shells already are: these steps, in this order,
+    with exactly these keys and values, and a gate with nothing beside its name,
+    id and shell (a `shell:` or `env:` there changes what its pinned shell does).
+    An action may move to a newer version (`@v5`, or a pinned commit). Anything
+    else changed here changes this literal in the same pull request, and that
+    diff is the review."""
+    steps = STEPS()
+    g = steps.index(gate_step())
+    assert g == len(HEAD_STEPS), (
+        f"{g} steps come before the gate, and the head of the job is exactly these "
+        f"{len(HEAD_STEPS)}: {[s.get('name') or s.get('uses') for s in HEAD_STEPS]}")
+    for want, st in zip(HEAD_STEPS, steps[:g]):
+        if "uses" in want:
+            uses = str(st.get("uses", ""))
+            assert re.fullmatch(re.escape(want["uses"]) + ACTION_VERSION, uses), (
+                f"step {label(st)!r} uses {uses!r}, where the head has {want['uses']}@<version>")
+            rest = {k: v for k, v in st.items() if k != "uses"}
+            wanted = {k: v for k, v in want.items() if k != "uses"}
+            assert rest == wanted, f"step {label(st)!r} carries {rest!r}, where the head has {wanted!r}"
+        else:
+            assert st == want, f"step {label(st)!r} is {st!r}, where the head has {want!r}"
+    assert set(steps[g]) == GATE_KEYS, (
+        f"the gate carries {sorted(steps[g])}, and nothing but {sorted(GATE_KEYS)}: its "
+        f"shell is pinned, and a `shell:` or `env:` beside it changes what that shell does.")
+
+test("the head of the job, up to the gate, is pinned whole",
+     check_the_head_of_the_job_is_pinned_whole)
+
+
 def check_no_delivery_step_swallows_its_own_failure():
     """continue-on-error on the PR step turns "no pull request was opened" into
     a green run. The one step allowed to fail quietly is the suite."""
