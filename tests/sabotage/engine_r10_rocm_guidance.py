@@ -159,7 +159,7 @@ for slug in NULLED_NVIDIA:
         row_edit(slug, '"hyper": null', '"hyper": 0.75')]
 S["P2 data: rtxpro-96's hyperscaler reading dropped, leaving a price with no provenance"] = [
     row_edit("rtxpro-96", ', "hyper": { "provider": "aws", "sku": "g7e.2xlarge", "region": "US East (N. Virginia)", '
-                          '"date": "2026-09-23", "price": 3.36 }', "")]
+                          '"date": "2026-09-28", "price": 3.36 }', "")]
 
 # ---- C: the PDF command names its quantization ----
 S["C1 py: the interactive menu's choice carries no quantization"] = [
