@@ -292,6 +292,32 @@ PRICE_DUMP_VALUE = ("        return \"{ \" + \", \".join(f\"{json.dumps(k)}: {_d
 PRICE_APPLY_MOVED = "        if oc.status == \"MOVED\":\n            row[oc.tier] = oc.proposed\n"
 
 INDEX_HTML = "index.html"
+# A JSON config's width (fix/json-precision-width, engine_r15).
+PY_WIDTH_IF_MISSING = '    if bpp is None:\n'
+PY_WIDTH_NO_SINGLE = '        if quant and quant not in METHOD_WIDTH:\n'
+PY_WIDTH_GGUF_HINT = '                f\'"bpp", their bytes per parameter. Give it{gguf_widths() if quant == "gguf" else ""}.\')\n'
+PY_WIDTH_DEFAULT = '        cfg["bpp"] = METHOD_WIDTH.get(quant, 2)\n'
+PY_WIDTH_CONTRADICTION = '    elif quant in METHOD_WIDTH and bpp != METHOD_WIDTH[quant]:\n'
+PY_WIDTH_NO_METHOD = '    elif not quant and bpp not in (1, 2):\n'
+PY_WIDTH_JSON_GIVEN = '        if "bpp" in raw:\n            cfg["bpp"] = raw["bpp"]\n'
+PY_WIDTH_ONE_ONLY = '    return {quant: next(iter(ws)) for quant, ws in widths.items() if len(ws) == 1}\n'
+# A JSON config's or the menu's NaN or Infinity (fix/json-precision-width, engine_r21).
+PY_NON_FINITE_TEST = '        if isinstance(value, float) and not math.isfinite(value):\n'
+PY_NON_FINITE_RAISE = '            raise PlanRefused(f"{label}: {json.dumps(value)} isn\'t a finite number, so the plan can\'t be "\n'
+PY_NON_FINITE_JSON = ('    if isinstance(raw, dict):\n'
+                      '        refuse_non_finite({json.dumps(key): value for key, value in raw.items()})\n')
+PY_NON_FINITE_MENU = '        refuse_non_finite({"Parameters (B)": arch["params"], "MoE active %": arch["active"]})\n'
+# The model-path refusal (fix/refuse-relative-model-paths, engine_r12).
+PY_PATH_VARIABLE = '    if "$" in model:\n'
+PY_PATH_ABSOLUTE = '    if not model or model.startswith("/"):\n'
+PY_PATH_TILDE = '    if model.startswith("~"):\n'
+PY_PATH_RELATIVE = '    if model in (".", "..") or model.startswith(("./", "../")) or model.count("/") >= 2:\n'
+PY_PATH_REASON = '    reason = unresolvable_model_path(cfg.get("hf_model"))\n'
+PY_PATH_REFUSE_JSON = '    refuse_model_path_the_server_cannot_resolve(cfg)\n'
+PY_PATH_REFUSE_MENU = '        refuse_model_path_the_server_cannot_resolve({"hf_model": hf_model})\n'
+PY_MENU_NAME = '        model_name = input("  Display name: ").strip() or f"{arch[\'params\']}B model"\n'
+PY_PATH_REFUSAL = '        raise PlanRefused(f"The model path {cfg[\'hf_model\']!r} {reason}. Give its absolute path on "\n                          f"the GPU server instead, for example /opt/models/<name>.")\n'
+
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
 PRICE_PY = "tools/price_check.py"
