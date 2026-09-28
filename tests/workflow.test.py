@@ -269,8 +269,12 @@ def check_the_price_job_runs_once_a_week():
     runs, and then the 1st of every month; both passed a rule that asked only
     for a schedule. So the one cron has to fix every field that decides how often
     it fires: one minute, one hour, any day of the month, any month, and one
-    weekday, as numbers. No schedule at all fails here too, since the job would
-    then run only when someone remembers to run it by hand."""
+    weekday. No schedule at all fails here too, since the job would then run
+    only when someone remembers to run it by hand.
+
+    The weekday is a number or a name, because GitHub's cron table allows both
+    ("0 - 6 or SUN-SAT"). The first version took numbers alone, and the second
+    cold check found it refusing `17 6 * * MON`, which GitHub runs."""
     path = price_path()
     f, got = os.path.basename(path), crons(load(path))
     assert len(got) == 1, (
@@ -282,9 +286,11 @@ def check_the_price_job_runs_once_a_week():
     minute, hour, dom, month, dow = fields
     assert (re.fullmatch(r"[0-9]{1,2}", minute) and 1 <= int(minute) <= 59
             and re.fullmatch(r"[0-9]{1,2}", hour) and int(hour) <= 23
-            and dom == "*" and month == "*" and re.fullmatch(r"[0-6]", dow)), (
+            and dom == "*" and month == "*"
+            and re.fullmatch(r"[0-6]|SUN|MON|TUE|WED|THU|FRI|SAT", dow)), (
         f"{f}: {got[0]!r} is not once a week. Write it as `minute hour * * weekday`: "
-        f"one minute from 1 to 59, one hour from 0 to 23, one weekday from 0 to 6.")
+        f"one minute from 1 to 59, one hour from 0 to 23, and one weekday, 0 to 6 "
+        f"or SUN to SAT.")
 
 test("the price job is scheduled once a week, at one fixed time",
      check_the_price_job_runs_once_a_week)
