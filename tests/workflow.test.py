@@ -199,6 +199,52 @@ test("tests.yml still provides the status check master's protection requires",
      check_the_required_status_check_still_exists)
 
 
+print("\nSchedules avoid the start of the hour")
+
+
+def crons(doc):
+    """The cron strings a workflow schedules. YAML 1.1 reads the key `on` as the
+    boolean True, and that is the key pyyaml hands back; `on:` given as a string
+    or a list of events schedules nothing."""
+    on = doc.get(True, doc.get("on"))
+    if not isinstance(on, dict):
+        return []
+    return [str(entry.get("cron", "")) for entry in on.get("schedule") or []]
+
+
+def check_no_schedule_fires_at_the_start_of_the_hour():
+    """GitHub: "The schedule event can be delayed during periods of high loads
+    ... High load times include the start of every hour. If the load is
+    sufficiently high enough, some queued jobs may be dropped." At "0 6 * * 1",
+    neither Monday the price job was due ran on time: 2026-09-21's started at
+    11:49 UTC, and 2026-09-28's had not started by 07:44, when it was run by
+    hand.
+
+    A minute field fires on a set of minutes, so "00", "*/30", "0,17" and "*"
+    are the start of the hour as surely as "0" is, and a check against the
+    string "0" passes all four. A weekly job needs one fixed minute, so that is
+    all this accepts, rather than parsing cron to look for 0 in the set. Every
+    workflow is read, and the price job must still schedule something: a rule
+    that finds no schedule would pass on a job that never runs on its own."""
+    scheduled = []
+    for f in present:
+        for cron in crons(load(os.path.join(WORKFLOWS, f))):
+            fields = cron.split()
+            assert len(fields) == 5, f"{f}: {cron!r} is not a five-field cron expression"
+            minute = fields[0]
+            assert re.fullmatch(r"[0-9]{1,2}", minute) and 1 <= int(minute) <= 59, (
+                f"{f}: {cron!r} fires at minute {minute!r}. Give it one fixed minute "
+                f"from 1 to 59: GitHub delays scheduled runs at the start of every "
+                f"hour, and drops some.")
+            scheduled.append(f)
+    assert "price-refresh.yml" in scheduled, (
+        "price-refresh.yml schedules nothing, so the weekly price check runs only "
+        "when someone remembers to run it by hand")
+
+test("no workflow is scheduled at the start of the hour, and the price job is scheduled",
+     check_no_schedule_fires_at_the_start_of_the_hour)
+
+
 print("\nThe rules bind to the job that actually does the work")
 
 
