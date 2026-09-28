@@ -318,6 +318,26 @@ test("the price job is scheduled once a week, at one fixed time",
      check_the_price_job_runs_once_a_week)
 
 
+# A contract, so it is a literal: what may start the price job.
+PRICE_TRIGGERS = {"schedule", "workflow_dispatch"}
+
+
+def check_the_price_job_starts_only_on_its_schedule_or_by_hand():
+    """Once a week holds only if nothing else starts the job. The second cold
+    check added `push: branches: [master]` beside the schedule, and every rule
+    passed: GitHub runs a workflow on any of its triggers, so the job would also
+    have run on every merge to master, each run force-pushing its branch over
+    whatever a person had committed there since the last."""
+    on = price().get(True, price().get("on"))
+    got = sorted(on) if isinstance(on, dict) else on
+    assert isinstance(on, dict) and set(on) == PRICE_TRIGGERS, (
+        f"the price job is started by {got!r}; it may be started only by "
+        f"{sorted(PRICE_TRIGGERS)}, once a week on schedule or by hand.")
+
+test("the price job starts only on its schedule or by hand",
+     check_the_price_job_starts_only_on_its_schedule_or_by_hand)
+
+
 print("\nThe rules bind to the job that actually does the work")
 
 
