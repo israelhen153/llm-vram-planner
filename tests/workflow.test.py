@@ -61,9 +61,25 @@ def load(path):
 
 
 QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
-PRICE_PATH = os.path.join(WORKFLOWS, "price-refresh.yml")
 PR_ACTION = "peter-evans/create-pull-request"
 _cache = {}
+
+
+def price_path():
+    """The workflow whose job opens the pull request, found by what it does, as
+    JOB() finds the job. It was found by filename, so renaming price-refresh.yml
+    and changing nothing else crashed every rule below with FileNotFoundError,
+    and the schedule rule blamed a file that no longer existed (the first cold
+    check of the off-the-hour fix)."""
+    if "path" not in _cache:
+        hits = [f for f in present
+                if any(str(s.get("uses", "")).startswith(PR_ACTION)
+                       for j in load(os.path.join(WORKFLOWS, f))["jobs"].values()
+                       for s in j.get("steps") or [])]
+        assert len(hits) == 1, (
+            f"expected exactly one workflow to open the price pull request, found {hits}")
+        _cache["path"] = os.path.join(WORKFLOWS, hits[0])
+    return _cache["path"]
 
 
 def price():
@@ -71,7 +87,7 @@ def price():
     at module level, outside any test() — a crash rather than a named failure,
     which is how a suite stops reporting what it found."""
     if "doc" not in _cache:
-        _cache["doc"] = load(PRICE_PATH)
+        _cache["doc"] = load(price_path())
     return _cache["doc"]
 
 
@@ -237,9 +253,10 @@ def check_no_schedule_fires_at_the_start_of_the_hour():
                 f"from 1 to 59: GitHub delays scheduled runs at the start of every "
                 f"hour, and drops some.")
             scheduled.append(f)
-    assert "price-refresh.yml" in scheduled, (
-        "price-refresh.yml schedules nothing, so the weekly price check runs only "
-        "when someone remembers to run it by hand")
+    name = os.path.basename(price_path())
+    assert name in scheduled, (
+        f"{name} schedules nothing, so the weekly price check runs only "
+        f"when someone remembers to run it by hand")
 
 test("no workflow is scheduled at the start of the hour, and the price job is scheduled",
      check_no_schedule_fires_at_the_start_of_the_hour)
