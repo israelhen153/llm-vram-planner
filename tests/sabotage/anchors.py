@@ -307,6 +307,16 @@ PY_NON_FINITE_RAISE = '            raise PlanRefused(f"{label}: {json.dumps(valu
 PY_NON_FINITE_JSON = ('    if isinstance(raw, dict):\n'
                       '        refuse_non_finite({json.dumps(key): value for key, value in raw.items()})\n')
 PY_NON_FINITE_MENU = '        refuse_non_finite({"Parameters (B)": arch["params"], "MoE active %": arch["active"]})\n'
+# The model-path refusal (fix/refuse-relative-model-paths, engine_r12).
+PY_PATH_VARIABLE = '    if "$" in model:\n'
+PY_PATH_ABSOLUTE = '    if not model or model.startswith("/"):\n'
+PY_PATH_TILDE = '    if model.startswith("~"):\n'
+PY_PATH_RELATIVE = '    if model in (".", "..") or model.startswith(("./", "../")) or model.count("/") >= 2:\n'
+PY_PATH_REASON = '    reason = unresolvable_model_path(cfg.get("hf_model"))\n'
+PY_PATH_REFUSE_JSON = '    refuse_model_path_the_server_cannot_resolve(cfg)\n'
+PY_PATH_REFUSE_MENU = '        refuse_model_path_the_server_cannot_resolve({"hf_model": hf_model})\n'
+PY_MENU_NAME = '        model_name = input("  Display name: ").strip() or f"{arch[\'params\']}B model"\n'
+PY_PATH_REFUSAL = '        raise PlanRefused(f"The model path {cfg[\'hf_model\']!r} {reason}. Give its absolute path on "\n                          f"the GPU server instead, for example /opt/models/<name>.")\n'
 
 # The quantization lists (fix/json-known-quantizations, engine_r17).
 PY_QUANT_SERVED = '    served = VLLM_QUANTIZATIONS.get(vendor, ())\n'
