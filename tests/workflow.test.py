@@ -238,11 +238,11 @@ def check_no_schedule_fires_at_the_start_of_the_hour():
 
     A minute field fires on a set of minutes, so "00", "*/30", "0,17" and "*"
     are the start of the hour as surely as "0" is, and a check against the
-    string "0" passes all four. A weekly job needs one fixed minute, so that is
-    all this accepts, rather than parsing cron to look for 0 in the set. Every
-    workflow is read, and the price job must still schedule something: a rule
-    that finds no schedule would pass on a job that never runs on its own."""
-    scheduled = []
+    string "0" passes all four. One fixed minute is all this accepts, rather
+    than parsing cron to look for 0 in the set. That refuses a schedule such as
+    "17,47" that never fires at minute 0, deliberately: no workflow here needs
+    one, and a parser for the set would be one more thing to get wrong. Every
+    workflow is read, not only the price job's."""
     for f in present:
         for cron in crons(load(os.path.join(WORKFLOWS, f))):
             fields = cron.split()
@@ -252,14 +252,42 @@ def check_no_schedule_fires_at_the_start_of_the_hour():
                 f"{f}: {cron!r} fires at minute {minute!r}. Give it one fixed minute "
                 f"from 1 to 59: GitHub delays scheduled runs at the start of every "
                 f"hour, and drops some.")
-            scheduled.append(f)
-    name = os.path.basename(price_path())
-    assert name in scheduled, (
-        f"{name} schedules nothing, so the weekly price check runs only "
-        f"when someone remembers to run it by hand")
 
-test("no workflow is scheduled at the start of the hour, and the price job is scheduled",
+test("no workflow is scheduled at the start of the hour",
      check_no_schedule_fires_at_the_start_of_the_hour)
+
+
+def check_the_price_job_runs_once_a_week():
+    """The price job is weekly by design ("Weekly, not daily", its own comment
+    says), and once a week is also what keeps its pull request safe to finish by
+    hand: every run rebuilds automation/price-refresh from master and
+    force-pushes it, so a second run that week replaces the goldens a person
+    committed after the first.
+
+    Being scheduled was not enough. The first cold check of the off-the-hour fix
+    kept minute 17 and scheduled February 31st, which GitHub accepts and never
+    runs, and then the 1st of every month; both passed a rule that asked only
+    for a schedule. So the one cron has to fix every field that decides how often
+    it fires: one minute, one hour, any day of the month, any month, and one
+    weekday, as numbers. No schedule at all fails here too, since the job would
+    then run only when someone remembers to run it by hand."""
+    path = price_path()
+    f, got = os.path.basename(path), crons(load(path))
+    assert len(got) == 1, (
+        f"{f} schedules {got}, and the price job runs exactly once a week: with none "
+        f"it runs only when someone runs it by hand, and a second run the same week "
+        f"force-pushes over goldens committed after the first.")
+    fields = got[0].split()
+    assert len(fields) == 5, f"{f}: {got[0]!r} is not a five-field cron expression"
+    minute, hour, dom, month, dow = fields
+    assert (re.fullmatch(r"[0-9]{1,2}", minute) and 1 <= int(minute) <= 59
+            and re.fullmatch(r"[0-9]{1,2}", hour) and int(hour) <= 23
+            and dom == "*" and month == "*" and re.fullmatch(r"[0-6]", dow)), (
+        f"{f}: {got[0]!r} is not once a week. Write it as `minute hour * * weekday`: "
+        f"one minute from 1 to 59, one hour from 0 to 23, one weekday from 0 to 6.")
+
+test("the price job is scheduled once a week, at one fixed time",
+     check_the_price_job_runs_once_a_week)
 
 
 print("\nThe rules bind to the job that actually does the work")
