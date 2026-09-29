@@ -104,15 +104,30 @@ _building = []
 # build can change a style (a cold check planted a figure that way, and a memo keyed
 # on the name served every later card the first card's). A paragraph given anything
 # more than its markup and style parses its own, a parse that fails is never kept, and
-# builds that lay paragraphs out parse their own.
+# builds that lay paragraphs out parse their own. What is kept is a copy of the first
+# paragraph's attributes, not the paragraph: a build that changes a paragraph after
+# making it must not change the ones made after it.
 _PARSED = {}
 _reading = []   # non-empty while story_strings() builds a story it only reads
 
 
 def style_state(style):
-    """Every attribute a style carries, but its parent, whose values reportlab has
-    already copied into it."""
-    return {k: v for k, v in vars(style).items() if k != "parent"}
+    """What reportlab can read from a style: every attribute the style carries, and
+    every one its class carries that the style does not, since reportlab reads them
+    through getattr (a paragraph with no bullet of its own takes getattr(style,
+    'bulletText', None)). The second cold check set a figure on ParagraphStyle itself,
+    which vars(style) cannot see, and every later card was served the first card's
+    parse. Not the parent, whose values reportlab has already copied into the style."""
+    names = set(vars(style))
+    for cls in type(style).__mro__[:-1]:
+        names.update(k for k in vars(cls) if not k.startswith("_"))
+    names.discard("parent")
+    state = {}
+    for name in names:
+        value = getattr(style, name)
+        if not callable(value):
+            state[name] = value
+    return state
 
 
 class RecordingParagraph(gr.Paragraph):
@@ -123,10 +138,10 @@ class RecordingParagraph(gr.Paragraph):
             key, state = (text, args[0].name), style_state(args[0])
             parsed = _PARSED.get(key)
             if parsed is not None and parsed[1] == state:
-                self.__dict__.update(parsed[0].__dict__)
+                self.__dict__.update(parsed[0])
                 return
             super().__init__(text, *args)
-            _PARSED[key] = (self, state)
+            _PARSED[key] = (dict(self.__dict__), state)
             return
         super().__init__(text, *args, **kwargs)
 
@@ -1411,8 +1426,10 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
     nothing a test reads: a markup that fails to parse fails every time; a style
     changed since, under the same name, gets a parse of its own, bullet included (the
     cold check's planted figure rode a style's bulletText); a bullet given by position
-    or by keyword is the paragraph's own, every time; and a paragraph built outside a
-    story being read parses its own."""
+    or by keyword is the paragraph's own, every time; a bullet on the style's class is
+    read as reportlab reads it (the second cold check's figure rode ParagraphStyle
+    itself); a paragraph changed after it was built changes none built after it; and a
+    paragraph built outside a story being read parses its own."""
     style = gr.getSampleStyleSheet()["Normal"]
     _reading.append(True)
     try:
@@ -1434,6 +1451,27 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
             by_keyword = RecordingParagraph("<b>shared</b>", style, bulletText=bullet)
             assert (by_position.bulletText, by_keyword.bulletText) == (bullet, bullet), (
                 bullet, by_position.bulletText, by_keyword.bulletText)
+        # A bullet on the style's class, which every style without one of its own reads:
+        # the second cold check set it on ParagraphStyle around one heading, for cards
+        # without constants only, where a comparison of vars(style) cannot see it.
+        cls = type(style)
+        had, old = "bulletText" in vars(cls), vars(cls).get("bulletText")
+        cls.bulletText = "a figure riding the class"
+        try:
+            got = RecordingParagraph("<b>shared</b>", style)
+        finally:
+            if had:
+                cls.bulletText = old
+            else:
+                del cls.bulletText
+        assert got.bulletText == "a figure riding the class", (
+            f"a bullet on the style's class was served an earlier parse: {got.bulletText!r}")
+        # A paragraph changed after it was built changes no paragraph built after it.
+        origin = RecordingParagraph("<u>changed after it was built</u>", style)
+        origin.bulletText = "a figure added afterwards"
+        later = RecordingParagraph("<u>changed after it was built</u>", style)
+        assert later.bulletText is None, (
+            f"a paragraph changed after it was built was served to a later one: {later.bulletText!r}")
         # A markup of its own, so nothing above has replaced its entry: the check below
         # passed with the memo serving every build, because the changed style had.
         inside = RecordingParagraph("<i>laid out elsewhere</i>", style)
@@ -1442,7 +1480,8 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
     outside = RecordingParagraph("<i>laid out elsewhere</i>", style)
     assert outside.frags is not inside.frags, "a paragraph built outside story_strings() came from the memo"
 
-test("the parse memo changes nothing a test reads: failing markup, a changed style, a bullet of its own, a laid-out build",
+test("the parse memo changes nothing a test reads: failing markup, a changed style, a bullet of its own "
+     "or its class's, a paragraph changed later, a laid-out build",
      check_the_parse_memo_changes_nothing_a_test_reads)
 
 
