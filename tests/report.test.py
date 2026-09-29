@@ -1453,17 +1453,21 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
                 bullet, by_position.bulletText, by_keyword.bulletText)
         # A bullet on the style's class, which every style without one of its own reads:
         # the second cold check set it on ParagraphStyle around one heading, for cards
-        # without constants only, where a comparison of vars(style) cannot see it.
+        # without constants only, where a comparison of vars(style) cannot see it. A
+        # markup of its own, so its entry is this style's: "<b>shared</b>" was last parsed
+        # for the changed style above, and missed the memo whatever the comparison saw.
+        plain = RecordingParagraph("<b>on the class</b>", style)
         cls = type(style)
         had, old = "bulletText" in vars(cls), vars(cls).get("bulletText")
         cls.bulletText = "a figure riding the class"
         try:
-            got = RecordingParagraph("<b>shared</b>", style)
+            got = RecordingParagraph("<b>on the class</b>", style)
         finally:
             if had:
                 cls.bulletText = old
             else:
                 del cls.bulletText
+        assert plain.bulletText is None, f"the style carried a bullet before its class did: {plain.bulletText!r}"
         assert got.bulletText == "a figure riding the class", (
             f"a bullet on the style's class was served an earlier parse: {got.bulletText!r}")
         # A paragraph changed after it was built changes no paragraph built after it.
