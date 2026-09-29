@@ -80,7 +80,11 @@ the data and writer that feed it (`data/gpus.json`, `tools/sync_data.py`, `tools
 since `engine_r4_cost_provenance.py` covers a feature that spans both — `workflow_*` drivers
 attack `.github/workflows/price-refresh.yml` and the guard in `tests/workflow.test.py`, and `rN` is
 the round. `ls` therefore lists each family in the order its rounds escalated. `workflow_live_*`
-came from a real run rather than a review.
+came from a real run rather than a review. `corpus_*` drivers attack the corpus itself — a driver,
+the shell driver or `tests/corpus.test.py` — and name that check as their only judge, through
+`run_driver(S, judges=...)`, since it is the one suite that can see such an edit and the one
+`JUDGING_SUITES` has to leave out. `chain.sh` and `parallel.py` therefore skip them in a default
+run; `chain.sh corpus_r1_derived_anchors_cold_check`, or the driver itself, runs one.
 
 Two files are not drivers:
 
@@ -132,6 +136,7 @@ compared as resolved values before and after, and every one was identical.
 | `workflow_r3_name_bindings.py` | 3 | The round-2 guard's bindings: a second job in the same file carrying the original bug where every rule read one literal job key, a job-level `if:` that retires the job as "skipped", a decoy `echo` that takes `id: suite` so the PR body reports its outcome forever, and `format()` hiding a filename from the path regex |
 | `workflow_live_first_run.py` | live | Not from a review: what the first real run of the fixed price job found. `add-paths` listed `assets/*.png` and make_assets.py writes three files there, so the manifest recording index.html's hash was regenerated and then left behind, failing the asset gate on every price PR |
 | `workflow_r4_shell_quoting.py` | 4 | The guard's own helper: six shell-quoting shapes that hid a test run from `executes()` (quoted argument, command substitution, `$'...'`, an apostrophe in a comment that opens a span across newlines), plus a rule that passed by not looking, a negative pathspec, `UPDATE_GOLDEN` through `env:`, and the gate — which nothing pinned at all |
+| `corpus_r1_derived_anchors_cold_check.py` | corpus 1 | The cold check of `chore/derive-catalog-anchors` at `23fac94`, against what `tests/corpus.test.py` promises, judged by that check alone: a price quoted with nothing after it, which the one-cent `moved` refresh keeps a prefix of (`12.3` in `12.31`); the price of a tier held under a note, which no refresh kind moves although the job's first reading there is MOVED as often as not; a second precondition in the shell driver, which the check never reads; a driver's `Missing` handling regressed to an assert, or a sabotage dropped instead of refused, where no refresh takes the target out; and the check blinded so `moved` moves nothing, which its own guard cannot tell from a refresh that did. Every value is read from `data/gpus.json` as the driver loads. All six survived at `23fac94`, and read GREEN until the check learns to see them |
 
 The suites that judge a sabotage are listed once, in `harness.py`'s `JUDGING_SUITES`, and
 `suites.sh` runs the same set for the one bash driver, printing one line each. `assets.test.py` is deliberately excluded — it hashes `index.html` and goes red on
@@ -146,7 +151,9 @@ tier still held under a note confirmed. Each time it loads every driver against 
 applies every sabotage again, so one that quotes a value the job rewrites goes red in the pull
 request that adds it, not in the bot's. It writes nothing to disk. The one refusal it lets pass
 is the one a refresh has to cause: a sabotage built on a held note, once that note is confirmed
-away, which says so with `harness.Missing(..., note=(slug, tier))`.
+away, which says so with `harness.Missing(..., note=(slug, tier))`. The `corpus_*` drivers name it
+as their only judge: what they edit is a driver or the check itself, which no other suite reads,
+and the check loads them like any other driver, so their anchors in the drivers drift as loudly.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
 because none of the other five opens `.github/`.
 

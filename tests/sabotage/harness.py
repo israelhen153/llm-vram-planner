@@ -36,9 +36,11 @@ JUDGING_SUITES = [("model", ["node", "tests/model.test.js"]),
           ("workflow", ["python3", "tests/workflow.test.py"])]
 
 
-def run_judging_suites():
+def run_judging_suites(suites=None):
+    """Each judging suite's exit status, FAIL lines, error lines and tally: the suites
+    in JUDGING_SUITES, or the ones a driver names (see run_driver's judges)."""
     res = {}
-    for name, cmd in JUDGING_SUITES:
+    for name, cmd in (JUDGING_SUITES if suites is None else suites):
         p = subprocess.run(cmd, capture_output=True, text=True)
         out = p.stdout + p.stderr
         fails = [l.strip() for l in out.splitlines() if l.lstrip().startswith("FAIL")]
@@ -48,14 +50,15 @@ def run_judging_suites():
     return res
 
 
-def require_green_baseline():
+def require_green_baseline(suites=None):
     """A sabotage is judged by a suite going red. If a suite is ALREADY red for an
     unrelated reason — a flaky test, a missing dependency, an unrelated regression in
     the same commit — then every sabotage in the run reads as caught, with no warning
     and no way to tell it from a genuine catch. The run is worthless and looks perfect.
 
     So prove the tree judges green before judging anything against it."""
-    red = [k for k, v in run_judging_suites().items() if v[0] != 0]
+    results = run_judging_suites() if suites is None else run_judging_suites(suites)
+    red = [k for k, v in results.items() if v[0] != 0]
     if red:
         sys.exit(f"refusing to judge: {', '.join(red)} already red on the unmodified "
                  f"tree, so every sabotage would read as caught")
@@ -149,11 +152,17 @@ def resyncs(spec, touched):
     return CATALOG in touched
 
 
-def run_driver(sabotages):
+def run_driver(sabotages, judges=None):
     """Run a driver's sabotages one at a time and report which the suite missed.
 
         python3 <driver> [name-substring ...]    only the sabotages matching one
         python3 <driver> --from <name-prefix>    from that sabotage onwards
+
+    judges names the suites that judge this driver in place of JUDGING_SUITES. The
+    corpus_* drivers edit the corpus itself — a driver, or tests/corpus.test.py —
+    which only that check can see, and it is left out of JUDGING_SUITES because
+    every engine sabotage turns it red. It is passed on only when a driver gave
+    it: parallel.py wraps run_judging_suites() with a function of no arguments.
 
     Every driver used to carry its own copy of this loop — fifteen copies in six
     different shapes, each commented "same shape as every other driver, on
@@ -181,7 +190,10 @@ def run_driver(sabotages):
         names = [n for n in sabotages
                  if not patterns or any(p.lower() in n.lower() for p in patterns)]
     print(f"{len(names)} sabotage(s)")
-    require_green_baseline()
+    if judges is None:
+        require_green_baseline()
+    else:
+        require_green_baseline(judges)
     survived, unapplied = [], []
     for name in names:
         spec = sabotages[name]
@@ -198,7 +210,7 @@ def run_driver(sabotages):
             restore_files(touchable)
             continue
         try:
-            results = run_judging_suites()
+            results = run_judging_suites() if judges is None else run_judging_suites(judges)
         finally:
             restore_files(touched)
         red = {suite: r for suite, r in results.items() if r[0] != 0}

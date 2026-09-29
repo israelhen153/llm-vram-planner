@@ -152,9 +152,11 @@ test("no payload part is already present in the engine", check_no_payload_part_i
 
 print("\nEvery sabotage still applies, wherever its excerpt is written")
 
-# The drivers, found the way chain.sh finds them.
+# The drivers, found the way chain.sh finds them, plus the corpus_* drivers, which edit
+# the corpus itself and so run by name only: their anchors are excerpts of the drivers
+# and of this file, and drift the same way.
 SABOTAGE_DIR = os.path.join(ROOT, "tests", "sabotage")
-DRIVERS = sorted(f for f in os.listdir(SABOTAGE_DIR) if re.fullmatch(r"(engine|workflow)_\w+\.(py|sh)", f))
+DRIVERS = sorted(f for f in os.listdir(SABOTAGE_DIR) if re.fullmatch(r"(engine|workflow|corpus)_\w+\.(py|sh)", f))
 # A shell driver can't be read as data. The one there is gets a check of its own
 # below, and a second one fails that check until it has one too.
 SHELL_DRIVERS = ["engine_r1_perfkey_typo.sh"]
@@ -350,7 +352,7 @@ def reading_from(files):
         return real(file, mode, *args, **kwargs)
 
     def forget_drivers():
-        for name in [m for m in sys.modules if re.match(r"(engine|workflow)_", m)]:
+        for name in [m for m in sys.modules if re.match(r"(engine|workflow|corpus)_", m)]:
             del sys.modules[name]
 
     forget_drivers()
