@@ -540,5 +540,202 @@ test("a corpus worker restores a tree a sabotage left dirty, and trusts no old b
      check_a_worker_restores_a_tree_left_dirty_and_trusts_no_old_bytecode)
 
 
+RUNNER_HARNESS = """import fcntl, os, subprocess
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+JUDGING_SUITES = [("model", ["true"]), ("seventh", ["true"])]
+
+
+def require_green_baseline():
+    pass
+
+
+def run_judging_suites():
+    with open(os.path.join(os.path.dirname(ROOT), ".lock")) as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            held = "held"
+        else:
+            held = "free"
+            fcntl.flock(fh, fcntl.LOCK_UN)
+    with open(os.environ["RUNNER_TEST_LOG"], "a") as fh:
+        fh.write(held + "\\n")
+    with open(os.path.join(ROOT, "target.txt")) as fh:
+        sabotaged = "sabotaged" in fh.read()
+    with open(os.path.join(ROOT, "tests", "golden", "g.json")) as fh:
+        emptied = fh.read().strip() == "{}"
+    got = {"model": (1, ["FAIL the golden"], [], "") if emptied else (0, [], [], ""),
+           "seventh": (1, ["FAIL a real catch"], [], "") if sabotaged else (0, [], [], "")}
+    return {name: got[name] for name, _ in JUDGING_SUITES}
+
+
+def run_driver(sabotages):
+    caught = survived = 0
+    for name, edits in sabotages.items():
+        for f, old, new, count in edits:
+            path = os.path.join(ROOT, f)
+            with open(path) as fh:
+                text = fh.read()
+            with open(path, "w") as fh:
+                fh.write(text.replace(old, new))
+        judged = run_judging_suites()
+        subprocess.run(["git", "checkout", "--", "."], cwd=ROOT, check=True)
+        if any(r[0] for r in judged.values()):
+            caught += 1
+            print(f"  red    {name}")
+        else:
+            survived += 1
+            print(f"  GREEN  {name}   <-- SURVIVED")
+    print("")
+    print(f"{caught} caught, {survived} survived")
+"""
+
+RUNNER_DRIVER = """S = {"caught by the seventh suite alone": [("target.txt", "clean", "sabotaged", 1)],
+     "survives every suite": [("target.txt", "clean", "tidied", 1)]}
+"""
+
+
+def throwaway_repo(tree):
+    """A git runner for a throwaway repository: no hooks, no signing, its own name."""
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                               *args], cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
+    git("init", "-q", "--template=")  # no hooks from a global template
+    return git
+
+
+def check_a_run_judges_the_asked_commit_with_every_suite_under_its_lock():
+    """A whole run of this checkout's parallel.py, copied into a throwaway repository
+    whose own checkout sits at a commit without the driver, asked to judge the next
+    commit, which has it. The harness there has a seventh judging suite that
+    ORDER_HINT does not name and that alone catches one sabotage, and one sabotage
+    that survives every suite. The run must judge the commit asked for, reading its
+    drivers and their sabotages from that commit and not from its own checkout; run
+    every suite under --early-exit, the seventh too; exit non-zero on the survivor; and
+    hold the workers' lock for as long as any suite runs. The third cold check broke
+    each of these in one line and the suite stayed green (R17, R18, R21, R23, R27), and
+    found the lock already let go while judging, because its name was reused."""
+    import glob, shutil, subprocess, tempfile
+    with tempfile.TemporaryDirectory() as d:
+        repo, log = os.path.join(d, "repo"), os.path.join(d, "judging.log")
+        sab = os.path.join(repo, "tests", "sabotage")
+        os.makedirs(sab)
+        os.makedirs(os.path.join(repo, "tests", "golden"))
+        shutil.copy(os.path.join(ROOT, "tests", "sabotage", "parallel.py"), sab)
+        for path, text in ((os.path.join(sab, "harness.py"), RUNNER_HARNESS),
+                           (os.path.join(repo, "target.txt"), "clean\n"),
+                           (os.path.join(repo, "tests", "golden", "g.json"), '{"a": 1}\n'),
+                           (os.path.join(repo, ".gitignore"), "tmp/\n")):
+            with open(path, "w") as f:
+                f.write(text)
+        git = throwaway_repo(repo)
+        git("add", ".")
+        git("commit", "-q", "-m", "without the driver")
+        without = git("rev-parse", "HEAD")
+        with open(os.path.join(sab, "engine_fake.py"), "w") as f:
+            f.write(RUNNER_DRIVER)
+        git("add", ".")
+        git("commit", "-q", "-m", "with the driver")
+        asked = git("rev-parse", "HEAD")
+        git("checkout", "-q", "--detach", without)
+        done = subprocess.run([sys.executable, "-B", os.path.join(sab, "parallel.py"), "--ref", asked, "--jobs", "1",
+                               "--early-exit", "engine_fake"], cwd=repo, capture_output=True, text=True, timeout=120,
+                              env=dict(os.environ, SABOTAGE_INHIBITED="1", RUNNER_TEST_LOG=log))
+        out = (done.stdout + done.stderr)[-800:]
+        assert f"judging {asked[:7]}" in done.stdout, f"the run did not judge the commit asked for:\n{out}"
+        logs = glob.glob(os.path.join(repo, "tmp", "sabotage", "parallel-*", "engine_fake.log"))
+        assert len(logs) == 1, f"no log of the driver the asked commit has:\n{out}"
+        with open(logs[0]) as f:
+            judged = f.read()
+        assert "  red    caught by the seventh suite alone" in judged, f"the seventh suite never ran:\n{judged}"
+        assert "  GREEN  survives every suite   <-- SURVIVED" in judged, judged
+        assert done.returncode != 0, f"a run with a survivor exited 0:\n{out}"
+        with open(log) as f:
+            states = f.read().split()
+    assert states and set(states) == {"held"}, f"the workers' lock was free while suites ran: {states}"
+
+test("a run judges the commit asked for, with every suite, under its lock, and fails on a survivor",
+     check_a_run_judges_the_asked_commit_with_every_suite_under_its_lock)
+
+
+def check_a_shell_driver_runs_from_the_commit_under_test():
+    """The shell driver is run from the commit under test's tree, as the Python ones
+    are read from it. The check pointed it at the runner's own checkout (R16), and a
+    shell driver only the commit under test has would never have run."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tree:
+        os.makedirs(os.path.join(tree, "tests", "sabotage"))
+        with open(os.path.join(tree, "tests", "sabotage", "engine_fake_shell.sh"), "w") as f:
+            f.write('echo "the commit under test\'s own shell driver"\n')
+        got = runner().judge_shell(tree, "engine_fake_shell")
+    assert got["rc"] == 0 and "the commit under test's own shell driver" in got["output"], got
+
+test("the shell driver runs from the commit under test, not the runner's checkout",
+     check_a_shell_driver_runs_from_the_commit_under_test)
+
+
+def check_compare_reads_the_suites_under_each_status_and_every_driver():
+    """--compare holds one run to another sabotage by sabotage, and a status alone is
+    not enough: the same "red" can come from another suite or another failure, which is
+    how 90 catches made by a stale .pyc once matched on status. And a driver judged in
+    one run only is a difference, not a skip. The check made it compare statuses alone
+    (R19) and pass a one-sided driver (R20), and no test noticed."""
+    import contextlib, io, tempfile
+    block = lambda failure: f"1 sabotage(s)\n  red    a\n         model[1 failed: {failure}]\n\n1 caught, 0 survived\n"
+    with tempfile.TemporaryDirectory() as d:
+        first, second = os.path.join(d, "first"), os.path.join(d, "second")
+        os.makedirs(first)
+        os.makedirs(second)
+        for where, name, text in ((first, "engine_x", block("FAIL the real check")),
+                                  (second, "engine_x", block("FAIL a stale .pyc")),
+                                  (first, "engine_only_first", block("FAIL the real check"))):
+            with open(os.path.join(where, name + ".log"), "w") as f:
+                f.write(text)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            rc = runner().compare(first, second)
+    said = printed.getvalue()
+    assert rc == 1, said
+    assert "engine_x: a:" in said, f"the same status from another failure was called the same:\n{said}"
+    assert "engine_only_first: only in the first run" in said, f"a driver judged in one run only was passed:\n{said}"
+
+test("--compare reads the suites under each status, and every driver on both sides",
+     check_compare_reads_the_suites_under_each_status_and_every_driver)
+
+
+def check_the_golden_failures_come_from_every_golden():
+    """The FAIL lines that only a golden makes are found by emptying every golden file
+    at once and running the suites, and every file must be emptied: the check emptied
+    the first alone (R30), and a catch by the second golden would have been reported
+    as a real one. Each file is restored afterwards."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tree:
+        gdir = os.path.join(tree, "tests", "golden")
+        os.makedirs(gdir)
+        for name in ("a.json", "b.json"):
+            with open(os.path.join(gdir, name), "w") as f:
+                f.write('{"kept": 1}\n')
+        git = throwaway_repo(tree)
+        git("add", ".")
+        git("commit", "-q", "-m", "goldens")
+
+        def emptied(name):
+            with open(os.path.join(gdir, name)) as f:
+                return f.read().strip() == "{}"
+
+        harness = types.SimpleNamespace(run_judging_suites=lambda: {
+            "model": (1, ["FAIL golden a"], [], "") if emptied("a.json") else (0, [], [], ""),
+            "report": (1, ["FAIL golden b"], [], "") if emptied("b.json") else (0, [], [], "")})
+        got = runner().golden_failures(harness, tree)
+        restored = [not emptied(n) for n in ("a.json", "b.json")]
+    assert got == {"FAIL golden a", "FAIL golden b"}, f"golden failures found: {got}"
+    assert all(restored), "a golden file was left emptied"
+
+test("the golden failures come from every golden, each restored after",
+     check_the_golden_failures_come_from_every_golden)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

@@ -489,7 +489,12 @@ def run(args):
     os.makedirs(logdir, exist_ok=True)
 
     jobs = args.jobs or os.cpu_count() or 2
-    lock = hold_the_workers(root)  # noqa: F841 — held until exit
+    # Held until this process exits, and only while something refers to it: the file
+    # closes, and the lock goes with it, when its last reference does. It was named
+    # `lock`, and the results' threading.Lock below took that name, so the workers were
+    # free to a second run for the whole of the judging (the third cold check saw one
+    # pass it and refuse on a worker the first run had dirty).
+    workers_lock = hold_the_workers(root)  # noqa: F841
     workers = prepare_workers(root, sha, jobs)
     drivers = discover(workers[0], args.drivers)
     py = [d for d, kind in drivers if kind == "py"]
