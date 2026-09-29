@@ -112,25 +112,17 @@ _reading = []   # non-empty while story_strings() builds a story it only reads
 
 
 def style_state(style):
-    """What reportlab can read from a style: every attribute the style carries, and
-    every one its class carries that the style does not, since reportlab reads them
-    through getattr (a paragraph with no bullet of its own takes getattr(style,
-    'bulletText', None)). The second cold check set a figure on ParagraphStyle itself,
-    which vars(style) cannot see, and every later card was served the first card's
-    parse. Not the parent, whose values reportlab has already copied into the style."""
-    names = set(vars(style))
-    for cls in type(style).__mro__[:-1]:
-        names.update(k for k in vars(cls) if not k.startswith("_"))
-    names.discard("parent")
-    state = {}
-    for name in names:
-        value = getattr(style, name)
-        if not callable(value):
-            state[name] = value
-    # And the bullet as reportlab reads it, whatever answers it. The loop above cannot
-    # see a class-level __getattr__, and drops a value that is also callable; the third
-    # cold check reached a heading's bullet both ways, and the memo served the first
-    # card's parse to every later card.
+    """What a style gives the text a story is read for: every attribute the style
+    carries but its parent, whose values reportlab has already copied into it, and the
+    bullet as reportlab reads it, getattr(style, 'bulletText', None), whatever answers
+    that: the style, its class, a property or a class-level __getattr__. A paragraph
+    with no bullet of its own takes its style's, and three cold checks planted a
+    figure there, on the style, on ParagraphStyle itself, through a __getattr__ and as
+    a callable str; each time a memo that looked elsewhere served the first card's
+    parse to every later card. Nothing else a style carries changes that text (fonts
+    and colours shape the layout, which story_strings() never builds), so reading the
+    class for them, as round 2's fix did, bought nothing the bullet does not cover."""
+    state = {k: v for k, v in vars(style).items() if k != "parent"}
     state["bulletText"] = getattr(style, "bulletText", None)
     return state
 

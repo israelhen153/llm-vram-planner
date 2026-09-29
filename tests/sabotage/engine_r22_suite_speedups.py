@@ -6,9 +6,11 @@ The report suite parses each distinct paragraph once while story_strings() reads
 story, and the sync suite evaluates each test's blocks in one node process. Both were
 shown to change no verdict by judging the whole corpus before and after. These bring
 back what would: the memo keeping a parse that failed, serving a build outside
-story_strings(), comparing styles by their own attributes only (blind to a bullet on
-their class, as the second cold check showed), or keeping the first paragraph's live
-attributes rather than a copy; the node evaluator running every block in one context, dropping a
+story_strings(), keeping the first paragraph's live attributes rather than a copy, or
+not reading a style's bullet as reportlab reads it, which a figure on the style's class,
+a class-level __getattr__ or a callable bullet then rides past (M10; M8, which took away
+a scan of the class dicts, went when the bullet read through getattr made that scan
+redundant); the node evaluator running every block in one context, dropping a
 failure, naming no block, or answering every block with the first one's object.
 
 Not here: the corpus runner's own check that a worker is at the proved commit and
@@ -25,9 +27,6 @@ SYNC_TEST = "tests/sync.test.py"
 MEMO_KEEP = '            _PARSED[key] = (dict(self.__dict__), state)\n'
 MEMO_MISS = '            super().__init__(text, *args)\n' + MEMO_KEEP
 MEMO_GATE = '        if _reading and isinstance(text, str) and len(args) == 1 and not kwargs:\n'
-STYLE_STATE = ('    names = set(vars(style))\n'
-               '    for cls in type(style).__mro__[:-1]:\n'
-               '        names.update(k for k in vars(cls) if not k.startswith("_"))\n')
 NODE_CONTEXT = '         "  try { return {ok: vm.runInNewContext("\n         f"\'(new Function(b + \\"; return {var};\\"))()\', {{b}})}}; }}"\n'
 NODE_FAILURE = '        assert "ok" in result, f"node could not evaluate block {i}:\\n{result[\'error\']}"\n'
 NODE_RETURN = '    return [result["ok"] for result in results]\n'
@@ -37,8 +36,6 @@ S = {
         (REPORT_TEST, MEMO_MISS, MEMO_KEEP + '            super().__init__(text, *args)\n', 1)],
     "M2 report: the memo serves every build, not only a story being read": [
         (REPORT_TEST, MEMO_GATE, '        if isinstance(text, str) and len(args) == 1 and not kwargs:\n', 1)],
-    "M8 report: styles are compared by their own attributes only, blind to a bullet on their class": [
-        (REPORT_TEST, STYLE_STATE, '    names = set(vars(style))\n', 1)],
     "M9 report: the memo keeps the first paragraph's live attributes, so a later change reaches every later build": [
         (REPORT_TEST, MEMO_KEEP, '            _PARSED[key] = (self.__dict__, state)\n', 1)],
     "M10 report: the bullet is not read as reportlab reads it, so a __getattr__ or a callable bullet goes unseen": [
