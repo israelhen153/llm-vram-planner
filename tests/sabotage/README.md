@@ -124,6 +124,7 @@ compared as resolved values before and after, and every one was identical.
 | `workflow_r7_scheduled_run_path.py` | 7 | The neighbours of round 6's survivors, which its fixes close as classes: a schedule at a good minute that runs more often than once a week (every weekday, every six hours, a second weekly cron beside the first), and a condition on the steps the check did not try — the checkout and the re-sync before the gate, and the install, image and suite steps between the gate and the suite |
 | `workflow_r8_schedule_cold_check_2.py` | 8 | The second cold check of the schedule fix (514f3e7): the ten sabotages that survived it. The fetch and re-sync commands, which no rule reads — `--apply` chosen by an expression on the event name, the fetch wrapped in a shell `if`, `--apply` dropped, `--slug` narrowing a scheduled run, the applied moves discarded after the re-sync; a named step before the gate whose shell exits 1 on scheduled runs; the job's envelope — `runs-on` chosen by the event name, `needs:` a job that fails on schedule; a `push:` trigger beside the schedule; and `on:` defined twice, which pyyaml reads and GitHub refuses. Also records that `17 6 * * MON` was wrongly refused (since fixed) |
 | `workflow_r9_pinned_head.py` | 9 | The neighbours of round 8's survivors, which its fixes close as classes: a new step before the gate, a `shell:` or `env:` on the fetch and a `shell:` on the gate, a checkout of another ref, another Python, `defaults:`, `env:` or `container:` around the job, a `workflow_run` trigger, no hand run, and one step given two `run:` keys |
+| `workflow_r11_price_watchdog.py` | 11 | The price watchdog, which checks a scheduled run's outcome because round 10 (below, accepted risk) showed reading the workflow cannot: an unfinished, failed or reportless run taken as delivered, the report's words ignored, a pull request closed unmerged or carrying only last week's commit or a person's taken as delivery, the slot judged with no grace, on Python's weekday or a week early, a problem left green, no issue or a new one each week, and the watchdog's own workflow run inside the grace, unable to open its issue, or reading another artifact |
 
 The suites that judge a sabotage are listed once, in `harness.py`'s `JUDGING_SUITES`, and
 `suites.sh` runs the same set for the one bash driver, printing one line each. `assets.test.py` is deliberately excluded — it hashes `index.html` and goes red on
@@ -133,7 +134,8 @@ engine, and that every sabotage in every driver still applies, both of which eve
 It runs in the ordinary suite instead, so a pull request that moves engine text a sabotage quotes,
 through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
-because none of the other five opens `.github/`.
+because none of the other five opens `.github/`. `watchdog.test.py` joined them with
+`workflow_r11_price_watchdog.py`, for the same reason: no other suite runs `tools/price_watchdog.py`.
 
 Rounds escalate: round 2 found gaps round 1 left, round 3 found gaps round 2 left. That is
 normal and expensive, and it converges when probes are **derived from the data** rather than
@@ -191,6 +193,23 @@ These were accepted after round 3 and have since been **closed by the golden** (
 - A claim added to *every* card at once, which the with/without comparison is blind to by
   construction (`X2`)
 - A figure written to `document.title` — recorded by the golden in `e421faf`
+
+The price workflow's guard stopped hardening after its third cold check (round 10, 2026-09-28),
+whose ten survivors are kept on `chore/schedule-cold-check-3` (`75c8a89`) rather than in the corpus,
+where they would read as survivors on every run. They are **accepted in the file and caught at run
+time** by the price watchdog (`tools/price_watchdog.py`, round 11), which checks a day later that
+the scheduled run happened, succeeded, left its report and, when it found prices, that a pull
+request carries a commit it made:
+
+- A script between the gate and the pull request that throws the moves away (install, image or
+  PR-body step): no commit from the run reaches a pull request
+- A new step after the suite wearing one of the two permitted conditions, such as a second
+  checkout (which cleans the tree) or a step that closes the pull request: the same
+- A key GitHub's parser rejects (`timezone:` under `concurrency:`), so the file never runs: no
+  scheduled run starts
+
+Three rounds found 4, 10 and 10 survivors, each ring outside the last; reading a workflow cannot
+prove a scheduled run will do its work, and watching the outcome can.
 
 ## Reading a result
 
