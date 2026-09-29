@@ -137,7 +137,14 @@ any edit, so it would report every sabotage as caught regardless of what the sab
 `tests/corpus.test.py` is excluded for the same reason — it checks the anchors still match the
 engine, and that every sabotage in every driver still applies, both of which every sabotage breaks.
 It runs in the ordinary suite instead, so a pull request that moves engine text a sabotage quotes,
-through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run.
+through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run. It
+also refreshes the catalog in memory three ways, with the price job's own writers and the tiers
+its `SOURCE_MAP` reads: every reading re-read on a new day, every price moved a cent, and every
+tier still held under a note confirmed. Each time it loads every driver against the result and
+applies every sabotage again, so one that quotes a value the job rewrites goes red in the pull
+request that adds it, not in the bot's. It writes nothing to disk. The one refusal it lets pass
+is the one a refresh has to cause: a sabotage built on a held note, once that note is confirmed
+away, which says so with `harness.Missing(..., note=(slug, tier))`.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
 because none of the other five opens `.github/`.
 

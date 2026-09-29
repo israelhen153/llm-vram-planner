@@ -71,10 +71,16 @@ class Missing:
     exactly like a clean one. So it keeps its name and carries this where its anchor
     would be, and apply_edits() refuses it with the reason: one sabotage that could
     not be applied, as an anchor that drifted is, rather than a driver that cannot
-    load and takes every other sabotage in it along."""
+    load and takes every other sabotage in it along.
 
-    def __init__(self, what):
-        self.what = what
+    note is the (slug, tier) of the price note that is missing, when that is what is
+    missing. A note is the one thing the price job takes out of the catalog, when it
+    confirms a reading on the tier, and a sabotage built on one has to be refused
+    then. tests/corpus.test.py uses it to tell that refusal from a sabotage that
+    quoted a value the job rewrote."""
+
+    def __init__(self, what, note=None):
+        self.what, self.note = what, note
 
     def __repr__(self):
         return f"Missing({self.what!r})"

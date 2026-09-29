@@ -61,7 +61,8 @@ def invented_spot_reading():
     note = (H100.get("priceNote") or {}).get("spot")
     if not note:
         return (GPUS_JSON, Missing("h100-80/spot has no note saying it is unconfirmed (priceNote.spot), "
-                                   "so there is no unconfirmed tier to invent a reading for"), "", 1)
+                                   "so there is no unconfirmed tier to invent a reading for",
+                                   note=("h100-80", "spot")), "", 1)
     held = ('{ "spot": { "reason": ' + json.dumps(note["reason"]) + ', "checked": '
             + json.dumps(note["checked"]) + " } }")
     invented = ('{ "provider": "vast", "sku": "H100 SXM (median of 9 verified offers)", "region": "global", '
