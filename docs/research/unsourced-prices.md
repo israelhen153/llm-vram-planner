@@ -46,14 +46,20 @@ weekly reader covers each tier is the note in `tools/price_check.py`'s `SOURCE_M
 | `h200-141` | spot | $2.50 | 2026-07-27, `de26df2` | Vast gpu_name for H200 not verified against a live query |
 | `b200-192` | spot | $2.12 | 2026-05-28, `597df81` | Vast gpu_name for B200 not verified against a live query |
 
-## h100-80's spot tier: read, and held for a second read
+## h100-80's spot tier: read twice, and kept at the estimate
 
 The weekly check reads this tier from Vast, and the reads so far disagree with the catalog:
 - 2026-09-16: aborted, because Vast returned 4 qualifying offers against a minimum of 5 (PR #10).
 - 2026-09-17: +34.2%. The report is in closed PR #12's body; the owner set it aside in favour of the 2026-09-22 run.
 - 2026-09-22: +42.5% on the median of 5 verified offers (PR #24). That is past the 40% move a person has to approve. `80f5dba` held it: "Needs a second read before it should move."
+- 2026-09-28, the hand run at 07:44 UTC: no reading, because Vast returned 0 qualifying offers.
+- 2026-09-28, the scheduled run at 12:44 UTC: +44.0% on the median of 6 verified offers (PR #39). The second read agrees with the first.
 
-The note says that, and gives the percentage rather than a second price. A figure beside the catalog's figure would read as
+**What the reads measure.** The job reads Vast's asking prices (`"type": "ask"` in `fetch_vast()`, `tools/price_check.py`): verified hosts, single-GPU offers, the median. A blind check on 2026-09-28, given none of these figures, read the same market back at the job's own median, from 8 machines at 4 hosts. It also read the interruptible and spot markets the same day: Vast's interruptible bids, AWS and Azure spot, and RunPod's community cloud sat 1% to 20% above the catalog's figure, not 44%. So the reads are real for asking prices on a thin market, and they are not what the other spot markets charge.
+
+**The owner's decision, 2026-09-29:** keep the catalog's figure, and say in the note that spot prices vary, with recent reads up to 44% higher. A later check decides whether the figure moves, and whether this tier should read asking prices at all.
+
+The note says that, and gives the percentages rather than a second price. A figure beside the catalog's figure would read as
 a price.
 
 ## The four hyperscaler tiers, re-checked
