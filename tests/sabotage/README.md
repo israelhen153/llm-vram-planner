@@ -143,13 +143,18 @@ any edit, so it would report every sabotage as caught regardless of what the sab
 engine, and that every sabotage in every driver still applies, both of which every sabotage breaks.
 It runs in the ordinary suite instead, so a pull request that moves engine text a sabotage quotes,
 through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run. It
-also refreshes the catalog in memory three ways, with the price job's own writers and the tiers
-its `SOURCE_MAP` reads: every reading re-read on a new day, every price moved a cent, and every
-tier still held under a note confirmed. Each time it loads every driver against the result and
-applies every sabotage again, so one that quotes a value the job rewrites goes red in the pull
-request that adds it, not in the bot's. It writes nothing to disk. The one refusal it lets pass
-is the one a refresh has to cause: a sabotage built on a held note, once that note is confirmed
-away, which says so with `harness.Missing(..., note=(slug, tier))`.
+also refreshes the catalog in memory four ways, with the price job's own writers and the tiers
+its `SOURCE_MAP` reads: every reading re-read on a new day, every price moved to one sharing no
+text with it, every tier still held under a note confirmed at a new price, and every automated
+tier's reading and note taken away, as a person could. It does all four again from the tree the
+pull request confirming the held tiers leaves. Each time it loads every driver against the result
+and applies every sabotage again, so one that quotes a value the job rewrites goes red in the pull
+request that adds it, not in the bot's, and one whose target is gone has to be refused by name,
+never dropped. It writes nothing to disk. The refusals it lets pass are the ones the refreshed
+tree has to cause: after the fourth, any; otherwise a sabotage built on a note a reading has
+replaced, in that refresh or an earlier one, which says so with
+`harness.Missing(..., note=(slug, tier))`. The check of the tree as it is lists such a refusal
+and does not count it.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
 because none of the other five opens `.github/`.
 

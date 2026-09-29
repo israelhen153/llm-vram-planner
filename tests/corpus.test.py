@@ -175,20 +175,20 @@ def sabotages_of(driver):
     return module.S
 
 
-def why_it_would_not_apply(spec, tree=None, confirmed=()):
+def why_it_would_not_apply(spec, tree=None, excused=lambda missing: False):
     """What harness.apply_edits() would refuse this sabotage for on the tree as it
     is, or None. The same check, harness.refusal(), edit by edit and in order, on
     copies: a count that does not match, or a target its driver found gone.
 
     tree holds files as another state of the repository would have them, by path;
-    a file it does not hold is read from disk. confirmed names the (slug, tier) of
-    each note that state no longer has because a reading was confirmed there. A
-    sabotage built on one of those notes is refused by name, as it has to be, and
-    that refusal is not counted against it."""
+    a file it does not hold is read from disk. excused says of a target a driver
+    found gone (a harness.Missing) whether that state had to take it away: a note
+    a confirmed reading replaced, or anything a person removed. Such a sabotage is
+    refused by name, as it has to be, and that refusal is not counted against it."""
     import harness
     files = {}
     for f, old, new, count in harness.edits_of(spec):
-        if isinstance(old, harness.Missing) and old.note in confirmed:
+        if isinstance(old, harness.Missing) and excused(old):
             continue
         if f not in files:
             if tree is not None and f in tree:
@@ -208,43 +208,82 @@ def why_it_would_not_apply(spec, tree=None, confirmed=()):
 PY_DRIVERS = {d: sabotages_of(d) for d in DRIVERS if d.endswith(".py")}
 
 
-def check_every_sabotage_still_applies():
+def replaced_by_a_reading(catalog):
+    """Whether a sabotage built on a price note may be refused by name on this catalog:
+    only when the note's tier now carries a reading (priceSource), which is what takes a
+    note out when the price job confirms one. A note gone with no reading in its place
+    is a catalog the price suite refuses, not one to excuse here."""
+    rows = json.loads(catalog)["data"]
+    return lambda missing: missing.note is not None and missing.note[1] in (
+        (rows.get(missing.note[0]) or {}).get("priceSource") or {})
+
+
+def check_every_sabotage_still_applies(base=None):
     """The check the excerpts can't give. Only a sabotage's edits are checked: the
-    catalog re-sync some of them run afterwards is not."""
-    empty = [d for d, sabotages in PY_DRIVERS.items() if not sabotages]
-    assert not empty, f"drivers with no sabotages, so nothing here checks them: {empty}"
-    stale = []
-    for d, sabotages in PY_DRIVERS.items():
-        for name, spec in sabotages.items():
-            why = why_it_would_not_apply(spec)
-            if why:
-                stale.append(f"{d}: {name}: {why}")
+    catalog re-sync some of them run afterwards is not. A sabotage built on a held
+    note is refused by name once a confirmed reading has replaced that note, as on
+    the price pull request that confirms it, and is listed rather than counted: its
+    cold check found this check red on exactly that pull request. base is another
+    state of the tree, by path, as refresh() takes it: the drivers are loaded, and
+    their sabotages checked, with open() reading it. Returns what it listed."""
+    base = base or ENGINE
+    changed = {f: text for f, text in base.items() if text != ENGINE[f]}
+    stale, listed, excused = [], [], replaced_by_a_reading(base["data/gpus.json"])
+    with reading_from(changed) if changed else contextlib.nullcontext():
+        drivers = {d: sabotages_of(d) for d in PY_DRIVERS} if changed else PY_DRIVERS
+        empty = [d for d, sabotages in drivers.items() if not sabotages]
+        assert not empty, f"drivers with no sabotages, so nothing here checks them: {empty}"
+        for d, sabotages in drivers.items():
+            for name, spec in sabotages.items():
+                why = why_it_would_not_apply(spec, excused=excused)
+                if why:
+                    stale.append(f"{d}: {name}: {why}")
+                elif why_it_would_not_apply(spec):
+                    listed.append(f"{d}: {name}: refused by name, its note replaced by a reading: "
+                                  f"{why_it_would_not_apply(spec)}")
+    for line in listed:
+        print(f"       {line}")
     assert not stale, (
         f"{len(stale)} sabotage(s) no longer apply, so the corpus would skip them:\n         "
         + "\n         ".join(stale) +
         "\n       Point each at the engine's new text in the pull request that moved it. An "
         "excerpt more than one sabotage shares belongs in tests/sabotage/anchors.py.")
+    return listed
 
 test(f"every sabotage still applies to the tree as it is "
      f"({sum(map(len, PY_DRIVERS.values()))} sabotages in {len(PY_DRIVERS)} Python drivers)",
      check_every_sabotage_still_applies)
 
 
-def shell_driver_problems(catalog):
+def shell_driver_problems(catalog, before=None, src=None):
     """What would stop engine_r1_perfkey_typo.sh applying to this text of
     data/gpus.json, read from the script: each catalog row its loop names has to
-    carry the perfKey it corrupts exactly once."""
-    src = open(os.path.join(SABOTAGE_DIR, SHELL_DRIVERS[0]), encoding="utf-8").read()
+    carry the perfKey it corrupts exactly once. And, given the catalog before a
+    refresh, every string the script counts in a row, in any assert, has to be
+    counted there as often after it as before: a quoted price or date stops the
+    driver applying after the job's next run. Its cold check added a second assert
+    quoting a price, and only the first was read."""
+    src = src if src is not None else open(os.path.join(SABOTAGE_DIR, SHELL_DRIVERS[0]), encoding="utf-8").read()
     loop = re.search(r"^for slug in ([\w .-]+); do$", src, re.M)
     needs = re.search(r"assert line\.count\('([^']+)'\) == 1", src)
     if not (loop and needs):
         return [f"{SHELL_DRIVERS[0]} no longer has the loop and the precondition this reads"]
-    rows = catalog.splitlines()
+    counted = re.findall(r"line\.count\('([^']+)'\)", src)
+
+    def row(text, slug):
+        return [r for r in text.splitlines() if r.strip().startswith(f'"{slug}":')]
+
     problems = []
     for slug in loop.group(1).split():
-        line = [r for r in rows if r.strip().startswith(f'"{slug}":')]
+        line = row(catalog, slug)
         if not (len(line) == 1 and line[0].count(needs.group(1)) == 1):
             problems.append(f"{SHELL_DRIVERS[0]}: catalog row {slug} does not carry {needs.group(1)} exactly once")
+            continue
+        was = row(before, slug) if before is not None else []
+        for quote in counted if len(was) == 1 else []:
+            if was[0].count(quote) != line[0].count(quote):
+                problems.append(f"{SHELL_DRIVERS[0]}: catalog row {slug} carries {quote!r} "
+                                f"{was[0].count(quote)} time(s) before the refresh and {line[0].count(quote)} after")
     return problems
 
 
@@ -277,10 +316,17 @@ READ_ON = "2099-12-31"
 # starts reading is refreshed here the day SOURCE_MAP says so.
 AUTOMATED = [(slug, tier, cfg["primary"]) for slug, tiers in price_check.SOURCE_MAP.items()
              for tier, cfg in tiers.items() if "primary" in cfg]
+
+
+def tiers_of(rows):
+    """The automated tiers that carry a reading in these rows, and those still held under a note."""
+    read = [(s, t) for s, t, _ in AUTOMATED if t in (rows.get(s, {}).get("priceSource") or {})]
+    held = [(s, t) for s, t, _ in AUTOMATED if (s, t) not in read and t in (rows.get(s, {}).get("priceNote") or {})]
+    return read, held
+
+
 ROWS = json.loads(ENGINE["data/gpus.json"])["data"]
-READ = [(s, t) for s, t, _ in AUTOMATED if t in (ROWS.get(s, {}).get("priceSource") or {})]
-HELD = [(s, t) for s, t, _ in AUTOMATED if (s, t) not in READ
-        and t in (ROWS.get(s, {}).get("priceNote") or {})]
+READ, HELD = tiers_of(ROWS)
 
 
 def reread_sku(sku, spec):
@@ -293,43 +339,96 @@ def reread_sku(sku, spec):
                   else str(int(m.group()) + 1), sku)
 
 
-def refresh(kind):
+def moved_from(price):
+    """A price a reading moves this one to, sharing no text with it: a cent was the move
+    here, and 12.3 is still inside 12.31, so a quote with nothing after the price survived
+    it (the cold check's first survivor). Leading digits change instead."""
+    moved = round(price * 1.5 + 1.17, 2)
+    while str(price) in str(moved) or str(moved) in str(price):
+        moved = round(moved + 1.01, 2)
+    return moved
+
+
+def refresh(kind, base=None, on=READ_ON):
     """The three files the job rewrites, as one kind of run leaves them, in memory, and
-    the (slug, tier) of each note that run confirmed away.
+    a test of which refusals by name that tree has to cause. base holds the files the run
+    starts from, by path, the tree as it is by default, and on is the day it reads.
 
     reread     every automated tier with a reading is read again, on a new day, at the
                price it recorded
-    moved      the same, with every one of those prices a cent higher, the catalog's too
-    confirmed  every automated tier still held under a note gets its first reading, at
-               the catalog's price, which takes the note out"""
-    data = json.loads(ENGINE["data/gpus.json"])["data"]
-    outcomes, confirmed = [], set()
+    moved      the same, with every one of those prices moved, the catalog's too
+    confirmed  every automated tier still held under a note gets its first reading, at a
+               price of its own, as a first reading comes (h100-80's came back 44% higher),
+               which takes the note out and moves the catalog's price
+    gone       every automated tier's reading and note is taken away, as a person could
+               take them: a sabotage built on one has to be refused by name, and its
+               driver has to load and keep every other sabotage
+
+    Each kind checks it did what it says to every tier it names: its cold check blinded
+    the moved kind and nothing noticed.
+
+    The refusals it has to cause: after gone, any; after the others, a sabotage built on
+    a note a reading has replaced, in this run or an earlier one. Only this run's were
+    excused once, and the pull request confirming h100-80/spot, built with the job's own
+    writers, then failed every refresh here on the refusal it had caused itself."""
+    base = base or ENGINE
+    rows = json.loads(base["data/gpus.json"])["data"]
+    data = json.loads(base["data/gpus.json"])["data"]
+    outcomes = []
     for slug, tier, spec in AUTOMATED:
         row = data[slug]
         source = (row.get("priceSource") or {}).get(tier)
         if source and kind in ("reread", "moved"):
-            price = row[tier] if kind == "reread" else round(row[tier] + 0.01, 2)
+            price = row[tier] if kind == "reread" else moved_from(row[tier])
             reading = price_check.Reading(
                 provider=source["provider"], sku=reread_sku(source["sku"], spec), region=source["region"],
-                price_per_gpu=source["price"] if kind == "reread" else price, date=READ_ON, evidence="")
+                price_per_gpu=source["price"] if kind == "reread" else price, date=on, evidence="")
             outcomes.append(price_check.Outcome(slug, tier, "CONFIRMED" if kind == "reread" else "MOVED",
                                                 current=row[tier], proposed=price, reading=reading))
         elif not source and kind == "confirmed" and tier in (row.get("priceNote") or {}):
+            price = moved_from(row[tier])
             reading = price_check.Reading(
                 provider=spec["kind"], sku="(simulated)", region=spec.get("region", "global"),
-                price_per_gpu=row[tier], date=READ_ON, evidence="")
-            outcomes.append(price_check.Outcome(slug, tier, "CONFIRMED", current=row[tier],
-                                                proposed=row[tier], reading=reading))
-            confirmed.add((slug, tier))
+                price_per_gpu=price, date=on, evidence="")
+            outcomes.append(price_check.Outcome(slug, tier, "MOVED", current=row[tier],
+                                                proposed=price, reading=reading))
     price_check.apply_outcomes(data, outcomes)
-    catalog = price_check.apply_to_text(ENGINE["data/gpus.json"], data,
-                                        sorted({oc.slug for oc in outcomes}), READ_ON)
+    changed = sorted({oc.slug for oc in outcomes})
+    if kind == "gone":
+        for slug, tier, _ in AUTOMATED:
+            for field in ("priceSource", "priceNote"):
+                if tier in (data[slug].get(field) or {}):
+                    del data[slug][field][tier]
+                    changed.append(slug)
+                    if not data[slug][field]:
+                        del data[slug][field]
+    did_what_it_says(kind, data, rows, on)
+    catalog = price_check.apply_to_text(base["data/gpus.json"], data, sorted(set(changed)), on)
     files = {"data/gpus.json": catalog}
-    rows = json.loads(catalog)["data"]   # what tools/sync_data.py reads: the file the job wrote
+    written = json.loads(catalog)["data"]   # what tools/sync_data.py reads: the file the job wrote
     for f, render in (("index.html", sync_data.render_gpu_js), ("generate_report.py", sync_data.render_gpu_py)):
         files[f] = sync_data.BLOCK_RES["GPU_TABLE"].sub(
-            lambda m, render=render: render(rows).rstrip("\n"), ENGINE[f], count=1)
-    return files, confirmed
+            lambda m, render=render: render(written).rstrip("\n"), base[f], count=1)
+    return files, (lambda missing: True) if kind == "gone" else replaced_by_a_reading(catalog)
+
+
+def did_what_it_says(kind, data, rows, on):
+    """That a refresh changed, on every tier it names, what it says it changes, from rows."""
+    read, held = tiers_of(rows)
+    wrong = []
+    for slug, tier in (read if kind in ("reread", "moved") else held if kind == "confirmed" else
+                       [(s, t) for s, t, _ in AUTOMATED]):
+        row, was = data[slug], rows[slug]
+        source, note = (row.get("priceSource") or {}).get(tier), (row.get("priceNote") or {}).get(tier)
+        if kind == "reread" and not (source and source["date"] == on != was["priceSource"][tier]["date"]):
+            wrong.append(f"{slug}/{tier}: not re-read on a new day")
+        if kind in ("moved", "confirmed") and (row[tier] == was[tier] or str(was[tier]) in str(row[tier])):
+            wrong.append(f"{slug}/{tier}: its price {was[tier]} did not move to one sharing no text with it ({row[tier]})")
+        if kind == "confirmed" and (note or not source):
+            wrong.append(f"{slug}/{tier}: its note was not replaced by a reading")
+        if kind == "gone" and (source or note):
+            wrong.append(f"{slug}/{tier}: still carries a reading or a note")
+    assert not wrong, f"the {kind} refresh did not do what it says, so it checks less than it claims: {wrong}"
 
 
 @contextlib.contextmanager
@@ -362,18 +461,20 @@ def reading_from(files):
         forget_drivers()
 
 
-def check_after(kind, excused):
+def check_after(kind, excused, base=None):
     """Every sabotage in every driver, loaded against the refreshed files, still applies
-    to them, and no driver has fewer than it had: a sabotage has to be refused by name,
-    never dropped. A refusal the refresh has to cause, a sabotage built on a note it
-    confirmed away, goes in excused instead."""
+    to them, and no driver has fewer than it has on the tree as it is: a sabotage has to
+    be refused by name, never dropped. A refusal the refreshed tree has to cause (see
+    refresh()) goes in excused instead. base is the tree the refresh starts from, as
+    refresh() takes it."""
+    base = base or ENGINE
     try:
-        files, confirmed = refresh(kind)
+        files, taken = refresh(kind, base)
     except SystemExit as e:   # the job's writers stop, rather than write a catalog they cannot
         raise AssertionError(f"the price job's own writers refuse this catalog: {e}") from None
-    if kind != "confirmed" or HELD:
-        assert files["data/gpus.json"] != ENGINE["data/gpus.json"], "the refresh rewrote nothing, so this checks nothing"
-    tree = {**ENGINE, **files}
+    if kind != "confirmed" or tiers_of(json.loads(base["data/gpus.json"])["data"])[1]:
+        assert files["data/gpus.json"] != base["data/gpus.json"], "the refresh rewrote nothing, so this checks nothing"
+    tree = {**base, **files}
     problems, loaded = [], {}
     with reading_from(files):
         for d in PY_DRIVERS:
@@ -387,12 +488,12 @@ def check_after(kind, excused):
                             "after it, so one dropped out where it had to be refused by name")
         for name, spec in sabotages.items():
             why = why_it_would_not_apply(spec, tree)
-            if why and why_it_would_not_apply(spec, tree, confirmed) is None:
+            if why and why_it_would_not_apply(spec, tree, taken) is None:
                 excused.append(f"{d}: {name}: refused by name, as it has to be: {why}")
             elif why:
-                problems.append(f"{d}: {name}: {why_it_would_not_apply(spec, tree, confirmed)}")
+                problems.append(f"{d}: {name}: {why_it_would_not_apply(spec, tree, taken)}")
     problems += [f"tests/sabotage/anchors.py: {s}" for s in stale_excerpts(tree)]
-    problems += shell_driver_problems(files["data/gpus.json"])
+    problems += shell_driver_problems(files["data/gpus.json"], before=base["data/gpus.json"])
     assert not problems, (
         f"{len(problems)} thing(s) the job's next run would break:\n         " + "\n         ".join(problems) +
         "\n       A price, a reading's date, price or offer count, and a note a confirmed reading replaces "
@@ -400,18 +501,139 @@ def check_after(kind, excused):
         "loads, and quote only what the job never rewrites: see tests/sabotage/README.md.")
 
 
-REFRESHES = [
-    ("reread", f"re-reads the {len(READ)} automated tiers that carry a reading, each on a new day"),
-    ("moved", f"moves each of those {len(READ)} prices a cent"),
-    ("confirmed", "confirms a reading on every automated tier still held under a note ("
-                  + (", ".join(f"{s}/{t}" for s, t in HELD) or "none today") + ")"),
-]
-for kind, label in REFRESHES:
+def refreshes(read, held):
+    return [
+        ("reread", f"re-reads the {len(read)} automated tiers that carry a reading, each on a new day"),
+        ("moved", f"moves each of those {len(read)} prices"),
+        ("confirmed", "confirms a first reading, at a new price, on every automated tier still held under a note ("
+                      + (", ".join(f"{s}/{t}" for s, t in held) or "none") + ")"),
+        ("gone", f"takes away the reading or note of all {len(AUTOMATED)} automated tiers, as a person could"),
+    ]
+
+
+for kind, label in refreshes(READ, HELD):
     excused = []
     test(f"after a refresh that {label}, every sabotage in every driver still applies",
          lambda kind=kind, excused=excused: check_after(kind, excused))
     for line in excused:
         print(f"       {line}")
+
+# And from the tree the pull request confirming the held tiers leaves: a sabotage built
+# on a note that pull request's reading replaced is refused by name from then on, and
+# only a note the refresh itself replaced was excused here.
+if HELD:
+    def confirming_pull_request():
+        return {**ENGINE, **refresh("confirmed", on="2099-12-30")[0]}
+
+    def refused_on_its_notes(base, refused):
+        """That the tree a check read is base: every sabotage built on a note the pull
+        request replaced is among those it refused by name, and each would apply to the
+        tree as it is."""
+        import harness
+        with reading_from({f: base[f] for f in ("data/gpus.json", "index.html", "generate_report.py")}):
+            on_a_note = [f"{d}: {name}: " for d in PY_DRIVERS for name, spec in sabotages_of(d).items()
+                         if any(isinstance(old, harness.Missing) and old.note in HELD
+                                for _, old, _, _ in harness.edits_of(spec))]
+        assert on_a_note, f"no sabotage is built on a note {confirming} carried, so this tree is checked for nothing"
+        unrefused = [n for n in on_a_note if not any(e.startswith(n) for e in refused)]
+        assert not unrefused, f"built on a note the pull request replaced, and not refused by name here: {unrefused}"
+
+    def check_after_confirming(kind, excused):
+        base = confirming_pull_request()
+        check_after(kind, excused, base)
+        refused_on_its_notes(base, excused)
+
+    def check_the_confirming_tree():
+        base = confirming_pull_request()
+        refused_on_its_notes(base, check_every_sabotage_still_applies(base))
+
+    confirming = ", ".join(f"{s}/{t}" for s, t in HELD)
+    test(f"on the tree confirming {confirming} leaves, every sabotage still applies", check_the_confirming_tree)
+    for kind, label in refreshes(READ + HELD, []):
+        excused = []
+        test(f"on the tree confirming {confirming} leaves, after a refresh that {label}, every sabotage still applies",
+             lambda kind=kind, excused=excused: check_after_confirming(kind, excused))
+        print(f"       {len(excused)} refused by name, as they have to be")
+else:
+    print("       no automated tier is held under a note today, so no pull request is left to confirm one")
+
+
+print("\nThe refresh check sees what a sabotage could quote")
+
+
+def row_through(catalog, slug, text):
+    """slug's catalog row, from its start through text: a quote a sabotage could write
+    with nothing after the value it ends on."""
+    (line,) = [r for r in catalog.splitlines() if r.strip().startswith(f'"{slug}":')]
+    start = line.index(f'"{slug}":')
+    return line[start:line.index(text, start) + len(text)]
+
+
+def check_the_refresh_check_sees_a_quoted_price():
+    """A sabotage quoting a price the job moves has to stop applying after the refresh
+    that moves it, even quoted with nothing after it. The cold check quoted h100-80's
+    hyperscaler price that way and a move of a cent left it inside the new price; it
+    quoted h100-80's held spot price and a first reading at the catalog's own price left
+    it standing. Every read tier's and every held tier's price, each quoted from its
+    row's start through the price, derived from the catalog."""
+    survived = []
+    for kind, tiers in (("moved", READ), ("confirmed", HELD)):
+        files, _ = refresh(kind)
+        tree = {**ENGINE, **files}
+        for slug, tier in tiers:
+            quote = row_through(ENGINE["data/gpus.json"], slug, f'"{tier}": {json.dumps(ROWS[slug][tier])}')
+            spec = [("data/gpus.json", quote, quote + "0", 1)]
+            assert why_it_would_not_apply(spec) is None, f"{slug}/{tier}: the quote does not apply before the refresh"
+            if why_it_would_not_apply(spec, tree) is None:
+                survived.append(f"{kind}: {slug}/{tier}: ...{quote[-32:]!r}")
+    assert not survived, f"a quoted price survived the refresh that moves it: {survived}"
+
+test("a price quoted with nothing after it stops applying after the refresh that moves it",
+     check_the_refresh_check_sees_a_quoted_price)
+
+
+def check_the_refresh_check_reads_every_shell_quote():
+    """A second assert in the shell driver, quoting a price one of its rows carries, has
+    to count against it after the refresh that moves that price: only the first assert
+    was read. The driver's own script, with that assert added before its first."""
+    src = open(os.path.join(SABOTAGE_DIR, SHELL_DRIVERS[0]), encoding="utf-8").read()
+    loop = re.search(r"^for slug in ([\w .-]+); do$", src, re.M).group(1).split()
+    slug, tier = next((s, t) for s, t in READ if s in loop)
+    quote = f'"{tier}": {json.dumps(ROWS[slug][tier])},'
+    added = src.replace("assert line.count(", f"assert line.count('{quote}') <= 1\nassert line.count(", 1)
+    files, _ = refresh("moved")
+    assert shell_driver_problems(ENGINE["data/gpus.json"], before=ENGINE["data/gpus.json"], src=added) == [], (
+        "the added assert does not hold before the refresh")
+    assert shell_driver_problems(files["data/gpus.json"], before=ENGINE["data/gpus.json"], src=added), (
+        f"the shell driver counts {quote!r} in {slug}'s row, the refresh moved it, and nothing noticed")
+
+test("a price the shell driver counts in any assert stops it applying after the refresh",
+     check_the_refresh_check_reads_every_shell_quote)
+
+
+def check_a_note_a_reading_replaced_is_listed_not_counted():
+    """On the price pull request that confirms a held tier, the tree as it is has that
+    tier's note replaced by a reading, and a sabotage built on the note refuses by name.
+    The check of the tree as it is lists that refusal and does not count it: its cold
+    check found it counted, which would have turned that pull request red whatever its
+    prices said. A note taken away with no reading in its place is still counted."""
+    import harness
+    if not HELD:
+        print("       no automated tier is held under a note today, so no note can be confirmed")
+        return
+    files, _ = refresh("confirmed")
+    tree, excused = {**ENGINE, **files}, replaced_by_a_reading(files["data/gpus.json"])
+    with reading_from(files):
+        loaded = {d: sabotages_of(d) for d in PY_DRIVERS}
+    counted = [f"{d}: {name}: {why}" for d, sabotages in loaded.items() for name, spec in sabotages.items()
+               if (why := why_it_would_not_apply(spec, tree, excused))]
+    assert not counted, f"refusals counted on the tree a confirmed reading leaves: {counted}"
+    gone, _ = refresh("gone")
+    assert not replaced_by_a_reading(gone["data/gpus.json"])(harness.Missing("gone", note=HELD[0])), (
+        "a note taken away with no reading in its place was excused")
+
+test("a sabotage built on a note a reading replaced is listed, not counted, on that tree",
+     check_a_note_a_reading_replaced_is_listed_not_counted)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
