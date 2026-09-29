@@ -2562,14 +2562,19 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
 # mount test plans. Two cold checks found shapes a listed set had left out: a bare ~,
 # $MODEL with no /, a dotted three-part relative path, absolute paths with a ~ or a
 # space inside, then models/llama/, a//b, x$ and a path with both a ~ and a $.
-PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/")
+PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/", "-", "--")
 PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
                "models/llama/x.gguf", "a/b/c/d/e/f", "models/llama/", "a//b")
-BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/")
+BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/",
+              "", "-", "-8b", "-$X", "-a/b/c")
 MODEL_PATHS = sorted({start + body for start in PATH_STARTS for body in PATH_BODIES}
                      | set(BARE_PATHS) | set(LOCAL_MODEL_PATHS) | set(HUB_MODEL_IDS))
-# Whitespace round a path, as a JSON config or a typed answer might carry it.
-PATH_PADDINGS = ("{}", " {}", "{} ", "\t{}", "{}\n", " \t{} \n")
+# Whitespace round a path, as a JSON config or a typed answer might carry it: every
+# character str.strip() trims, derived, one side each in turn, and a mixed run on both
+# sides. The paddings were a space, a tab and a newline, so a trim that kept a carriage
+# return passed on both routes.
+WHITESPACE = "".join(filter(str.isspace, map(chr, range(sys.maxunicode + 1))))
+PATH_PADDINGS = ("{}", " \t{} \r\n", *(c + "{}" if n % 2 else "{}" + c for n, c in enumerate(WHITESPACE)))
 # The refusal's words, as the contract: why, by kind of path, and the fix. A path
 # with both a shell variable and a leading ~ is refused for the variable.
 MODEL_PATH_REASONS = {
@@ -2577,6 +2582,8 @@ MODEL_PATH_REASONS = {
     "tilde": "starts with ~, which the printed command quotes, so the GPU server never expands it",
     "relative": ("is relative, so it depends on the directory the command runs from, and inside "
                  "the ROCm container that is /vllm-workspace"),
+    "empty": "is empty",
+    "dash": "starts with -, so vLLM would read it as an option",
 }
 MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
 
@@ -2585,11 +2592,16 @@ def path_kind(path):
     """The requirement, restated: the reason a path is refused for, or None when it is
     planned. A shell variable anywhere, a leading ~, or a relative path (., .., ./ or
     ../ first, or three or more parts) is refused; an absolute path, or a name with at
-    most one / (a Hugging Face id's shape), is planned."""
+    most one / (a Hugging Face id's shape), is planned. An empty path, and one starting
+    with - (vLLM would read it as an option), are refused too."""
+    if not path:
+        return "empty"
     if "$" in path:
         return "variable"
     if path.startswith("/"):
         return None
+    if path.startswith("-"):
+        return "dash"
     if path.startswith("~"):
         return "tilde"
     if path in (".", "..") or path.startswith(("./", "../")) or len(path.split("/")) >= 3:
@@ -2606,8 +2618,9 @@ def check_the_generated_model_paths_cover_every_kind():
     """The generated set holds each kind many times over, and every shape a past
     round found missing."""
     counts = {kind: sum(path_kind(p) == kind for p in MODEL_PATHS) for kind in (*MODEL_PATH_REASONS, None)}
-    assert all(n >= 5 for n in counts.values()), counts
-    for shape in ("~", "$MODEL", "x$", "~/$HOME/m", "models/llama/x.gguf", "models/llama/", "a//b",
+    # An empty path is one path; its whitespace-only forms come from PATH_PADDINGS.
+    assert all(n >= (1 if kind == "empty" else 5) for kind, n in counts.items()), counts
+    for shape in ("", "-8b", "--m", "-$X", "~", "$MODEL", "x$", "~/$HOME/m", "models/llama/x.gguf", "models/llama/", "a//b",
                   "/opt/a~b/c", "/opt/my models/llama", ".", "..", "~user/m", "/data/$USER/m"):
         assert shape in MODEL_PATHS, shape
 
@@ -2660,6 +2673,17 @@ def plans_for(p):
         yield pick
 
 
+def plan_config(v, hf_model):
+    """The JSON config one pick of the plan axes describes, with this model path. FP8
+    weights stand down to BF16 on a card that can't run them, so no other refusal fires."""
+    prec = v["precision"]
+    if prec.get("bpp") == 1 and gr.fp8_weights_blocked(gr.GPUS[v["card"]]):
+        prec = {"bpp": 2}
+    base = {"preset": v["model"]} if v["branch"] == "preset" else gr.arch_fields(gr.PRESETS[v["model"]])
+    return dict(base, gpu=v["card"], n_gpu=v["boards"], hf_model=hf_model,
+                **prec, **v["kv"], **v["ctx"], **v["conc"], **v["nvlink"])
+
+
 def check_a_model_path_is_judged_by_its_kind_alone_under_every_plan():
     """Every generated path, through a JSON config, meets every value of every axis
     above: each card, each board count in the board sample, each precision (FP8 only
@@ -2676,14 +2700,7 @@ def check_a_model_path_is_judged_by_its_kind_alone_under_every_plan():
                 for axis, i in pick.items():
                     met[axis].add(i)
                 v = {axis: PLAN_AXES[axis][i] for axis, i in pick.items()}
-                card = v["card"]
-                prec = v["precision"]
-                if prec.get("bpp") == 1 and gr.fp8_weights_blocked(gr.GPUS[card]):
-                    prec = {"bpp": 2}
-                base = ({"preset": v["model"]} if v["branch"] == "preset"
-                        else gr.arch_fields(gr.PRESETS[v["model"]]))
-                raw = dict(base, gpu=card, n_gpu=v["boards"], hf_model=v["padding"].format(path),
-                           **prec, **v["kv"], **v["ctx"], **v["conc"], **v["nvlink"])
+                raw = plan_config(v, v["padding"].format(path))
                 with open(config, "w") as f:
                     json.dump(raw, f)
                 cfg = {}
@@ -2698,29 +2715,93 @@ test("a JSON config's model path is refused or planned by its kind alone, on eve
      check_a_model_path_is_judged_by_its_kind_alone_under_every_plan)
 
 
-MENU_CUSTOM = ["custom", "8", "100", "32", "8", "128", "0"]
+# Every JSON type but a string, empty and not. The test fed one truthy value of each,
+# so a type check that took false, 0, [] and {} for "no model given" passed.
+WRONG_TYPED_PATHS = (None, False, True, 0, 1, 0.0, 1.5, [], ["/opt/m"], {}, {"path": "/opt/m"})
+
+
+def check_a_wrong_typed_model_path_is_named():
+    """A JSON config's "hf_model" of 123, 1.5, true, a list or an object crashed inside
+    shlex.quote with a TypeError that named nothing, and null planned `vllm serve ''`.
+    Each is a TypeError naming cfg['hf_model'] now, the way a wrong-typed quant or bpp
+    already was: every JSON type but a string, empty and not, under every value of every
+    plan axis. The test ran one NVIDIA card, one board and two bytes per parameter, so a
+    type check skipped on AMD, at two boards or at another width passed."""
+    kinds = {type(bad) for bad in WRONG_TYPED_PATHS}
+    assert kinds == {type(None), bool, int, float, list, dict}, kinds
+    assert all({bool(bad) for bad in WRONG_TYPED_PATHS if type(bad) is kind} == {False, True}
+               for kind in kinds - {type(None)}), WRONG_TYPED_PATHS
+    with tempfile.TemporaryDirectory() as d:
+        config = os.path.join(d, "c.json")
+        for q, bad in enumerate(WRONG_TYPED_PATHS):
+            met = {axis: set() for axis in PLAN_AXES}
+            for pick in plans_for(q):
+                for axis, i in pick.items():
+                    met[axis].add(i)
+                v = {axis: PLAN_AXES[axis][i] for axis, i in pick.items()}
+                with open(config, "w") as f:
+                    json.dump(plan_config(v, bad), f)
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        gr.from_json(config)
+                except TypeError as e:
+                    want = f"cfg['hf_model'] must be str, got {type(bad).__name__}: {bad!r}"
+                    assert str(e) == want, (bad, {a: v[a] for a in PLAN_AXES if a != "padding"}, str(e))
+                else:
+                    raise AssertionError(f"hf_model {bad!r} was planned under {v}")
+            missed = {axis: len(PLAN_AXES[axis]) - len(seen) for axis, seen in met.items() if len(seen) < len(PLAN_AXES[axis])}
+            assert not missed, f"{bad!r} missed values on {missed}"
+
+test("a JSON config's wrong-typed model path is a TypeError that names it, on every value of every plan axis",
+     check_a_wrong_typed_model_path_is_named)
+
+
+# The menu's custom model, answered from a dense preset's own architecture and a MoE
+# one's. The menu was driven on one dense model, so a refusal skipped for MoE passed.
+MENU_MODELS = (DENSE, MOE)
 MENU_REST = ["", str(list(gr.GPUS).index("h100-80") + 1), "1", "", "n", "8192", "1"]
+
+
+def menu_custom(model):
+    """The answers up to the model path: 'custom', then the preset's architecture."""
+    a = gr.arch_fields(gr.PRESETS[model])
+    return ["custom", str(a["params"]), str(a.get("active", 100)), str(a["layers"]), str(a["kv_heads"]),
+            str(a["h_dim"]), str(a.get("shared_exp", 0))]
 
 
 def check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed():
     """The menu's custom model took any text as its HuggingFace ID. Every generated
-    path, typed with every whitespace round it, is refused right after it is typed with
-    its kind's reason, or planned trimmed. A refusal that read the untrimmed answer let
-    "  ~/llama" through, and a menu that trimmed only spaces was never typed a tab."""
-    for path in MODEL_PATHS:
-        for padding in PATH_PADDINGS:
-            typed = padding.format(path)
-            answers = unittest.mock.Mock(side_effect=MENU_CUSTOM + [typed] + MENU_REST)
-            cfg = {}
-            with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
-                got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
-            assert got == model_path_refusal(path), (typed, got)
-            if got:
-                assert answers.call_count == len(MENU_CUSTOM) + 1, f"{typed!r}: refused after {answers.call_count} answers"
-            else:
-                assert cfg.get("hf_model") == path, (typed, cfg.get("hf_model"))
+    path is typed on both custom models, each time with the next whitespace padding, and
+    the empty path with every padding; each is refused right after it is typed with its
+    kind's reason, or planned trimmed. A refusal that read the untrimmed answer let
+    "  ~/llama" through, and a menu that trimmed only spaces was never typed a tab. The
+    sweep asserts every padding met both models, refused and planned."""
+    met = set()
+    for p, path in enumerate(MODEL_PATHS):
+        for m, model in enumerate(MENU_MODELS):
+            custom = menu_custom(model)
+            paddings = PATH_PADDINGS if not path else [PATH_PADDINGS[(len(MENU_MODELS) * p + m) % len(PATH_PADDINGS)]]
+            for padding in paddings:
+                typed = padding.format(path)
+                answers = unittest.mock.Mock(side_effect=custom + [typed] + MENU_REST)
+                cfg = {}
+                with unittest.mock.patch("builtins.input", answers), contextlib.redirect_stdout(io.StringIO()):
+                    got = refusal_of(lambda: cfg.update(gr.interactive_mode()))
+                met.add((model, padding, got is None))
+                if not path:  # the menu's own default stands in for an empty answer
+                    assert got is None and cfg.get("hf_model") == "/opt/models/YourModel", (model, typed, got, cfg.get("hf_model"))
+                    continue
+                assert got == model_path_refusal(path), (model, typed, got)
+                if got:
+                    assert answers.call_count == len(custom) + 1, f"{model} {typed!r}: refused after {answers.call_count} answers"
+                else:
+                    assert cfg.get("hf_model") == path, (model, typed, cfg.get("hf_model"))
+    missed = {(model, padding, planned) for model in MENU_MODELS for padding in PATH_PADDINGS
+              for planned in (False, True)} - met
+    assert not missed, f"never met: {sorted(missed)[:6]}"
 
-test("the interactive menu refuses or plans a model path by its kind as soon as it is typed, any whitespace trimmed",
+test("the interactive menu refuses or plans a model path by its kind as soon as it is typed, on a dense model "
+     "and a MoE one, any whitespace trimmed",
      check_the_menu_judges_a_model_path_by_its_kind_as_soon_as_it_is_typed)
 
 
@@ -2738,7 +2819,7 @@ def check_the_cli_refuses_a_model_path_with_exit_2_by_either_route():
             "json": subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config,
                                     "-o", out], capture_output=True, text=True),
             "menu": subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "-o", out],
-                                   input="\n".join(MENU_CUSTOM + ["  ~/models/llama"]) + "\n",
+                                   input="\n".join(menu_custom(MOE) + ["  ~/models/llama"]) + "\n",
                                    capture_output=True, text=True),
         }
         for route, run in runs.items():
@@ -2748,6 +2829,25 @@ def check_the_cli_refuses_a_model_path_with_exit_2_by_either_route():
 
 test("the CLI refuses an unresolvable model path from a JSON config or the menu, with the reason and exit status 2",
      check_the_cli_refuses_a_model_path_with_exit_2_by_either_route)
+
+
+def check_the_cli_stops_on_a_wrong_typed_model_path():
+    """A wrong-typed model path through the command line: the TypeError that names it is
+    the last line on stderr, the exit status is 1, as for any wrong-typed field, and no
+    PDF is written. Only from_json() was driven, so a main() that turned the TypeError
+    into a warning and exit 0 passed."""
+    with tempfile.TemporaryDirectory() as d:
+        config, out = os.path.join(d, "c.json"), os.path.join(d, "r.pdf")
+        with open(config, "w") as f:
+            json.dump({"preset": MOE, "gpu": "h100-80", "hf_model": None}, f)
+        run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
+                             capture_output=True, text=True)
+        assert run.returncode == 1, (run.returncode, run.stderr[-300:])
+        assert run.stderr.strip().splitlines()[-1] == "TypeError: cfg['hf_model'] must be str, got NoneType: None", run.stderr[-300:]
+        assert not os.path.exists(out), "a PDF was written for a wrong-typed model path"
+
+test("the CLI stops on a wrong-typed model path with the TypeError that names it, and writes no PDF",
+     check_the_cli_stops_on_a_wrong_typed_model_path)
 
 
 def check_the_rocm_block_holds_on_a_board_of_four_devices():
