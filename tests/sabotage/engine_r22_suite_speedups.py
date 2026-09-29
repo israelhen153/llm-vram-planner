@@ -41,6 +41,8 @@ S = {
         (REPORT_TEST, STYLE_STATE, '    names = set(vars(style))\n', 1)],
     "M9 report: the memo keeps the first paragraph's live attributes, so a later change reaches every later build": [
         (REPORT_TEST, MEMO_KEEP, '            _PARSED[key] = (self.__dict__, state)\n', 1)],
+    "M10 report: the bullet is not read as reportlab reads it, so a __getattr__ or a callable bullet goes unseen": [
+        (REPORT_TEST, '    state["bulletText"] = getattr(style, "bulletText", None)\n', '', 1)],
     "N1 sync: every block runs in one context": [
         (SYNC_TEST, NODE_CONTEXT, '         "  try { return {ok: "\n         f"(new Function(b + \\"; return {var};\\"))()}}; }}"\n', 1)],
     "N2 sync: a block that can't be evaluated is dropped": [
@@ -52,5 +54,17 @@ S = {
         (SYNC_TEST, NODE_RETURN, '    return [results[0]["ok"] for result in results]\n', 1)],
 }
 
+# Judged by tests/corpus.test.py through --runner, as round 23's are: no judging suite
+# opens parallel.py.
+RUNNER = {
+    "L1 runner: the workers' lock shares its name with the results' lock, and is let go when that name is taken": [
+        ("tests/sabotage/parallel.py", "    workers_lock = hold_the_workers(root)  # noqa: F841\n",
+         "    lock = hold_the_workers(root)  # noqa: F841\n", 1)],
+}
+
 if __name__ == "__main__":
-    run_driver(S)
+    if "--runner" in sys.argv:
+        from engine_r23_speedups_cold_check import judge_runner
+        judge_runner(RUNNER)
+    else:
+        run_driver(S)
