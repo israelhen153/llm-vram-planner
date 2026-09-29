@@ -127,6 +127,11 @@ def style_state(style):
         value = getattr(style, name)
         if not callable(value):
             state[name] = value
+    # And the bullet as reportlab reads it, whatever answers it. The loop above cannot
+    # see a class-level __getattr__, and drops a value that is also callable; the third
+    # cold check reached a heading's bullet both ways, and the memo served the first
+    # card's parse to every later card.
+    state["bulletText"] = getattr(style, "bulletText", None)
     return state
 
 
@@ -1470,6 +1475,38 @@ def check_the_parse_memo_changes_nothing_a_test_reads():
         assert plain.bulletText is None, f"the style carried a bullet before its class did: {plain.bulletText!r}"
         assert got.bulletText == "a figure riding the class", (
             f"a bullet on the style's class was served an earlier parse: {got.bulletText!r}")
+        # A bullet only a class-level __getattr__ answers, and a bullet that is also
+        # callable: reportlab reads both through getattr(style, 'bulletText', None), and
+        # the third cold check reached a heading's bullet each way. Markups of their own.
+        RecordingParagraph("<b>through getattr</b>", style)
+        had_hook, old_hook = "__getattr__" in vars(cls), vars(cls).get("__getattr__")
+
+        def answer(self, name):
+            if name == "bulletText":
+                return "a figure only getattr answers"
+            raise AttributeError(name)
+
+        cls.__getattr__ = answer
+        try:
+            hooked = RecordingParagraph("<b>through getattr</b>", style)
+        finally:
+            if had_hook:
+                cls.__getattr__ = old_hook
+            else:
+                del cls.__getattr__
+        assert hooked.bulletText == "a figure only getattr answers", (
+            f"a bullet a class-level __getattr__ answers was served an earlier parse: {hooked.bulletText!r}")
+
+        class CallableFigure(str):
+            def __call__(self):
+                return None
+
+        own = gr.getSampleStyleSheet()["Normal"]
+        RecordingParagraph("<b>a callable bullet</b>", own)
+        own.bulletText = CallableFigure("a figure that is also callable")
+        called = RecordingParagraph("<b>a callable bullet</b>", own)
+        assert called.bulletText == "a figure that is also callable", (
+            f"a callable bullet was served an earlier parse: {called.bulletText!r}")
         # A paragraph changed after it was built changes no paragraph built after it.
         origin = RecordingParagraph("<u>changed after it was built</u>", style)
         origin.bulletText = "a figure added afterwards"
