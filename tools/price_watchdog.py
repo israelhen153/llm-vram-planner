@@ -227,7 +227,9 @@ def report_issue(repo, found, slot, now):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", required=True, help="owner/name")
-    ap.add_argument("--now", help="judge as if it were this UTC time (ISO 8601)")
+    ap.add_argument("--now", help="judge the slot due at this UTC time (ISO 8601), for tests. GitHub's record "
+                                  "is read as it stands, runs and pull requests since then included, so an earlier "
+                                  "time does not replay that week")
     args = ap.parse_args(argv)
     now = utc(args.now) if args.now else datetime.datetime.now(datetime.timezone.utc)
     workflow_file, text = price_workflow()
