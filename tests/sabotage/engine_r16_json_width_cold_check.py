@@ -30,7 +30,7 @@ from anchors import (REPORT_PY, PY_WIDTH_IF_MISSING, PY_WIDTH_NO_SINGLE, PY_WIDT
 PY_OWN_CTX_DEFAULT = '    cfg.setdefault("ctx", 8192)\n'
 PY_WIDTH_READ = '    quant, bpp = cfg.get("quant") or "", cfg.get("bpp")\n'
 PY_WIDTH_RAISE_CONTRADICTION = '        width = METHOD_WIDTH[quant]\n        raise PlanRefused('
-PY_METHOD_WIDTH_TABLE = 'METHOD_WIDTH = method_widths()\n'
+PY_METHOD_WIDTH_TABLE = 'METHOD_WIDTH = {**method_widths(), **{method: 1 for method in FP8_METHODS}}\n'
 PY_METHOD_WIDTHS_SKIP_NONE = '        if quant:\n            widths.setdefault(quant, set()).add(bpp)\n'
 PY_GGUF_LEVELS = ('    levels = sorted((bpp, label.split()[-1]) for bpp, label in PREC_LABELS.items() '
                   'if label.startswith("GGUF"))\n')
@@ -72,7 +72,8 @@ S = {
     "X10 py: only GGUF is refused without a width; an unknown method is BF16": [
         (REPORT_PY, PY_WIDTH_NO_SINGLE, '        if quant == "gguf":\n', 1)],
     "X11 py: the method table written by hand, without gptq": [
-        (REPORT_PY, PY_METHOD_WIDTH_TABLE, 'METHOD_WIDTH = {"fp8": 1, "awq": 0.5}\n', 1)],
+        (REPORT_PY, PY_METHOD_WIDTH_TABLE,
+         'METHOD_WIDTH = {"fp8": 1, "awq": 0.5, **{method: 1 for method in FP8_METHODS}}\n', 1)],
     "X12 py: the table gives the no-method entry a width": [
         (REPORT_PY, PY_METHOD_WIDTHS_SKIP_NONE, '        widths.setdefault(quant, set()).add(bpp)\n', 1)],
     # ---- each refusal narrowed ----
