@@ -71,31 +71,37 @@ def check_every_outcome_gets_its_verdict():
     branch carries a commit the job made during that run: the third cold check threw
     the moves away after the gate (no new commit), and closed the pull request in the
     same run (closed unmerged), and a person's later commit on last week's pull request
-    is not this week's delivery."""
+    is not this week's delivery. Each problem must also say which it is: an issue that
+    calls an unfinished run failed, or a failed one reportless, sends its reader the
+    wrong way, and a check with its own branch gone would still read as a problem."""
+    delivered = None
     cases = {
-        "no scheduled run since the slot": (None, None, [], True),
-        "a run still going": (run(status="in_progress", conclusion=None), None, [], True),
-        "a run that failed": (run(conclusion="failure"), None, [], True),
-        "a run that was cancelled": (run(conclusion="cancelled"), None, [], True),
-        "a run that left no report": (run(), None, [], True),
-        "a run that found nothing to propose": (run(), NOTHING, [], False),
-        "found, suite red, an open pull request carries it": (run(), FOUND_RED, [pr()], False),
-        "found, suite green, an open pull request carries it": (run(), FOUND_GREEN, [pr()], False),
+        "no scheduled run since the slot": (None, None, [], "No scheduled run"),
+        "a run still going": (run(status="in_progress", conclusion=None), None, [], "has not finished"),
+        "a run that failed": (run(conclusion="failure"), None, [], "ended failure"),
+        "a run that failed, with a report and a pull request": (run(conclusion="failure"), FOUND_RED, [pr()], "ended failure"),
+        "a run that was cancelled": (run(conclusion="cancelled"), None, [], "ended cancelled"),
+        "a run that left no report": (run(), None, [], "left no report"),
+        "a run that found nothing to propose": (run(), NOTHING, [], delivered),
+        "found, suite red, an open pull request carries it": (run(), FOUND_RED, [pr()], delivered),
+        "found, suite green, an open pull request carries it": (run(), FOUND_GREEN, [pr()], delivered),
         "found, and a merged pull request carries it": (
-            run(), FOUND_RED, [pr(state="closed", merged_at="2026-09-29T06:00:00Z")], False),
-        "found, suite red, no pull request": (run(), FOUND_RED, [], True),
-        "found, suite green, no pull request": (run(), FOUND_GREEN, [], True),
-        "found, and the pull request was closed unmerged": (run(), FOUND_RED, [pr(state="closed")], True),
+            run(), FOUND_RED, [pr(state="closed", merged_at="2026-09-29T06:00:00Z")], delivered),
+        "found, suite red, no pull request": (run(), FOUND_RED, [], "no open or merged pull request"),
+        "found, suite green, no pull request": (run(), FOUND_GREEN, [], "no open or merged pull request"),
+        "found, and the pull request was closed unmerged": (
+            run(), FOUND_RED, [pr(state="closed")], "no open or merged pull request"),
         "found, and the job's newest commit is last week's": (
-            run(), FOUND_RED, [pr(commits=((MESSAGE, "2026-09-21T11:51:00Z"),))], True),
+            run(), FOUND_RED, [pr(commits=((MESSAGE, "2026-09-21T11:51:00Z"),))], "no open or merged pull request"),
         "found, and only a person's commit is newer than the run": (
             run(), FOUND_RED, [pr(commits=((MESSAGE, "2026-09-21T11:51:00Z"),
-                                           ("Record the goldens", "2026-09-28T14:00:00Z")))], True),
+                                           ("Record the goldens", "2026-09-28T14:00:00Z")))],
+            "no open or merged pull request"),
     }
     wrong = {}
-    for case, (r, report, prs, want_problem) in cases.items():
+    for case, (r, report, prs, want) in cases.items():
         got = wd.problems(SLOT, r, report, prs, MESSAGE)
-        if bool(got) != want_problem or not all(isinstance(line, str) and line for line in got):
+        if (got == []) != (want is delivered) or (want and not (len(got) == 1 and want in got[0])):
             wrong[case] = got
     assert not wrong, wrong
 
