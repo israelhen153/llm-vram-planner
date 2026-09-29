@@ -32,6 +32,12 @@ from anchors import (INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON, JS_EXEC_COSTS,
                      PY_R10_NOTE_TEXT, PY_R10_HIP_SUB, PY_R10_IMAGE, PY_R10_HOURLY_SPEC,
                      PY_R10_CONTEXT_AMD, PY_R10_GFX90A, PY_R10_GFX942, PRICE_R10_NOTE_DROP)
 
+# Which tiers the price job reads, from its own SOURCE_MAP rather than from the readings
+# in the catalog: a sabotage built on a reading has to keep its name when a person takes
+# the reading out, and be refused by name then.
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+from price_check import SOURCE_MAP
+
 # The catalog, as text and as data, so every probe comes from it.
 TEXT = open(os.path.join(ROOT, GPUS_JSON)).read()
 ROWS = json.loads(TEXT)["data"]
@@ -124,9 +130,17 @@ reason = ROWS[slug]["priceNote"][tier]["reason"]
 S[f"N6 data: a dollar figure put in {slug}/{tier}'s note"] = [
     row_edit(slug, json.dumps(reason), json.dumps(reason[:-1] + ", about $0.99/hr."))]
 S["N7 price: --apply keeps a note beside the reading it records"] = [(PRICE_PY, PRICE_R10_NOTE_DROP, "        pass\n", 1)]
-slug = next(s for s, r in ROWS.items() if r["vendor"] == "nvidia" and "hyper" in (r.get("priceSource") or {}))
-S[f"N8 data: {slug}'s automated hyperscaler tier also given a note"] = [
-    row_edit(slug, '"priceNote": { ', '"priceNote": { "hyper": { "reason": "Stale.", "checked": "2026-09-23" }, ')]
+# The row comes from SOURCE_MAP: taken from the readings, it stopped this driver loading
+# once no NVIDIA row carried one (tests/corpus.test.py, the gone refresh).
+slug = next((s for s, tiers in SOURCE_MAP.items()
+             if "primary" in tiers.get("hyper", {}) and ROWS.get(s, {}).get("vendor") == "nvidia"), None)
+if slug and "hyper" in (ROWS[slug].get("priceSource") or {}):
+    S[f"N8 data: {slug}'s automated hyperscaler tier also given a note"] = [
+        row_edit(slug, '"priceNote": { ', '"priceNote": { "hyper": { "reason": "Stale.", "checked": "2026-09-23" }, ')]
+else:
+    S[f"N8 data: {slug}'s automated hyperscaler tier also given a note"] = [
+        (GPUS_JSON, Missing(f"{slug or 'no nvidia row'} carries no hyperscaler reading (priceSource.hyper) "
+                            "for a note to sit beside"), "", 1)]
 
 # ---- L: the leads ----
 S["L1 js: the monthly range counts a lead's price"] = [

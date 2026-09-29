@@ -33,7 +33,9 @@ with open(os.path.join(ROOT, GPUS_JSON), encoding="utf-8") as f:
     H100 = json.load(f)["data"].get("h100-80") or {}
 # h100-80's hyperscaler reading, which every sabotage here but C7 attacks, and its
 # date and price as the catalog writes them. Without a reading they are never used:
-# reading_edit() refuses first.
+# reading_edit() refuses first. Every edit to the reading goes through it: four that
+# quoted it directly were refused by count, not by name, once it was taken out
+# (tests/corpus.test.py, the gone refresh).
 READING = (H100.get("priceSource") or {}).get("hyper")
 DATE, PRICE = (json.dumps(READING["date"]), json.dumps(READING["price"])) if READING else ("", "")
 # The reading up to its date, and up to its price.
@@ -75,7 +77,7 @@ def invented_spot_reading():
 S = {
     "C1 data: h100-80/hyper provider 'azure' -> 'aws' while the SKU stays Azure's (wrong attribution)":
       [
-        (GPUS_JSON, '"provider": "azure", "sku": "Standard_ND96isr_H100_v5"', '"provider": "aws", "sku": "Standard_ND96isr_H100_v5"', 1),
+        reading_edit('"provider": "azure", "sku": "Standard_ND96isr_H100_v5"', '"provider": "aws", "sku": "Standard_ND96isr_H100_v5"'),
       ],
     'C10 data (control): h100-80/hyper priceSource.price is a string':
       [
@@ -83,7 +85,7 @@ S = {
       ],
     "C2 data: h100-80/hyper region 'eastus' -> 'westus2' (SOURCE_MAP's primary says eastus)":
       [
-        (GPUS_JSON, '"sku": "Standard_ND96isr_H100_v5", "region": "eastus"', '"sku": "Standard_ND96isr_H100_v5", "region": "westus2"', 1),
+        reading_edit('"sku": "Standard_ND96isr_H100_v5", "region": "eastus"', '"sku": "Standard_ND96isr_H100_v5", "region": "westus2"'),
       ],
     "C3a data: h100-80/hyper date is not a date ('2026-09-32')":
       [
@@ -103,7 +105,7 @@ S = {
       ],
     "C6 data: h100-80/hyper provider is 'gcp', a kind SOURCE_MAP never fetches (label prints the raw id)":
       [
-        (GPUS_JSON, '"provider": "azure", "sku": "Standard_ND96isr_H100_v5"', '"provider": "gcp", "sku": "Standard_ND96isr_H100_v5"', 1),
+        reading_edit('"provider": "azure", "sku": "Standard_ND96isr_H100_v5"', '"provider": "gcp", "sku": "Standard_ND96isr_H100_v5"'),
       ],
     'C7 data: an invented spot priceSource for h100-80 (a tier SOURCE_MAP marks automatable, never confirmed)':
       [
@@ -111,7 +113,7 @@ S = {
       ],
     'C8 data (control): h100-80/hyper sku is whitespace':
       [
-        (GPUS_JSON, '"provider": "azure", "sku": "Standard_ND96isr_H100_v5"', '"provider": "azure", "sku": "   "', 1),
+        reading_edit('"provider": "azure", "sku": "Standard_ND96isr_H100_v5"', '"provider": "azure", "sku": "   "'),
       ],
     'C9 data (control): h100-80/hyper date is an integer':
       [

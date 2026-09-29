@@ -70,7 +70,10 @@ sabotage that quotes one stops applying at the next refresh, so it reads them fr
 and quotes only what the job leaves alone: a provider, a region, the part of a SKU that names the
 product. When the row, tier or note it attacks is gone, it keeps its name and carries
 `harness.Missing` where its anchor would be. The run refuses it by name, as it refuses a drifted
-anchor, rather than dropping it or failing to load the driver.
+anchor, rather than dropping it or failing to load the driver. So which tiers it attacks comes
+from `SOURCE_MAP`, which taking a reading out leaves alone, and not from the readings
+(`engine_r6`'s C12, `engine_r10`'s N8): derived from the readings, C12 dropped out of the corpus
+and N8 stopped its driver loading once they were gone.
 
 ### How the files are named
 
