@@ -2323,24 +2323,40 @@ test('every cost surface names a source or says "not recorded", discovered not e
   // decimal point is now optional.
   const COST = /\$[\d,]+(?:\.\d{2})?/;
 
-  // h100-80 carries mixed provenance today (hyper+spec sourced, spot not) —
-  // real catalog shape, not invented. rtx5090-32 has no automatable source on
-  // any tier, so every one of its tiers is "not recorded". A synthetic row
-  // with every tier sourced reaches the all-sourced case a real one does not
-  // give us yet.
+  /* The real rows, by what their tiers show: every row with a sourced tier beside
+     a priced one with nothing recorded, and every row with nothing recorded on any
+     tier. Derived, not named: h100-80 was named here as the mixed row, and the price
+     job's first reading of its spot tier leaves it nothing unrecorded, which would
+     have turned this red on that job's pull request whatever its prices said. A
+     synthetic row with every tier sourced reaches the all-sourced case no real row
+     gives yet, and the first mixed row's unrecorded tier, recorded by hand, the
+     hand-recorded one. */
+  const TIERS = ['hyper', 'spec', 'spot'];
+  const shows = (card, tier) => card[tier] === null ? 'no price'
+    : (card.priceSource || {})[tier] ? 'sourced' : (card.priceRecord || {})[tier] ? 'by hand' : 'not recorded';
+  const realRows = (keep) => Object.entries(GPU_TABLE).filter(([, card]) => keep(TIERS.map(t => shows(card, t))));
+  const MIXED = realRows(s => s.includes('sourced') && s.includes('not recorded'));
+  const NONE = realRows(s => s.includes('not recorded') && s.every(x => x === 'not recorded' || x === 'no price'));
+  const PRICED = realRows(s => !s.includes('no price'));
+  assert.ok(MIXED.length && NONE.length && PRICED.length,
+    `the catalog has ${MIXED.length} row(s) mixing a source with a tier not recorded, ${NONE.length} with ` +
+    `nothing recorded and ${PRICED.length} priced on every tier; this sweep needs one of each`);
+  const [handSlug, handCard] = MIXED[0];
+  const handTier = TIERS.find(t => shows(handCard, t) === 'not recorded');
   const sourced = { provider: 'lambda', sku: 'TEST PLAN', region: 'global', date: '2026-09-22' };
   const cases = [
-    ['mixed (real h100-80)', GPU_TABLE['h100-80'], 'mixed'],
-    ['none recorded (real rtx5090-32)', GPU_TABLE['rtx5090-32'], 'none'],
-    ['all sourced (synthetic)',
-     { ...GPU_TABLE['h100-80'], priceSource: { hyper: sourced, spec: sourced, spot: sourced } }, 'all'],
-    // h100-80's unsourced spot tier, recorded by hand: each surface must print
-    // that label under that tier, exactly as priceSourceLabel() renders it.
-    ['hand-recorded spot (synthetic)', { ...GPU_TABLE['h100-80'], priceRecord: { spot: { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' } } }, 'mixed'],
+    ...MIXED.map(([slug, card]) => [`mixed (real ${slug})`, card, 'mixed']),
+    ...NONE.map(([slug, card]) => [`none recorded (real ${slug})`, card, 'none']),
+    [`all sourced (synthetic, on ${PRICED[0][0]})`,
+     { ...PRICED[0][1], priceSource: { hyper: sourced, spec: sourced, spot: sourced } }, 'all'],
+    // Each surface must print the hand record's label under its tier, exactly as
+    // priceSourceLabel() renders it.
+    [`hand-recorded ${handTier} (synthetic, on ${handSlug})`, { ...handCard, priceRecord: { [handTier]: { provider: 'RunPod', sku: 'MI300X (Secure Cloud)', region: 'global', date: '2026-09-23', price: 2.39, url: 'https://www.runpod.io/gpu-models/mi300x' } } }, 'mixed'],
   ];
 
   const surfacesSeen = new Set();
-  let mixedSourcedHit = 0, mixedNotRecordedHit = 0;
+  // Per case: every real mixed row has to show both, not the rows between them.
+  const hits = Object.fromEntries(cases.map(([label]) => [label, { sourced: 0, notRecorded: 0 }]));
   for (const [label, card, shape] of cases) {
     // A fresh harness per card, like the FP8 sweep above: savedSnapshots
     // accumulates on one shared harness, which would leave an earlier card's
@@ -2457,7 +2473,7 @@ test('every cost surface names a source or says "not recorded", discovered not e
           assert.ok(!/[A-Za-z]\s*[,/&]\s*[A-Za-z]/.test(residue),
             `${label}/${id}/${tier}: a second provider is joined onto its source — ` +
             `${JSON.stringify(residue.slice(0, 160))}`);
-          if (expected === 'not recorded') mixedNotRecordedHit++; else mixedSourcedHit++;
+          if (expected === 'not recorded') hits[label].notRecorded++; else hits[label].sourced++;
         }
       }
     }
@@ -2496,9 +2512,10 @@ test('every cost surface names a source or says "not recorded", discovered not e
       `${label}: still calls GPU prices "estimates" somewhere on the page — some tiers are ` +
       'sourced, dated, attributed figures, not guesses');
   }
-  assert.ok(mixedSourcedHit > 0 && mixedNotRecordedHit > 0,
-    `the mixed real row (h100-80) did not exercise both states: sourced=${mixedSourcedHit} ` +
-    `not-recorded=${mixedNotRecordedHit}`);
+  for (const [slug] of MIXED) {
+    const { sourced: s, notRecorded: n } = hits[`mixed (real ${slug})`];
+    assert.ok(s > 0 && n > 0, `the mixed real row ${slug} did not exercise both states: sourced=${s} not-recorded=${n}`);
+  }
   assert.ok(surfacesSeen.size >= 3,
     `only ${surfacesSeen.size} surfaces print a cost figure at all (${[...surfacesSeen].join(', ')}) — ` +
     'the sweep has stopped reaching them');
