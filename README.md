@@ -175,6 +175,7 @@ benchmarks/data.json    Community benchmark data
 tools/sync_data.py      Bakes those two files into both engines
 tools/make_assets.py    Regenerates the README and social images from the tool
 tools/price_check.py    Repo-side job: re-reads published GPU prices, reports what moved
+tools/price_watchdog.py  A day later: did the scheduled price run happen, and deliver what it found?
 docs/MODEL.md           Every formula, constant and limitation, explained
 docs/research/          Working notes behind catalog entries
 docs/skills/            Project knowledge Claude Code loads; run docs/skills/link.sh once
@@ -186,6 +187,7 @@ tests/report.test.py    The PDF generator and the text it emits
 tests/sync.test.py      Generated blocks round-trip and cannot be poisoned
 tests/price_check.test.py  Per-source parsing/validation: a changed page shape must abort, not misfire
 tests/workflow.test.py  The CI workflows — the price job must be able to report what it finds
+tests/watchdog.test.py  The price watchdog's verdicts, and that it reads the price job's own schedule and words
 tests/corpus.test.py    The sabotage corpus can still find the engine text it attacks
 tests/assets.test.py    The published images can still be regenerated
 tests/coverage.test.py  What the benchmark dataset actually covers, and that it stops shrinking

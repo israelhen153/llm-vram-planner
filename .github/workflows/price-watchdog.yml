@@ -1,0 +1,43 @@
+# The price job's watchdog — see tools/price_watchdog.py.
+#
+# tests/workflow.test.py reads the price workflow and refuses the edits that would let
+# a scheduled run do nothing, and three rounds of cold checks (PR #40) showed that
+# reading the file cannot close that class: a script after the gate that throws the
+# moves away, a new step wearing a permitted condition, a key GitHub's parser rejects
+# so the file never runs. GitHub also delays and drops scheduled runs outright:
+# 2026-09-28's 06:00 run started at 12:44 UTC, after it had been run by hand.
+#
+# So this checks the outcome instead, from GitHub's own record, a day after the price
+# job's slot: did a scheduled run start, succeed, leave its report, and, when the
+# report says it found something, does a pull request carry a commit it made? Any
+# "no" opens, or adds to, one issue, and this run fails, so it shows red as well.
+# tests/watchdog.test.py holds this schedule to a day after the price job's.
+name: Price watchdog
+
+on:
+  schedule:
+    - cron: "43 7 * * 2" # Tuesday 07:43 UTC, a day after the price job's slot
+  workflow_dispatch: {} # manual run, e.g. after starting a dropped price run by hand
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # to check out tools/price_watchdog.py and the price workflow
+      actions: read # the price job's runs, and the report each one uploads
+      pull-requests: read # whether a pull request carries what the run found
+      issues: write # to open, or add to, the issue it reports on
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Check the price job's last scheduled run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/price_watchdog.py --repo "$GITHUB_REPOSITORY"
