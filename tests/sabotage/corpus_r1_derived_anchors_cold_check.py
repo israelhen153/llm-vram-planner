@@ -23,8 +23,9 @@ one ended:
   dropped instead of refused. The check can only see a target vanish when a
   refresh takes it out, and the only such target is the one held note, so every
   other driver's handling of a gone row, tier or reading is unchecked.
-- B1: the check blinded so `moved` moves nothing. Its own guard is that the
-  refreshed file differs, which the re-read dates satisfy on their own.
+- B1: the check blinded so `moved` moves nothing, with a price quoted the way
+  S5 once quoted it. Its own guard is that the refreshed file differs, which the
+  re-read dates satisfy on their own.
 
 What these sabotages edit is the corpus itself: a driver, the shell driver, or
 tests/corpus.test.py. The suites that judge an engine sabotage cannot see any of
@@ -35,6 +36,12 @@ check learns to see it, and that is the finding, not a pass. Every quoted value
 is read from data/gpus.json as this driver loads, so the sabotages keep saying
 what they said after the job's next run; a tier they need and cannot find is a
 harness.Missing, refused by name.
+
+Every sabotage here inserts and takes nothing out, so the text it anchors on is
+still there once it is applied. The check loads this driver like any other, and
+a sabotage that replaced a line would read to it as this driver's own anchor
+drifting — red for the wrong reason, the false catch that keeps assets.test.py
+and the check itself out of JUDGING_SUITES.
 
 Usage: python3 tests/sabotage/corpus_r1_derived_anchors_cold_check.py [name-substring ...]
 """
@@ -121,23 +128,28 @@ else:
         (SHELL, Missing("the shell driver's loop, or a hyperscaler price on one of its rows, is gone"), "", 1)]
 
 # ---- M: a target gone, and the driver dropping the sabotage or failing to load ----
-S["M1 r10: row_edit() asserts instead of carrying Missing, so a gone row stops the driver loading"] = [
-    (R10, "    if line.count(old) != 1:\n        return (GPUS_JSON, Missing(f\"{slug}: {old!r} occurs {line.count(old)} times in its row\"), \"\", 1)\n",
-     "    assert line.count(old) == 1, f\"{slug}: {old!r} occurs {line.count(old)} times in its row\"\n", 1)]
+R10_GUARD = ("    if line.count(old) != 1:\n"
+             "        return (GPUS_JSON, Missing(f\"{slug}: {old!r} occurs {line.count(old)} times in its row\"), \"\", 1)\n")
+S["M1 r10: row_edit() asserts ahead of carrying Missing, so a gone row stops the driver loading"] = [
+    (R10, R10_GUARD,
+     "    assert line.count(old) == 1, f\"{slug}: {old!r} occurs {line.count(old)} times in its row\"\n" + R10_GUARD, 1)]
+R4_NO_READING = "else:\n    S[\"S5 data: h100-80/hyper moved with priceSource.price left where it was\"] = [NO_READING]\n"
 S["M2 r4: S5 dropped, not refused, when h100-80 carries no hyperscaler reading"] = [
-    (R4, "else:\n    S[\"S5 data: h100-80/hyper moved with priceSource.price left where it was\"] = [NO_READING]\n",
-     "else:\n    pass\n", 1)]
+    (R4, R4_NO_READING,
+     R4_NO_READING + "    del S[\"S5 data: h100-80/hyper moved with priceSource.price left where it was\"]\n", 1)]
 
 # ---- B: the check blinded ----
-if isinstance(H100.get("hyper"), (int, float)):
-    price = json.dumps(H100["hyper"])
-    S["B1 check: the moved refresh moves every price by nothing, and S5 quotes h100-80's price with its comma"] = [
-        (CHECK, 'price = row[tier] if kind == "reread" else round(row[tier] + 0.01, 2)',
-         'price = row[tier] if kind == "reread" else round(row[tier] + 0.00, 2)', 1),
-        (R4, S5_READ, f'(GPUS_JSON, row + "{price},", row + "{json.dumps(round(H100["hyper"] + 0.2, 2))},", 1)]', 1)]
+CHECK_MOVE = '            price = row[tier] if kind == "reread" else round(row[tier] + 0.01, 2)\n'
+if all(isinstance(H100.get(k), (int, float)) for k in ("gb", "bw", "hyper")):
+    row = f'"h100-80": {{ "gb": {json.dumps(H100["gb"])}, "bw": {json.dumps(H100["bw"])}, "hyper": '
+    quoted, moved = row + json.dumps(H100["hyper"]) + ",", row + json.dumps(round(H100["hyper"] + 0.2, 2)) + ","
+    S["B1 check: the moved refresh moves every price by nothing, and a sabotage quotes h100-80's price with its comma"] = [
+        (CHECK, CHECK_MOVE, CHECK_MOVE + "            price = row[tier]\n", 1),
+        (R4, R4_ADD_AT, R4_ADD_AT + 'S["X3 data: h100-80/hyper moved, its price quoted with the comma after it"] = '
+         f'[(GPUS_JSON, {quoted!r}, {moved!r}, 1)]\n', 1)]
 else:
-    S["B1 check: the moved refresh moves every price by nothing, and S5 quotes h100-80's price with its comma"] = [
-        (R4, Missing("h100-80 carries no hyperscaler price to quote"), "", 1)]
+    S["B1 check: the moved refresh moves every price by nothing, and a sabotage quotes h100-80's price with its comma"] = [
+        (R4, Missing("h100-80 carries no hyperscaler price, capacity or bandwidth to quote"), "", 1)]
 
 if __name__ == "__main__":
     run_driver(S, judges=JUDGES)
