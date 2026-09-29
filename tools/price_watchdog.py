@@ -18,6 +18,16 @@ Everything it needs to know about the price job, it reads from the price workflo
 which file it is (the one whose job opens the pull request, as the workflow suite
 finds it), its schedule, its branch and its commit message.
 
+What it cannot see, named rather than hidden:
+- Its own scheduled run can be late or dropped as the price job's can, and then it
+  reports nothing. It runs off the hour for the same reason.
+- GitHub disables a public repository's scheduled workflows after 60 days with no
+  activity, and that silences this and the price job together.
+- Two runs of the price job on the same day that find the same prices make no new
+  commit (create-pull-request updates the branch only when its content changes), so a
+  second run that day reads as undelivered. Across a week the read dates change, and
+  every run that confirms a price makes a commit.
+
 Run:  python3 tools/price_watchdog.py --repo owner/name [--now 2026-09-29T07:43:00Z]
       (needs the gh CLI, and GH_TOKEN with actions:read, pull-requests:read, issues:write)
 """
