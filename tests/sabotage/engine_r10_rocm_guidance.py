@@ -19,7 +19,7 @@ Usage: python3 tests/sabotage/engine_r10_rocm_guidance.py [name-substring ...]
 import json, os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import run_driver, ROOT
+from harness import run_driver, Missing, ROOT
 from anchors import (INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON, JS_EXEC_COSTS,
                      JS_R10_FP8_LINE, JS_R10_BLOCKED, JS_R10_BUILD_REFUSE, JS_R10_ARCH, JS_R10_AITER,
                      JS_R10_IMAGE, JS_R10_GCD, JS_R10_PANEL_ROCM, JS_R10_EXPORT_ROCM, JS_R10_PEER,
@@ -157,9 +157,16 @@ S["O6 py: the PDF charges 0.3 per peer on every link, and says so"] = [
 for slug in NULLED_NVIDIA:
     S[f"P1 data: {slug}'s hyperscaler tier re-priced, with its note left saying nobody rents it"] = [
         row_edit(slug, '"hyper": null', '"hyper": 0.75')]
-S["P2 data: rtxpro-96's hyperscaler reading dropped, leaving a price with no provenance"] = [
-    row_edit("rtxpro-96", ', "hyper": { "provider": "aws", "sku": "g7e.2xlarge", "region": "US East (N. Virginia)", '
-                          '"date": "2026-09-23", "price": 3.36 }', "")]
+# The reading's date and price are read, not quoted: the weekly price job rewrites
+# both whenever it re-reads the tier, and a quoted one stops P2 applying.
+reading = (ROWS.get("rtxpro-96", {}).get("priceSource") or {}).get("hyper")
+if reading:
+    dropped = row_edit("rtxpro-96", ', "hyper": { "provider": "aws", "sku": "g7e.2xlarge", '
+                       '"region": "US East (N. Virginia)", "date": ' + json.dumps(reading["date"])
+                       + ', "price": ' + json.dumps(reading["price"]) + " }", "")
+else:
+    dropped = (GPUS_JSON, Missing("rtxpro-96 carries no hyperscaler reading (priceSource.hyper) to drop"), "", 1)
+S["P2 data: rtxpro-96's hyperscaler reading dropped, leaving a price with no provenance"] = [dropped]
 
 # ---- C: the PDF command names its quantization ----
 S["C1 py: the interactive menu's choice carries no quantization"] = [

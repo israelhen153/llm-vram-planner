@@ -61,15 +61,45 @@ def require_green_baseline():
                  f"tree, so every sabotage would read as caught")
 
 
+class Missing:
+    """What a sabotage looked for in the tree as its driver loaded, and did not find.
+
+    Some sabotages read their target out of data/gpus.json instead of quoting it,
+    because the weekly price job rewrites it: a price, a read date, a held note. When
+    the row, tier or note such a sabotage attacks is gone, it has nothing to replace.
+    It must not drop out of the corpus either, because a run one sabotage short reads
+    exactly like a clean one. So it keeps its name and carries this where its anchor
+    would be, and apply_edits() refuses it with the reason: one sabotage that could
+    not be applied, as an anchor that drifted is, rather than a driver that cannot
+    load and takes every other sabotage in it along."""
+
+    def __init__(self, what):
+        self.what = what
+
+    def __repr__(self):
+        return f"Missing({self.what!r})"
+
+
+def refusal(f, text, old, count):
+    """Why one edit cannot be applied to f, whose text is `text`, or None. apply_edits()
+    and tests/corpus.test.py both ask this, so the suite refuses exactly what a run would."""
+    if isinstance(old, Missing):
+        return f"{f}: {old.what}"
+    n = text.count(old)
+    if n != count:
+        return f"{f}: expected {count} occurrence(s) of {old[:70]!r}, found {n}"
+    return None
+
+
 def apply_edits(edits):
     """edits: list of (file, old, new, count). Returns the files touched."""
     touched = []
     for f, old, new, count in edits:
         path = os.path.join(ROOT, f)
         src = open(path).read()
-        n = src.count(old)
-        if n != count:
-            raise RuntimeError(f"{f}: expected {count} occurrence(s) of {old[:70]!r}, found {n}")
+        why = refusal(f, src, old, count)
+        if why:
+            raise RuntimeError(why)
         open(path, "w").write(src.replace(old, new))
         touched.append(f)
     return touched

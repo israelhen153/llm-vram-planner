@@ -159,7 +159,8 @@ def sabotages_of(driver):
 
 def why_it_would_not_apply(spec):
     """What harness.apply_edits() would refuse this sabotage for on the tree as it
-    is, or None. The same count check, edit by edit and in order, on copies."""
+    is, or None. The same check, harness.refusal(), edit by edit and in order, on
+    copies: a count that does not match, or a target its driver found gone."""
     import harness
     files = {}
     for f, old, new, count in harness.edits_of(spec):
@@ -168,9 +169,9 @@ def why_it_would_not_apply(spec):
                 files[f] = open(os.path.join(ROOT, f), encoding="utf-8").read()
             except OSError as e:
                 return f"{f}: {e.strerror}"
-        n = files[f].count(old)
-        if n != count:
-            return f"{f}: expected {count} occurrence(s) of {old[:70]!r}, found {n}"
+        why = harness.refusal(f, files[f], old, count)
+        if why:
+            return why
         files[f] = files[f].replace(old, new)
     return None
 

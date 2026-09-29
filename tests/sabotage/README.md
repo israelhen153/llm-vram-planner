@@ -62,6 +62,16 @@ Each driver applies a list of exact-string edits to committed files, refusing if
 string is not found the expected number of times — so a driver that has drifted from the code
 fails loudly rather than silently testing nothing.
 
+**Never quote a value the weekly price job rewrites.** `tools/price_check.py --apply` rewrites a
+tier's price, its reading's date and price, a Vast.ai reading's offer count, and drops the note
+a confirmed reading replaces, and `tools/sync_data.py` carries all of it into both engines. A
+sabotage that quotes one stops applying at the next refresh, so it reads them from
+`data/gpus.json` as its driver loads (`engine_r4`'s S5 and C2, `engine_r5`, `engine_r10`'s P2),
+and quotes only what the job leaves alone: a provider, a region, the part of a SKU that names the
+product. When the row, tier or note it attacks is gone, it keeps its name and carries
+`harness.Missing` where its anchor would be. The run refuses it by name, as it refuses a drifted
+anchor, rather than dropping it or failing to load the driver.
+
 ### How the files are named
 
 A driver's name says what it attacks and which review round produced it:
@@ -74,7 +84,8 @@ came from a real run rather than a review.
 
 Two files are not drivers:
 
-- **`harness.py`** — the machinery every driver shares: `apply_edits`, `restore_files`,
+- **`harness.py`** — the machinery every driver shares: `apply_edits` and the one check it makes,
+  `refusal`, which `tests/corpus.test.py` makes too; `Missing`; `restore_files`,
   `run_judging_suites`, `require_green_baseline`, and `run_driver`, the one loop every Python driver
   calls. There used to be fifteen copies of that loop in six different shapes.
 - **`anchors.py`** — the exact excerpts of the engine files that `engine_*` sabotages anchor their

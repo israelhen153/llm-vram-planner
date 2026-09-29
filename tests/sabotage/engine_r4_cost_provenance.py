@@ -11,16 +11,26 @@ spot <= specialized <= hyperscaler true for every card.
 Usage: python3 tests/sabotage/engine_r4_cost_provenance.py [name-substring ...]
        python3 tests/sabotage/engine_r4_cost_provenance.py --from C1
 """
-import os, sys
+import json, os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import run_driver
+from harness import run_driver, Missing, ROOT
 from anchors import (INDEX_HTML, REPORT_PY, SYNC_PY, PRICE_PY, GPUS_JSON,
                      JS_COST_HYPER_SUBLABEL, JS_CMP_COST_SOURCE, JS_CMP_RANGE,
                      JS_PRICE_LABEL_RET, PY_PRICE_LABEL_RET, PY_TIER_HYPERSCALER,
                      PY_NOTES_COMPOSITE_OPEN, SYNC_OPTIONAL, PRICE_CROSS_CHECK_THRESHOLD,
-                     PRICE_APPLY_LOOP, PRICE_FIELD_LINE, GPUS_ADA_ROW,
-                     GPUS_H100_HYPER_PREFIX, GPUS_H100_SRC_BLOCK)
+                     PRICE_APPLY_LOOP, PRICE_FIELD_LINE, GPUS_ADA_ROW)
+
+# h100-80's hyperscaler tier, as the catalog holds it now. The weekly price job
+# rewrites its price, and its reading's date and price, whenever it re-reads the
+# tier. S5 and C2 quoted all three, which stopped them applying at the next
+# refresh, so they are read here as this driver loads. Only what the job never
+# rewrites is quoted: the row's capacity and bandwidth, and the reading's
+# provider, SKU and region.
+with open(os.path.join(ROOT, GPUS_JSON), encoding="utf-8") as f:
+    H100 = json.load(f)["data"].get("h100-80") or {}
+READING = (H100.get("priceSource") or {}).get("hyper")
+NO_READING = (GPUS_JSON, Missing("h100-80 carries no hyperscaler reading (priceSource.hyper) to attack"), "", 1)
 
 S = {}
 
@@ -38,8 +48,15 @@ S["S3 data: rtx6000ada-48/spot gets a priceSource for a tier SOURCE_MAP marks ma
 S["S4 js: priceSourceLabel names the provider but drops the read date"] = [
     (INDEX_HTML, JS_PRICE_LABEL_RET,
      "  return `${provider} · ${src.sku} · ${src.region}`;\n", 1)]
-S["S5 data: h100-80/hyper moved (12.3 -> 12.5) with priceSource.price left at 12.29"] = [
-    (GPUS_JSON, GPUS_H100_HYPER_PREFIX, GPUS_H100_HYPER_PREFIX.replace("12.3,", "12.5,"), 1)]
+# Twenty cents, the move this sabotage has always made. Its name carries the prices
+# it read, so a log says what it moved from and to after any refresh.
+if READING and isinstance(H100.get("hyper"), (int, float)):
+    price, moved = H100["hyper"], round(H100["hyper"] + 0.2, 2)
+    row = '"h100-80": { "gb": 80, "bw": 3352, "hyper": '
+    S[f"S5 data: h100-80/hyper moved ({price} -> {moved}) with priceSource.price left at {READING['price']}"] = [
+        (GPUS_JSON, row + json.dumps(price) + ",", row + json.dumps(moved) + ",", 1)]
+else:
+    S["S5 data: h100-80/hyper moved with priceSource.price left where it was"] = [NO_READING]
 
 # ---- W: sabotages the builder ran by hand before the first cold check ----
 S["W1 py: price_source_label names the provider but drops the read date"] = [
@@ -61,8 +78,14 @@ S["C1 js: a composite is appended after an otherwise-correct sourced label (comp
      JS_CMP_COST_SOURCE.replace("Hyper: ${priceSourceLabel(s, 'hyper')}",
                                 "Hyper: ${priceSourceLabel(s, 'hyper')}"
                                 "${s.priceSource && s.priceSource.hyper ? ' (AWS, GCP, Azure)' : ''}"), 1)]
-S["C2 data: a sourced tier's date is blank (empty string, not missing)"] = [
-    (GPUS_JSON, GPUS_H100_SRC_BLOCK, GPUS_H100_SRC_BLOCK.replace("\"date\": \"2026-09-22\"", "\"date\": \"\""), 1)]
+if READING:
+    before = ('"priceSource": { "hyper": { "provider": "azure", "sku": "Standard_ND96isr_H100_v5", '
+              '"region": "eastus", "date": ')
+    after = ', "price": ' + json.dumps(READING["price"]) + " }"
+    S["C2 data: a sourced tier's date is blank (empty string, not missing)"] = [
+        (GPUS_JSON, before + json.dumps(READING["date"]) + after, before + '""' + after, 1)]
+else:
+    S["C2 data: a sourced tier's date is blank (empty string, not missing)"] = [NO_READING]
 S["C3 py: the general 'GPU prices are... estimates' note regains a composite and the word estimates"] = [
     (REPORT_PY, PY_NOTES_COMPOSITE_OPEN,
      PY_NOTES_COMPOSITE_OPEN.replace("per-board/hr figures", "per-board/hr estimates")

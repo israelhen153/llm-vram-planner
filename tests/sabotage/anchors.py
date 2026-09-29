@@ -179,10 +179,11 @@ GPUS_ADA_ROW = ("\"rtx6000ada-48\": { \"gb\": 48, \"bw\": 960, \"hyper\": null, 
                 "026-09-16\" }, \"spot\": { \"reason\": \"In the catalog since 2026-07-27 as a mid-2026 list price, wit"
                 "h no provider recorded. The weekly check can read Vast.ai, but its name for the RTX 6000 Ada has"
                 "n't been confirmed against a live query yet.\", \"checked\": \"2026-09-23\" } } }")
-GPUS_H100_HYPER_PREFIX = "\"h100-80\": { \"gb\": 80, \"bw\": 3352, \"hyper\": 12.3,"
-GPUS_H100_SRC_BLOCK = ("\"priceSource\": { \"hyper\": { \"provider\": \"azure\", "
-                      "\"sku\": \"Standard_ND96isr_H100_v5\", \"region\": \"eastus\", "
-                      "\"date\": \"2026-09-22\", \"price\": 12.29 }")
+# No excerpt here carries a value the weekly price job rewrites: a tier's price, a
+# reading's date, price or offer count, or the note a confirmed reading replaces.
+# Quoted, one stops every sabotage built on it at the next refresh, so a sabotage
+# reads those from data/gpus.json as its driver loads (engine_r4's S5 and C2 did
+# quote h100-80's here until they were read).
 
 # ---- fix/gguf-plugin (engine_r9_gguf_plugin.py): the GGUF guidance and the
 # copied report's command block ----
