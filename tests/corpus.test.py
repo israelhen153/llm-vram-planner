@@ -31,6 +31,7 @@ import importlib.util
 import os
 import re
 import sys
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True
@@ -336,6 +337,207 @@ def check_a_worker_starts_from_the_run_s_proof_or_refuses():
 
 test("a corpus worker starts from the run's proof, or proves it first, or refuses at another commit",
      check_a_worker_starts_from_the_run_s_proof_or_refuses)
+
+
+# The runner's verdicts. The second cold check of the speed-ups changed each of these
+# in tests/sabotage/parallel.py and the suite stayed green: nothing tested how the
+# runner classifies a catch, stops a run early, reads a driver, reports a driver's
+# exit, keeps a worker clean, or keeps stale bytecode out (round 24's RUNNER R8-R15).
+_runner = {}
+
+
+def runner():
+    if "module" not in _runner:
+        spec = importlib.util.spec_from_file_location("parallel", os.path.join(ROOT, "tests", "sabotage", "parallel.py"))
+        _runner["module"] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_runner["module"])
+    return _runner["module"]
+
+
+GOLDEN_LINE = "FAIL the page golden"
+REAL_LINE = "FAIL a real check"
+
+
+def check_a_catch_is_golden_only_only_when_every_red_suite_is():
+    """A catch is golden-only when regenerating the goldens would hide it: every suite
+    that went red did so on golden failures alone. One real failure anywhere, a golden
+    and a real failure in one suite, or a red suite with no FAIL line (a crash) is a
+    catch that survives regenerating the goldens. The check made the runner call a
+    catch golden-only when any red suite was (R8), and whenever it was caught at all
+    (R9), and no test noticed either."""
+    parallel = runner()
+    golden = {GOLDEN_LINE}
+    cases = {
+        "a real failure": ({"model": (1, [REAL_LINE], [], "")}, False),
+        "a golden failure alone": ({"model": (1, [GOLDEN_LINE], [], "")}, True),
+        "a golden failure beside a green suite": ({"model": (1, [GOLDEN_LINE], [], ""), "sync": (0, [], [], "")}, True),
+        "a golden failure beside a real one elsewhere": (
+            {"model": (1, [GOLDEN_LINE], [], ""), "report": (1, [REAL_LINE], [], "")}, False),
+        "a golden and a real failure in one suite": ({"model": (1, [GOLDEN_LINE, REAL_LINE], [], "")}, False),
+        "a red suite that printed no FAIL line": ({"model": (1, [], ["Traceback"], "")}, False),
+    }
+    wrong = {}
+    for case, (results, want) in cases.items():
+        last = {}
+
+        def run_driver(sabotages, results=results):
+            last.update(results)
+            print(f"  red    {next(iter(sabotages))}")
+            print("")
+            print("1 caught, 0 survived")
+
+        got = parallel.judge_one(types.SimpleNamespace(run_driver=run_driver), "a_driver", case, [], last, golden)
+        if got["golden_only"] is not want:
+            wrong[case] = got["golden_only"]
+    assert not wrong, f"golden-only called wrongly: {wrong}"
+
+test("the runner calls a catch golden-only only when every red suite is", check_a_catch_is_golden_only_only_when_every_red_suite_is)
+
+
+def check_early_exit_runs_on_past_a_suite_red_on_golden_failures_alone():
+    """With --early-exit, a suite red on golden failures alone does not end the run: the
+    next suite may catch the sabotage for real. The check made a red suite of any kind
+    end it (R10), which reports such a sabotage golden-only when a later suite would
+    have caught it, and no test noticed. A real catch does end it, and the suites are
+    restored afterwards."""
+    parallel = runner()
+    per_suite = {"workflow": (1, [GOLDEN_LINE], [], ""), "price": (1, [REAL_LINE], [], ""), "parity": (0, [], [], "")}
+    harness, ran = types.SimpleNamespace(JUDGING_SUITES=[(n, ["true"]) for n in ("parity", "price", "workflow")]), []
+
+    def one_suite():
+        (name, _), = harness.JUDGING_SUITES
+        ran.append(name)
+        return {name: per_suite[name]}
+
+    harness.run_judging_suites = one_suite
+    last = parallel.install_judging(harness, {GOLDEN_LINE}, early_exit=True)
+    harness.run_judging_suites()
+    assert ran[:2] == ["workflow", "price"] and "parity" not in ran, (
+        f"early exit ran {ran}: it must run on past the golden-only suite and stop at the real catch")
+    assert set(last) == {"workflow", "price"}, sorted(last)
+    assert [s[0] for s in harness.JUDGING_SUITES] == ["parity", "price", "workflow"], harness.JUDGING_SUITES
+
+test("early exit runs on past a suite red on golden failures alone, and stops at a real catch",
+     check_early_exit_runs_on_past_a_suite_red_on_golden_failures_alone)
+
+
+def check_a_worker_reads_a_driver_from_the_commit_under_test():
+    """A worker judges the sabotages of the commit under test, read from that commit's
+    tree, not the ones in the runner's own checkout: the two differ whenever a branch
+    changes a driver. The check pointed the runner at its own checkout (R12) and no test
+    noticed. The driver here has a name the runner's checkout also has, and different
+    sabotages; the harness's run_driver is the real one, silenced while the driver
+    loads, as the runner silences it."""
+    import tempfile, harness
+    parallel = runner()
+    name = "engine_r1_throughput_leaks"
+    assert os.path.exists(os.path.join(SABOTAGE_DIR, name + ".py")), f"{name} is gone; pick another driver both checkouts have"
+    with tempfile.TemporaryDirectory() as tree:
+        os.makedirs(os.path.join(tree, "tests", "sabotage"))
+        with open(os.path.join(tree, "tests", "sabotage", name + ".py"), "w") as f:
+            f.write('S = {"the commit under test\'s own": [("a.txt", "one", "two", 1)]}\n')
+        got = parallel.sabotages_of(harness, tree, name)
+    assert list(got) == ["the commit under test's own"], f"read another checkout's driver: {list(got)[:3]}"
+
+test("a worker reads a driver from the commit under test, not the runner's checkout",
+     check_a_worker_reads_a_driver_from_the_commit_under_test)
+
+
+def check_a_driver_log_ends_with_how_its_run_ended():
+    """A driver's log ends the way its own run under chain.sh ends: exit 1 when a
+    sabotage errored, 2 when one could not be applied, 0 only when every one was
+    judged. The check made every log say exit 0 (R15) and no test noticed."""
+    parallel = runner()
+    caught = {"status": "caught", "block": ["  red    a"]}
+    cases = {
+        "every sabotage judged": ({("d", "a"): caught}, 0),
+        "one could not be applied": ({("d", "a"): caught, ("d", "b"): {"status": "unapplied", "block": ["  !! b: could not apply: x"]}}, 2),
+        "one errored": ({("d", "a"): caught, ("d", "b"): {"status": "error", "error": "boom"}}, 1),
+    }
+    for case, (results, want) in cases.items():
+        text, rc = parallel.driver_log("d", [n for _, n in results], results)[:2]
+        assert rc == want and text.rstrip().endswith(f"driver exit {want}"), (case, rc, text.splitlines()[-1])
+
+test("a driver's log ends with how its run ended: 1 errored, 2 unapplied, 0 judged",
+     check_a_driver_log_ends_with_how_its_run_ended)
+
+
+FAKE_JUDGING_HARNESS = """import os
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+JUDGING_SUITES = [("fake", ["true"])]
+
+
+def require_green_baseline():
+    pass
+
+
+def run_judging_suites():
+    with open(os.environ["FAKE_HARNESS_LOG"], "a") as f:
+        f.write(f"{os.environ.get('PYTHONDONTWRITEBYTECODE')} {os.path.getmtime(os.path.abspath(__file__))}\\n")
+    return {"fake": (1, ["FAIL a real catch"], [], "")}
+
+
+def run_driver(sabotages):
+    name = next(iter(sabotages))
+    with open(os.path.join(ROOT, "a.txt"), "a") as f:
+        f.write("left behind\\n")
+    run_judging_suites()
+    print(f"  red    {name}")
+    print("")
+    print("1 caught, 0 survived")
+"""
+
+
+def check_a_worker_restores_a_tree_left_dirty_and_trusts_no_old_bytecode():
+    """Through the real `parallel.py --worker` process, on a throwaway repository whose
+    one sabotage leaves a tracked file changed. The worker must report that sabotage as
+    an error, restore the file, and stay clean for the next: the check dropped the
+    dirty check between sabotages (R11) and every later sabotage would have been judged
+    on the changed tree. And no suite may run a stale .pyc: the worker turns bytecode
+    off for its suites and gives every tracked .py a fresh timestamp, which the check
+    removed (R14), putting back the 90 false catches seen at d99f1b6."""
+    import json, subprocess, tempfile
+    parallel_py = os.path.join(ROOT, "tests", "sabotage", "parallel.py")
+    with tempfile.TemporaryDirectory() as d:
+        tree, log, handed = os.path.join(d, "tree"), os.path.join(d, "harness.log"), os.path.join(d, "golden.json")
+        fake = os.path.join(tree, "tests", "sabotage", "harness.py")
+        os.makedirs(os.path.dirname(fake))
+        with open(fake, "w") as f:
+            f.write(FAKE_JUDGING_HARNESS)
+        with open(os.path.join(tree, "tests", "sabotage", "engine_fake.py"), "w") as f:
+            f.write('S = {"leaves the tree dirty": [("a.txt", "one", "two", 1)]}\n')
+        with open(os.path.join(tree, "a.txt"), "w") as f:
+            f.write("one\n")
+        with open(handed, "w") as f:
+            json.dump(["FAIL the golden"], f)
+
+        def git(*args):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                                   *args], cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q", "--template=")  # no hooks from a global template
+        git("add", ".")
+        git("commit", "-q", "-m", "one")
+        old = 1_000_000_000
+        os.utime(fake, (old, old))
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+        env["FAKE_HARNESS_LOG"] = log
+        task = json.dumps({"kind": "py", "driver": "engine_fake", "name": "leaves the tree dirty"})
+        done = subprocess.run([sys.executable, "-B", parallel_py, "--worker", tree, "--sha", git("rev-parse", "HEAD"),
+                               "--golden", handed], input=task + "\n", capture_output=True, text=True, timeout=60, env=env)
+        lines = done.stdout.splitlines()
+        assert len(lines) == 2, f"expected a ready line and one result: {done.stdout[-400:]} {done.stderr[-400:]}"
+        ready, result = json.loads(lines[0]), json.loads(lines[1])
+        assert ready.get("ready"), ready
+        assert result.get("status") == "error" and "left the worker dirty" in result.get("error", ""), result
+        assert not result.get("fatal"), f"the worker could not restore itself: {result}"
+        assert git("status", "--porcelain") == "", "the worker was left dirty"
+        with open(log) as f:
+            bytecode, mtime = f.read().split()
+    assert bytecode == "1", f"the suites ran with bytecode on (PYTHONDONTWRITEBYTECODE={bytecode})"
+    assert float(mtime) > old + 1, "the commit's .py files kept the timestamps a stale .pyc could match"
+
+test("a corpus worker restores a tree a sabotage left dirty, and trusts no old bytecode",
+     check_a_worker_restores_a_tree_left_dirty_and_trusts_no_old_bytecode)
 
 
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
