@@ -318,6 +318,15 @@ PY_PATH_REFUSE_MENU = '        refuse_model_path_the_server_cannot_resolve({"hf_
 PY_MENU_NAME = '        model_name = input("  Display name: ").strip() or f"{arch[\'params\']}B model"\n'
 PY_PATH_REFUSAL = '        raise PlanRefused(f"The model path {cfg[\'hf_model\']!r} {reason}. Give its absolute path on "\n                          f"the GPU server instead, for example /opt/models/<name>.")\n'
 
+# The quantization lists (fix/json-known-quantizations, engine_r17).
+PY_QUANT_SERVED = '    served = VLLM_QUANTIZATIONS.get(vendor, ())\n'
+PY_QUANT_CHECK = '    if cfg.get("quant") and cfg["quant"] not in served:\n'
+PY_QUANT_HINT = '                          f\'startup. Use one of: {", ".join(sorted(served))}.\')\n'
+PY_FP8_WIDTHS = 'METHOD_WIDTH = {**method_widths(), **{method: 1 for method in FP8_METHODS}}\n'
+PY_FP8_METHODS_TAIL = '               "mxfp8", "modelopt_mxfp8")\n'
+PY_QUANT_NVIDIA_TAIL = '               "nvfp4_per_token", "mxfp8", "gguf"),\n'
+PY_QUANT_AMD_TAIL = '            "gguf"),\n'
+
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
 PRICE_PY = "tools/price_check.py"
