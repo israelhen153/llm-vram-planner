@@ -3050,22 +3050,58 @@ test("a JSON config at one byte per parameter is FP8 in the command; a width wit
      check_a_one_byte_json_config_is_fp8_in_the_command)
 
 
-# A JSON config's precision, as the owner decided it (2026-09-27, decision desk A2):
-# the width comes from the method where the method fixes it (a method with one width
-# in --prec's table), the plan never guesses, and a config naming nothing is the BF16
-# checkpoint its command loads. The refusals' words are the contract.
+# A JSON config's precision, as the owner decided it (2026-09-27, decision desk A1, A2,
+# A3): only a quantization vLLM v0.30.0 serves on the card's vendor; the width comes
+# from the method where the method fixes it (one width in --prec's table, or any of
+# vLLM's FP8 methods, at one byte); the plan never guesses; and a config naming nothing
+# is the BF16 checkpoint its command loads. The lists, the FP8 methods and the
+# refusals' words are the contract.
+VLLM_QUANTIZATIONS_CONTRACT = {
+    "nvidia": ("awq", "auto_awq", "fp8", "fbgemm_fp8", "fp_quant", "modelopt", "modelopt_fp4", "modelopt_mxfp8",
+               "modelopt_mixed", "auto_gptq", "gptq", "gptq_marlin", "awq_marlin", "humming", "compressed-tensors",
+               "experts_int8", "quark", "moe_wna16", "torchao", "inc", "mxfp4", "gpt_oss_mxfp4", "deepseek_v4_fp8",
+               "online", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel", "int8_per_channel_weight_only",
+               "nvfp4_per_token", "mxfp8", "gguf"),
+    "amd": ("awq", "auto_awq", "awq_marlin", "gptq", "auto_gptq", "fp8", "deepseek_v4_fp8", "compressed-tensors",
+            "fbgemm_fp8", "inc", "quark", "mxfp4", "mxfp8", "torchao", "modelopt", "modelopt_fp4", "modelopt_mxfp8",
+            "modelopt_mixed", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel", "online", "gpt_oss_mxfp4",
+            "gguf"),
+}
+FP8_METHODS_CONTRACT = ("fp8", "fbgemm_fp8", "deepseek_v4_fp8", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel",
+                        "mxfp8", "modelopt_mxfp8")
 JSON_WIDTH_GGUF = " (GGUF: Q2_K 0.35, Q4_K_M 0.63, Q5_K_M 0.71, Q6_K 0.82, Q8_0 1.1)"
 
 
-def json_precision(quant, bpp):
-    """What a JSON config giving quant and bpp (None where absent) plans as, (bpp,
-    quant), or the refusal it gets."""
+def check_the_quantization_lists_are_vllm_v0_30_0s():
+    """The planner's lists are the contract's: NVIDIA every built-in method of vLLM
+    v0.30.0 (CUDA sets no allow-list), AMD ROCm's allow-list, both with gguf; AMD's is
+    NVIDIA's less the CUDA-only ones; the FP8 methods are on both. Changing a list is
+    changing a public claim, so it changes this literal too."""
+    assert gr.VLLM_QUANTIZATIONS == VLLM_QUANTIZATIONS_CONTRACT, gr.VLLM_QUANTIZATIONS
+    assert gr.FP8_METHODS == FP8_METHODS_CONTRACT, gr.FP8_METHODS
+    assert set(gr.GPUS[s]["vendor"] for s in gr.GPUS) == set(VLLM_QUANTIZATIONS_CONTRACT)
+    assert set(VLLM_QUANTIZATIONS_CONTRACT["amd"]) < set(VLLM_QUANTIZATIONS_CONTRACT["nvidia"])
+    assert set(FP8_METHODS_CONTRACT) <= set(VLLM_QUANTIZATIONS_CONTRACT["amd"])
+
+test("the planner accepts exactly vLLM v0.30.0's quantizations per vendor, and knows its FP8 methods",
+     check_the_quantization_lists_are_vllm_v0_30_0s)
+
+
+def json_precision(quant, bpp, vendor):
+    """What a JSON config giving quant and bpp (None where absent) plans as on this
+    vendor's card, (bpp, quant), or the refusal it gets, in the engine's order: the
+    vendor's list, a width of 0 or less, then the width rules."""
     widths = {}
     for b, q in PRECISIONS_CONTRACT.values():
         if q:
             widths.setdefault(q, set()).add(b)
-    fixed = {q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1}
+    fixed = {**{q: next(iter(ws)) for q, ws in widths.items() if len(ws) == 1},
+             **{m: 1 for m in FP8_METHODS_CONTRACT}}
     q = (quant or "").strip().lower()
+    served = VLLM_QUANTIZATIONS_CONTRACT[vendor]
+    if q and q not in served:
+        return (f'"quant": {q!r} isn\'t a quantization vLLM v0.30.0 serves on {"AMD" if vendor == "amd" else "NVIDIA"} '
+                f'cards, so the printed command would stop at startup. Use one of: {", ".join(sorted(served))}.')
     if bpp is not None and bpp <= 0:
         return f'"bpp": {bpp} can\'t be a width: a weight takes more than 0 bytes per parameter.'
     if bpp is None:
@@ -3090,22 +3126,18 @@ class Absent:
 
 
 ABSENT = Absent()
+JSON_NAMES = sorted(set(VLLM_QUANTIZATIONS_CONTRACT["nvidia"]) | set(VLLM_QUANTIZATIONS_CONTRACT["amd"]))
+# Every quantization a JSON config can give: absent, null, empty, two other spellings,
+# --prec's own tokens that aren't methods, names vLLM doesn't serve, and every name on
+# either of vLLM's lists. A null was never given, so one read as the name "none" passed.
 JSON_METHODS = {q for _, q in PRECISIONS_CONTRACT.values() if q}
-# Every quantization a JSON config can give here: absent, null, empty, each method
-# --prec knows and another spelling, --prec's own tokens that aren't methods, and one
-# it doesn't know. A null was never given, so one read as the name "none" passed.
-JSON_QUANTS = [ABSENT, None, "", "fp8", " FP8", "awq", "gptq", "gguf", "compressed-tensors",
-               *sorted(t for t in PRECISIONS_CONTRACT if t not in JSON_METHODS)]
+JSON_QUANTS = [ABSENT, None, "", " FP8", "Fp8_Per_Block ", "float8", "bogus",
+               *sorted(t for t in PRECISIONS_CONTRACT if t not in JSON_METHODS), *JSON_NAMES]
 # Model ids that name a quantization, as real ones do (-FP8, -AWQ, -GGUF, a GGUF level):
-# one per method above and per GGUF level, and none, for the preset's own. The ids were
-# the presets', so a width read off a model id that names FP8 passed.
-JSON_MODEL_IDS = [None, *(f"org/model-{q}" for q in sorted(JSON_METHODS | {"compressed-tensors"})),
+# one per name on either list and per GGUF level, and none, for the preset's own. The
+# ids were the presets', so a width read off a model id that names FP8 passed.
+JSON_MODEL_IDS = [None, *(f"org/model-{name}" for name in JSON_NAMES),
                   *(f"org/model-{level}" for level in re.findall(r"(Q\w+) [\d.]+", JSON_WIDTH_GGUF))]
-# The smallest dense preset and the smallest MoE one, so most cards fit them and print
-# their command.
-JSON_SIZES = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
-JSON_MODELS = (min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=JSON_SIZES.get),
-               min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=JSON_SIZES.get))
 
 
 def json_config_outcome(config, raw):
@@ -3120,28 +3152,33 @@ def json_config_outcome(config, raw):
     return cfg["bpp"], cfg.get("quant") or ""
 
 
+# The smallest dense preset and the smallest MoE one, so most cards fit them and print
+# their command.
+JSON_SIZES = {k: gr.arch_fields(p)["params"] for k, p in gr.PRESETS.items()}
+JSON_MODELS = (min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) >= 100), key=JSON_SIZES.get),
+               min((k for k, p in gr.PRESETS.items() if gr.arch_fields(p).get("active", 100) < 100), key=JSON_SIZES.get))
+
+
 def json_precision_on(quant, bpp, row):
     """json_precision() on this card: FP8 weights on a card that can't run them get the
     FP8 refusal instead."""
-    want = json_precision(None if quant is ABSENT else quant, bpp)
+    want = json_precision(None if quant is ABSENT else quant, bpp, row["vendor"])
     if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
         want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
     return want
 
 
 def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
-    """A JSON config without "bpp" was sized at 0.5 whatever it named: {"quant": "fp8"}
-    planned half the weights its command loads, and a config naming nothing a quarter
-    of its BF16 checkpoint. Each quantization above meets every card, both of
-    from_json()'s branches, every width (none, 0, a negative, and each the report can
-    label, each whole one written both as an integer and as a float), a dense model and
-    a MoE one, both KV caches, and the model ids above. It is planned at the width and
+    """A JSON config without "bpp" was sized at 0.5 whatever it named, and any name went
+    into --quantization. Every quantization above meets every width (none, 0, a
+    negative, and each the report can label, each whole one written both as an integer
+    and as a float) under every model (the smallest dense and MoE presets), KV cache and
+    branch, with the cards and the model ids rotating. It is planned at the width and
     with the --quantization the owner's rules give, or refused with their words; FP8 on
-    a card that can't run it gets the FP8 refusal. A cold check kept a refusal to dense
-    models, a default read off the KV cache, 0 read as no width and --prec's tokens taken
-    for methods green, because the sweep held those fixed; a second kept 1.0
-    contradicting fp8, 1.0 alone planned as BF16 and 0.0 planned green, because every
-    width arrived as an integer. The sweep asserts each quantization met every value."""
+    a card that can't run it gets the FP8 refusal. The sweep asserts every quantization
+    met every card, every model id, and every width under every model, KV cache and
+    branch. The widths were given as JSON writes them from Python, 1 and never 1.0, so
+    1.0 contradicting fp8, 1.0 alone planned as BF16 and 0.0 planned all passed."""
     labelled = sorted({b for b, _ in PRECISIONS_CONTRACT.values()} | {0.35, 0.71, 0.25})
     widths = [None, *(w for b in (-1, 0, *labelled) for w in ((b, float(b)) if isinstance(b, int) else (b,)))]
     dense, moe = JSON_MODELS
@@ -3153,9 +3190,7 @@ def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
         for qi, quant in enumerate(JSON_QUANTS):
             # Model, KV cache and branch step in whole turns, and the width steps with the
             # card inside each turn, so every quantization meets every width under every
-            # model, KV cache and branch: a default read off the KV cache showed only for no
-            # quantization, no width and an FP8 KV cache together, which a rotation missed.
-            # A width is keyed by its repr: 1 == 1.0.
+            # model, KV cache and branch. A width is keyed by its repr: 1 == 1.0.
             for turn in range(8):
                 model, kv, branch = (dense if turn < 4 else moe), turn % 2, (turn // 2) % 2
                 for ci, (slug, row) in enumerate(cards):
@@ -3196,7 +3231,7 @@ def check_a_json_configs_precision_is_what_its_method_fixes_or_refused():
     assert not missed, f"quantizations that missed a value: {missed}"
     assert planned and planned == commanded, f"planned, but no card printed their command: {sorted(planned - commanded, key=str)[:8]}"
 
-test("a JSON config's precision is the width its method fixes, BF16 when it names nothing, or refused",
+test("a JSON config's quantization is one vLLM serves on the card's vendor, sized by what its method fixes, or refused",
      check_a_json_configs_precision_is_what_its_method_fixes_or_refused)
 
 
@@ -3239,7 +3274,7 @@ def check_the_cli_refuses_a_json_width_with_exit_2():
         run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config, "-o", out],
                              capture_output=True, text=True)
         assert run.returncode == 2, (run.returncode, run.stderr[-300:])
-        assert f"error: {json_precision('gguf', None)}" in run.stderr, run.stderr[-400:]
+        assert f"error: {json_precision('gguf', None, 'nvidia')}" in run.stderr, run.stderr[-400:]
         assert not os.path.exists(out), "a PDF was written for a refused plan"
 
 test("the CLI refuses a JSON config's width with the reason and exit status 2, and writes no PDF",

@@ -1706,6 +1706,16 @@ def validate_arch(cfg):
     if isinstance(cfg.get("quant"), str):
         cfg["quant"] = cfg["quant"].strip().lower()
 
+    # Only a quantization vLLM v0.30.0 serves on the card's vendor (the owner's decision,
+    # A1): a name it doesn't know, or a CUDA-only one on AMD, was printed into a command
+    # that stops at startup.
+    vendor = (cfg.get("gpu") or {}).get("vendor")
+    served = VLLM_QUANTIZATIONS.get(vendor, ())
+    if cfg.get("quant") and cfg["quant"] not in served:
+        raise PlanRefused(f'"quant": {cfg["quant"]!r} isn\'t a quantization vLLM {ROCM["vllm"]} serves on '
+                          f'{"AMD" if vendor == "amd" else "NVIDIA"} cards, so the printed command would stop at '
+                          f'startup. Use one of: {", ".join(sorted(served))}.')
+
     # A JSON config's weights (the owner's decision, 2026-09-27): the width comes from
     # the method where the method fixes it, and the plan never guesses. A config that
     # gave no "bpp" was sized at 0.5 whatever it named, so {"quant": "fp8"} planned
@@ -1847,7 +1857,29 @@ def method_widths():
     return {quant: next(iter(ws)) for quant, ws in widths.items() if len(ws) == 1}
 
 
-METHOD_WIDTH = method_widths()
+# The quantizations vLLM v0.30.0 serves, per vendor, pinned with the image like the
+# ROCm lines. NVIDIA takes every built-in method (QuantizationMethods in
+# vllm/model_executor/layers/quantization/__init__.py; CUDA sets no allow-list), and AMD
+# takes ROCm's allow-list (supported_quantization in vllm/platforms/rocm.py). Both take
+# gguf, which vLLM serves through vllm-gguf-plugin. Any other name stops the printed
+# command at startup, on the GPU server.
+VLLM_QUANTIZATIONS = {
+    "nvidia": ("awq", "auto_awq", "fp8", "fbgemm_fp8", "fp_quant", "modelopt", "modelopt_fp4", "modelopt_mxfp8",
+               "modelopt_mixed", "auto_gptq", "gptq", "gptq_marlin", "awq_marlin", "humming", "compressed-tensors",
+               "experts_int8", "quark", "moe_wna16", "torchao", "inc", "mxfp4", "gpt_oss_mxfp4", "deepseek_v4_fp8",
+               "online", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel", "int8_per_channel_weight_only",
+               "nvfp4_per_token", "mxfp8", "gguf"),
+    "amd": ("awq", "auto_awq", "awq_marlin", "gptq", "auto_gptq", "fp8", "deepseek_v4_fp8", "compressed-tensors",
+            "fbgemm_fp8", "inc", "quark", "mxfp4", "mxfp8", "torchao", "modelopt", "modelopt_fp4", "modelopt_mxfp8",
+            "modelopt_mixed", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel", "online", "gpt_oss_mxfp4",
+            "gguf"),
+}
+# vLLM's FP8 methods (the owner's decision, A3): their weights are one byte per
+# parameter, so a JSON config naming one gets that width, another width contradicts it,
+# and the FP8 refusal sees every one of them, not only "fp8".
+FP8_METHODS = ("fp8", "fbgemm_fp8", "deepseek_v4_fp8", "fp8_per_tensor", "fp8_per_block", "fp8_per_channel",
+               "mxfp8", "modelopt_mxfp8")
+METHOD_WIDTH = {**method_widths(), **{method: 1 for method in FP8_METHODS}}
 
 
 def gguf_widths():
