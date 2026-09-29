@@ -45,9 +45,17 @@ assert GATED and NOTED and LED and NULLED_NVIDIA, "the catalog no longer has wha
 
 
 def row_edit(slug, old, new):
-    """Replace old with new inside one catalog row's line, asserting it is there once."""
-    line = LINE[slug]
-    assert line.count(old) == 1, f"{slug}: {old!r} occurs {line.count(old)} times in its row"
+    """Replace old with new inside one catalog row's line.
+
+    Whether old is there once is settled as this driver loads, and a quote that is not
+    is refused when its sabotage is applied, by name, as a drifted anchor is. This was an
+    assertion, and one stale quote then stopped the driver loading and took every other
+    sabotage in it along, in a corpus run and in tests/corpus.test.py alike."""
+    line = LINE.get(slug)
+    if line is None:
+        return (GPUS_JSON, Missing(f"no row {slug!r} in the catalog to edit"), "", 1)
+    if line.count(old) != 1:
+        return (GPUS_JSON, Missing(f"{slug}: {old!r} occurs {line.count(old)} times in its row"), "", 1)
     return (GPUS_JSON, line, line.replace(old, new), 1)
 
 
