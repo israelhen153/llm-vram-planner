@@ -878,8 +878,12 @@ def unresolvable_model_path(model):
     model = str(model or "")
     if "$" in model:
         return "names a shell variable, which the printed command quotes, so the GPU server never expands it"
+    if not model:
+        return "is empty"
     if not model or model.startswith("/"):
         return ""
+    if model.startswith("-"):
+        return "starts with -, so vLLM would read it as an option"
     if model.startswith("~"):
         return "starts with ~, which the printed command quotes, so the GPU server never expands it"
     if model in (".", "..") or model.startswith(("./", "../")) or model.count("/") >= 2:
@@ -1645,6 +1649,9 @@ ARCH_TYPES = {
     # The weights: a JSON config's "quant": 1, true or ["fp8"], or "bpp": "1", died
     # several frames deep with a TypeError that named nothing.
     "bpp": (int, float), "quant": (str, type(None)),
+    # The model: "hf_model": 123 or ["~/x"] crashed inside shlex.quote with a TypeError
+    # that named nothing, and null planned `vllm serve ''`.
+    "hf_model": str,
 }
 
 def validate_arch(cfg):
