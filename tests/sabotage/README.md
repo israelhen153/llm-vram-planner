@@ -131,6 +131,14 @@ compared as resolved values before and after, and every one was identical.
 | `workflow_r3_name_bindings.py` | 3 | The round-2 guard's bindings: a second job in the same file carrying the original bug where every rule read one literal job key, a job-level `if:` that retires the job as "skipped", a decoy `echo` that takes `id: suite` so the PR body reports its outcome forever, and `format()` hiding a filename from the path regex |
 | `workflow_live_first_run.py` | live | Not from a review: what the first real run of the fixed price job found. `add-paths` listed `assets/*.png` and make_assets.py writes three files there, so the manifest recording index.html's hash was regenerated and then left behind, failing the asset gate on every price PR |
 | `workflow_r4_shell_quoting.py` | 4 | The guard's own helper: six shell-quoting shapes that hid a test run from `executes()` (quoted argument, command substitution, `$'...'`, an apostrophe in a comment that opens a span across newlines), plus a rule that passed by not looking, a negative pathspec, `UPDATE_GOLDEN` through `env:`, and the gate — which nothing pinned at all |
+| `workflow_r5_off_the_hour.py` | 5 | `fix/price-refresh-off-the-hour`: the price job's schedule put back at the start of the hour, where GitHub delays and drops scheduled runs — as `0`, `00`, `*/30`, a list holding `0` and `*` — the schedule emptied so the rule has nothing to judge, another workflow scheduled on the hour, and `on:` quoted so a reader keyed to YAML's boolean finds no triggers |
+| `workflow_r6_schedule_cold_check.py` | 6 | The first cold check of `fix/price-refresh-off-the-hour`: the four sabotages that survived it — a cron that keeps minute 17 and never fires (February 31st) or fires monthly rather than weekly, and a step-level `if:` keyed to `workflow_dispatch` on the fetch step or on the diff step, so the job stays scheduled off the hour and every scheduled run delivers nothing |
+| `workflow_r7_scheduled_run_path.py` | 7 | The neighbours of round 6's survivors, which its fixes close as classes: a schedule at a good minute that runs more often than once a week (every weekday, every six hours, a second weekly cron beside the first), and a condition on the steps the check did not try — the checkout and the re-sync before the gate, and the install, image and suite steps between the gate and the suite |
+| `workflow_r8_schedule_cold_check_2.py` | 8 | The second cold check of the schedule fix (514f3e7): the ten sabotages that survived it. The fetch and re-sync commands, which no rule reads — `--apply` chosen by an expression on the event name, the fetch wrapped in a shell `if`, `--apply` dropped, `--slug` narrowing a scheduled run, the applied moves discarded after the re-sync; a named step before the gate whose shell exits 1 on scheduled runs; the job's envelope — `runs-on` chosen by the event name, `needs:` a job that fails on schedule; a `push:` trigger beside the schedule; and `on:` defined twice, which pyyaml reads and GitHub refuses. Also records that `17 6 * * MON` was wrongly refused (since fixed) |
+| `workflow_r9_pinned_head.py` | 9 | The neighbours of round 8's survivors, which its fixes close as classes: a new step before the gate, a `shell:` or `env:` on the fetch and a `shell:` on the gate, a checkout of another ref, another Python, `defaults:`, `env:` or `container:` around the job, a `workflow_run` trigger, no hand run, and one step given two `run:` keys |
+| `workflow_r11_price_watchdog.py` | 11 | The price watchdog, which checks a scheduled run's outcome because round 10 (below, accepted risk) showed reading the workflow cannot: an unfinished, failed or reportless run taken as delivered, the report's words ignored, a pull request closed unmerged or carrying only last week's commit or a person's taken as delivery, the slot judged with no grace, on Python's weekday or a week early, a problem left green, no issue or a new one each week, and the watchdog's own workflow run inside the grace, unable to open its issue, or reading another artifact |
+| `workflow_r12_watchdog_cold_check.py` | 12 | The cold check of the price watchdog at `c9c4a06`: the sixteen of nineteen sabotages that survived it, where round 11 did not look. The questions it asks GitHub, which the end-to-end fake answers whatever the arguments say: a hand run taken for the scheduled one (`event=schedule` dropped), a merged pull request invisible (`state=all` dropped), pull requests from any branch, every workflow's scheduled runs so the watchdog's own in-progress run is judged, every artifact downloaded under its own directory so the report is never at the path read, and the problem added to a closed issue; a hand run's commit standing in for the scheduled run's (dated after the slot, not the run); `main()`'s real clock naive, which every test bypasses with `--now`; `WEEKDAYS` reordered, latent while the cron says `1` and the test derives its expectation from the table; the watchdog's workflow kept green with `\|\| true`, retired by a step-level or job-level `if:` on `workflow_dispatch`, run without `GH_TOKEN`, or pointed at another repository; and the price workflow's RED marker kept only in a shell comment, and its artifact expiring a day after upload. Caught: `REPORT_FILE` as a substring of the real name, the watchdog's cron at minute 0, the body step writing to another file |
+| `workflow_r13_watchdog_cold_check_2.py` | 13 | The second cold check of the price watchdog, at `4719776`: the fourteen of eighteen sabotages that survived it, where `tests/watchdog.test.py` still does not look. `main()`, which the verdict test never calls and the end-to-end run exercises on three outcomes only: it returns 0 for a run still going, for no run at all and for a cancelled one, accepts `skipped` beside `success`, reads a missing report as nothing found, and lets a hand run stand in for a dropped scheduled one; what it read from the price workflow, checked for what the readers return and never for whether `main()` uses them (a hardcoded `0 6 * * 1`; the file, the branch and the commit message as literals); the grace at one hour, and a commit dated up to an hour before the run's start; `status=completed` on the runs query, a field the fake ignores; and the price job's own actions, which do more than the words the watchdog reads: a workspace path in the artifact (upload-artifact roots it at the least common ancestor of its paths, so the report is never at the path read), a `branch-suffix` on the pull-request step, and a `timezone:` under its schedule entry, which GitHub's schema allows and the watchdog reads as UTC. Caught: `on:` given twice, the body step's condition widened around the gate, and the upload gated on `changed == 'false'` again |
 
 The suites that judge a sabotage are listed once, in `harness.py`'s `JUDGING_SUITES`, and
 `suites.sh` runs the same set for the one bash driver, printing one line each. `assets.test.py` is deliberately excluded — it hashes `index.html` and goes red on
@@ -140,7 +148,8 @@ engine, and that every sabotage in every driver still applies, both of which eve
 It runs in the ordinary suite instead, so a pull request that moves engine text a sabotage quotes,
 through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
-because none of the other five opens `.github/`.
+because none of the other five opens `.github/`. `watchdog.test.py` joined them with
+`workflow_r11_price_watchdog.py`, for the same reason: no other suite runs `tools/price_watchdog.py`.
 
 Rounds escalate: round 2 found gaps round 1 left, round 3 found gaps round 2 left. That is
 normal and expensive, and it converges when probes are **derived from the data** rather than
@@ -198,6 +207,23 @@ These were accepted after round 3 and have since been **closed by the golden** (
 - A claim added to *every* card at once, which the with/without comparison is blind to by
   construction (`X2`)
 - A figure written to `document.title` — recorded by the golden in `e421faf`
+
+The price workflow's guard stopped hardening after its third cold check (round 10, 2026-09-28),
+whose ten survivors are kept on `chore/schedule-cold-check-3` (`75c8a89`) rather than in the corpus,
+where they would read as survivors on every run. They are **accepted in the file and caught at run
+time** by the price watchdog (`tools/price_watchdog.py`, round 11), which checks a day later that
+the scheduled run happened, succeeded, left its report and, when it found prices, that a pull
+request carries a commit it made:
+
+- A script between the gate and the pull request that throws the moves away (install, image or
+  PR-body step): no commit from the run reaches a pull request
+- A new step after the suite wearing one of the two permitted conditions, such as a second
+  checkout (which cleans the tree) or a step that closes the pull request: the same
+- A key GitHub's parser rejects (`timezone:` under `concurrency:`), so the file never runs: no
+  scheduled run starts
+
+Three rounds found 4, 10 and 10 survivors, each ring outside the last; reading a workflow cannot
+prove a scheduled run will do its work, and watching the outcome can.
 
 ## Reading a result
 
