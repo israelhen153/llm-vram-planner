@@ -25,6 +25,24 @@ driver, or a rule in tests/corpus.test.py itself, judged with `--corpus` by
 tests/corpus.test.py alone, as engine_r23's RUNNER is. Q1-Q21 attack guarantees 1 and 2,
 Q19-Q21 the rules corpus.test.py holds itself to.
 
+At 97a2189, judged this way: G3a and G3b fail the pinned set and the two goldens and
+nothing else, G3c only the two goldens, and corpus.test.py is green on all three, which is
+guarantee 3 holding; G3d turns a real model test red, so the derived mixed row is what
+keeps it green; G4b-G4e are each caught by a real price test. Ten survived or were caught
+by the goldens alone: G3e (a test that will break the confirming pull request can be added
+today and nothing notices until then), G4f (the pinned set made a tautology, and the
+invented reading is then the goldens' alone to catch), Q6 (a quoted date with its count
+taken from the catalog applies vacuously once the count is 0), Q7 (a sabotage with no edits
+applies), Q12 (a renamed sabotage is not a dropped one: only counts are compared), Q13 (a
+sabotage that retargets is not refused), Q14 (the shell driver's reader sees line.count()
+and nothing else), Q15 (an offer count re-read as one more keeps its leading digit), Q16
+(the simulated confirming tree edits the catalog and the engines, not the pinned line the
+real one edits, so a driver quoting that line is red on the real pull request and green
+here; Q16b shows it) and Q18 (a Missing naming any tier with a reading is excused, so a
+sabotage can be parked forever and only the listing says so). Q17 is a probe, not a
+sabotage: a correct driver that reads the catalog through pathlib fails the moved refresh,
+because reading_from() rebinds builtins.open alone.
+
 Nothing here quotes a value the job rewrites: every catalog edit is a row read as this
 driver loads and rewritten by the job's own row writer, the confirming pull request is the
 writers' own output diffed line by line, the pinned line is found by pattern, and each is
