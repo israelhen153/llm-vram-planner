@@ -165,10 +165,14 @@ also refreshes the catalog in memory four ways, with the price job's own writers
 its `SOURCE_MAP` reads: every reading re-read on a new day, every price moved to one sharing no
 text with it, every tier still held under a note confirmed at a new price, and every automated
 tier's reading and note taken away, as a person could. It does all four again from the tree the
-pull request confirming the held tiers leaves. Each time it loads every driver against the result
-and applies every sabotage again, so one that quotes a value the job rewrites goes red in the pull
-request that adds it, not in the bot's, and one whose target is gone has to be refused by name,
-never dropped. It writes nothing to disk. The refusals it lets pass are the ones the refreshed
+pull request confirming the held tiers leaves, the one line that pull request edits by hand
+included: the pinned held set in `tests/price_check.test.py`. Each time it loads every driver
+against the result and applies every sabotage again, so one that quotes a value the job rewrites
+goes red in the pull request that adds it, not in the bot's, and one whose target is gone has to be
+refused by name, never dropped and never renamed: every name a driver has before a refresh, it has
+after. The shell driver is run, not read: its heredoc executes against each refreshed catalog and
+has to reach its write. A sabotage that makes no edit, or expects its text 0 times, changes nothing
+and is refused, by a run and by this check alike. It writes nothing to disk. The refusals it lets pass are the ones the refreshed
 tree has to cause: after the fourth, any; otherwise a sabotage built on a note a reading has
 replaced, in that refresh or an earlier one, which says so with
 `harness.Missing(..., note=(slug, tier))`. The check of the tree as it is lists such a refusal

@@ -87,11 +87,21 @@ class Missing:
         return f"Missing({self.what!r})"
 
 
+# A sabotage whose edits change nothing leaves the tree as it was, and judged, it would read
+# as a survivor: a gap the engine does not have. So it is refused, as a drifted anchor is
+# (the second cold check of chore/derive-catalog-anchors, Q6 and Q7).
+NO_EDIT = "the sabotage makes no edit, so a run would judge the tree unchanged"
+
+
 def refusal(f, text, old, count):
     """Why one edit cannot be applied to f, whose text is `text`, or None. apply_edits()
-    and tests/corpus.test.py both ask this, so the suite refuses exactly what a run would."""
+    and tests/corpus.test.py both ask this, so the suite refuses exactly what a run would.
+    An edit expecting its text fewer than once changes nothing, and is refused: a count
+    taken from the catalog as a driver loads is 0 once the job has rewritten the text."""
     if isinstance(old, Missing):
         return f"{f}: {old.what}"
+    if count < 1:
+        return f"{f}: an edit expecting {old[:70]!r} {count} time(s) changes nothing"
     n = text.count(old)
     if n != count:
         return f"{f}: expected {count} occurrence(s) of {old[:70]!r}, found {n}"
@@ -100,6 +110,8 @@ def refusal(f, text, old, count):
 
 def apply_edits(edits):
     """edits: list of (file, old, new, count). Returns the files touched."""
+    if not edits:
+        raise RuntimeError(NO_EDIT)
     touched = []
     for f, old, new, count in edits:
         path = os.path.join(ROOT, f)
