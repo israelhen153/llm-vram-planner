@@ -12,15 +12,15 @@ axes a leak or a regression can ride:
 - prices recorded by hand.
 
 Every catalog probe below is derived from data/gpus.json: the AMD rows, their
-keys, names, forms and device counts, their null tiers, their hand records and
-their spot markers. A row added later is attacked the same way without editing
+keys, names, forms and device counts, their null tiers and their hand records,
+and the spot markers of the tiers the price job reads. A row added later is attacked the same way without editing
 this file. The engine attacks anchor on tests/sabotage/anchors.py, so
 tests/corpus.test.py fails in the pull request that moves their text.
 """
 import json, os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import run_driver, ROOT
+from harness import run_driver, Missing, ROOT
 from anchors import (INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON, JS_LOOKUP, PY_LOOKUP,
                      JS_TIER_COST, JS_HOURLY_HYPER, JS_NULL_LABEL, JS_CMP_COSTS, JS_EXEC_COSTS, JS_USD_DASH,
                      JS_INTERCONNECT_NAME, JS_SHARDING_ONE, JS_SYNC_OAM_LABEL, JS_VENDORS, JS_STATE_FORM,
@@ -28,6 +28,11 @@ from anchors import (INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON, JS_LOOKUP, PY_L
                      PRICE_SPOT_SKU, PRICE_NULL_GUARD, PRICE_NULL_REFUSAL)
 # The round-3 leak shapes, reused so a leak here is the same leak it was there.
 from engine_r3_fixed_assumptions import leak_into_throughput_tile, leak_into_pdf_explanation
+# Which tiers the price job reads, from its own SOURCE_MAP rather than from the readings
+# in the catalog: a sabotage built on a reading has to keep its name when a person takes
+# the reading out, and be refused by name then.
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+from price_check import SOURCE_MAP
 
 with open(os.path.join(ROOT, GPUS_JSON), encoding="utf-8") as f:
     TEXT = f.read()
@@ -134,11 +139,17 @@ for slug, r in AMD.items():
         S[f"C11 data: {slug}/{t} priceRecord dated tomorrow-and-then-some"] = [
             row_edit(slug, f'"date": "{rec["date"]}", "price": {json.dumps(rec["price"])}, "url"',
                      f'"date": "2099-01-01", "price": {json.dumps(rec["price"])}, "url"')]
-    for t, src in (r.get("priceSource") or {}).items():
-        if " (" in src["sku"]:
-            bare = src["sku"].split(" (")[0]
-            S[f"C12 data: {slug}/{t} priceSource sku loses its marker, {src['sku']!r} -> {bare!r}"] = [
-                row_edit(slug, f'"sku": "{src["sku"]}"', f'"sku": "{bare}"')]
+    # A spot reading's SKU carries what kind of offer it read, "(Spot)" on Azure. The
+    # tiers come from SOURCE_MAP: derived from the readings, this sabotage dropped out of
+    # the corpus when its reading was taken out (tests/corpus.test.py, the gone refresh).
+    if "primary" in SOURCE_MAP.get(slug, {}).get("spot", {}):
+        src = (r.get("priceSource") or {}).get("spot")
+        name = f"C12 data: {slug}/spot priceSource sku loses its marker"
+        if src and " (" in src["sku"]:
+            S[name] = [row_edit(slug, f'"sku": "{src["sku"]}"', f'"sku": "{src["sku"].split(" (")[0]}"')]
+        else:
+            S[name] = [(GPUS_JSON, Missing(f"{slug}/spot carries no reading whose SKU is marked (priceSource.spot)"),
+                        "", 1)]
 
 # ---- the engines' null price tier ------------------------------------------------------
 S["N1 js: a null tier costs $0 (null * gpuCount)"] = [

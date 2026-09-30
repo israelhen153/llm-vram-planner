@@ -92,6 +92,9 @@ had the same shape: a probe that held fixed an axis the real data varies.
 So, when you add sabotages:
 
 1. **Derive probe parameters from `data/gpus.json`**, never from whichever fixture was handy.
+   And never quote a value the weekly price job rewrites (a price, a reading's date, price or
+   offer count, a note a confirmed reading replaces): read it with `open()` as the driver loads.
+   `tests/corpus.test.py` refreshes the catalog in memory and fails a sabotage that quotes one.
 2. **Vary the axis your change introduces.** A vendor commit needs AMD-gated probes; a field
    commit needs probes where the field is absent, wrong-typed and unknown.
 3. **Derive any list the harness walks**, and assert the derived list is complete.
