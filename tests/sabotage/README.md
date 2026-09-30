@@ -255,6 +255,22 @@ request carries a commit it made:
 Three rounds found 4, 10 and 10 survivors, each ring outside the last; reading a workflow cannot
 prove a scheduled run will do its work, and watching the outcome can.
 
+The corpus check's second cold check (`tests/corpus.test.py`, on chore/derive-catalog-anchors at
+`97a2189`) left three ways past it that no test can close, accepted by the owner on 2026-09-30.
+Its driver is kept on `chore/derive-anchors-cold-check-2` (`82177d9`) rather than in the corpus:
+
+- A test that hard-codes a held tier's state, as `model.test.js` once named h100-80 its mixed row,
+  is green on the tree as it is and red only on the pull request that confirms the tier (G3e).
+  Catching it sooner would mean running `model.test.js` and `report.test.py` a second time, on the
+  simulated confirming tree, in every suite run. It costs a confusing red on a pull request that is
+  handled by hand anyway.
+- A sabotage that switches to another target once its own is gone, keeping its name, still applies
+  (Q13): nothing tells it from one written that way on purpose. The rule to refuse by name, above,
+  is what stands against it, in review.
+- A sabotage whose only edit claims a note was replaced by a reading is excused whenever that tier
+  has one, so it can stay refused indefinitely (Q18). The check lists it among those refused by
+  name, and a full run counts it under "could not be applied".
+
 ## Reading a result
 
 - `N caught, 0 survived` — no gap found. This is the common outcome once a commit is careful.
