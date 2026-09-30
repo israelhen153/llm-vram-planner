@@ -69,9 +69,8 @@ figure rather than only here:
   is served by one replica. That is a known bug awaiting its fix, not a modelling
   choice, and it is flagged in the interface.
 
-Per-device VRAM for dense models is correct at any device count; that error is fixed and
-in the tool now, ahead of the v1.1 release it belongs to. What stays unmeasured above
-8 GPUs is throughput.
+Per-device VRAM for dense models is correct at any device count; that error is fixed as
+of v1.1. What stays unmeasured above 8 GPUs is throughput.
 
 Every formula, constant and known failure mode is written up in **[docs/MODEL.md](docs/MODEL.md)** — including why the two throughput numbers are different quantities, and where the estimates break down.
 
@@ -149,11 +148,11 @@ The hosted copy at [israelhen153.github.io](https://israelhen153.github.io/llm-v
 ## Roadmap
 
 - **v1.0** (shipped) — NVIDIA GPUs, vLLM
-- **v1.1** — AMD ROCm, and correct above 8 GPUs (that half is already done)
+- **v1.1** (released 2026-09-30) — AMD ROCm, and correct above 8 GPUs
 - **v1.2** — Repo-side price and catalog pipeline; the tool itself stays offline
 - **v2.0** — UI polish, guided wizard, mobile, PWA
 
-See [ROADMAP.md](ROADMAP.md) for details.
+See [ROADMAP.md](ROADMAP.md) for details, and [CHANGELOG.md](CHANGELOG.md) for what each release changed.
 
 ---
 

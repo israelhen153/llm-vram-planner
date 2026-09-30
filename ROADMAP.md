@@ -36,11 +36,12 @@ it, so per-device figures were optimistic above 8 devices. Fixed in v1.1 — see
 
 ---
 
-## v1.1.0 — AMD, and correct above 8 GPUs
+## v1.1.0 — AMD, and correct above 8 GPUs (released 2026-09-30)
 
-The correctness work is done and awaiting release. AMD is next.
+Released 2026-09-30. What it changed, and the known issue it discloses, are in
+[CHANGELOG.md](CHANGELOG.md).
 
-### Correct above 8 GPUs — shipped, not yet released
+### Correct above 8 GPUs — shipped
 
 Per-device VRAM divided by every device in the cluster, which is not how the emitted
 command shards. Above 8 devices the split becomes TP × DP: each data-parallel replica
@@ -55,7 +56,7 @@ cluster total by one device's capacity is circular. Mixture-of-experts is delibe
 held at the old divisor and says so on every surface. Full write-up in
 [docs/MODEL.md §4](docs/MODEL.md).
 
-### A throughput ceiling that holds for FP8 — shipped, not yet released
+### A throughput ceiling that holds for FP8 — shipped
 
 The compute ceiling and time to first token were charged at 16-bit cost whatever
 precision was selected. On cards with native FP8 that understated the ceiling by half —
@@ -66,21 +67,22 @@ before multiplying, so they get none; their gain is in memory bandwidth, which t
 already counts. Cards that run FP8 weights without FP8 compute say so beside the figure.
 The observed range, which is re-derived from the measured runs, moved with it.
 
-### A weekly price check — shipped, not yet released
+### A weekly price check — shipped
 
 Moved up from v1.2. `tools/price_check.py` reads published prices from Azure, AWS,
 Lambda, CoreWeave and Vast.ai. A weekly job runs it and opens a pull request when a
 price is confirmed or has moved. It never pushes, and any move over 40% is left for a
 person to judge. A confirmed price records the provider, SKU, region and date it was
-read. The catalog's current prices predate the check and are corrected next.
+read. The catalog's older prices, which predated the check, were brought to current published
+rates in the same release.
 
-### Documents and images that match the tool — shipped, not yet released
+### Documents and images that match the tool — shipped
 
 The README and this roadmap were corrected against the code, and tests now fail when
 the counts and constants they quote drift from the source. The share images are
 generated from the tool rather than drawn, and a test fails when they stop matching it.
 
-### Unmodelled hardware says so — shipped, not yet released
+### Unmodelled hardware says so — shipped
 
 A card without performance constants of its own would silently borrow NVIDIA's, and the
 AMD cards would have been the first. Every catalog row now names the constants its
@@ -90,7 +92,7 @@ command and cost figures are unaffected, and its throughput reads as not modelle
 the reason, on every surface including the PDF. No shipped number moved — every row
 today names the constants it was already computed with.
 
-### The documents say what the tool shows — shipped, not yet released
+### The documents say what the tool shows — shipped
 
 Every display test compared a card with performance constants against the same card
 without, and held the difference to the throughput figures. That catches a claim added
@@ -102,15 +104,15 @@ card cannot gain a figure, a caveat or a reassurance without the change showing 
 records what a reader sees rather than the markup carrying it, so renaming a class costs
 nothing while a reworded label costs a review.
 
-### AMD / ROCm — researched, not yet built
+### AMD / ROCm — shipped
 
-One change lands first:
+One change landed first:
 
 1. **Prices name their source.** Each price shows the provider, SKU, region and date it
    was read, or says that its source is not recorded, and prices that have drifted move
    to current published rates. No row presents one number as three providers' price.
 
-**GPUs to add:**
+**GPUs added:**
 - MI210 (64GB HBM2e, 1.6 TB/s)
 - MI250X (128GB HBM2e, 3.2 TB/s — one catalog row, two GCDs)
 - MI300X (192GB HBM3, 5.3 TB/s)

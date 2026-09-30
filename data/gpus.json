@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "last_updated": "2026-09-28",
     "description": "GPU catalog for the VRAM/throughput planner — capacity, bandwidth, dense BF16 compute, and 3-tier hourly pricing. Keyed by slug (t4-16, a100-80, ...), the same convention benchmarks/data.json's GPU half of each key uses. index.html's GPU_TABLE and generate_report.py's GPUS are generated from this file by tools/sync_data.py, between 'GPU_TABLE:BEGIN'/'GPU_TABLE:END' marker comments in each — edit this file, then re-run that script; do not hand-edit the generated blocks. The row schema carries what both engines read plus the structural fields the v1.1 work needs (vendor, perfKey, devices, form, caps). It is designed to grow — a vendor tag, a per-board device count, a fabric/interconnect tier are all expected to land on this same table in later commits — so a new column is the likely shape of that change, not a new table.",
     "schema": {
