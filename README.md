@@ -177,6 +177,7 @@ tools/make_assets.py    Regenerates the README and social images from the tool
 tools/price_check.py    Repo-side job: re-reads published GPU prices, reports what moved
 tools/price_watchdog.py  A day later: did the scheduled price run happen, and deliver what it found?
 docs/MODEL.md           Every formula, constant and limitation, explained
+docs/health_report_v1.1_release.md  What v1.1 cost to build and check, beside what it gives users
 docs/research/          Working notes behind catalog entries
 docs/skills/            Project knowledge Claude Code loads; run docs/skills/link.sh once
 setup.sh                Fork setup — repoints analytics at your account, or strips it
