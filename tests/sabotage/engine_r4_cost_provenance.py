@@ -53,7 +53,10 @@ S["S4 js: priceSourceLabel names the provider but drops the read date"] = [
 if READING and isinstance(H100.get("hyper"), (int, float)):
     price, moved = H100["hyper"], round(H100["hyper"] + 0.2, 2)
     row = '"h100-80": { "gb": 80, "bw": 3352, "hyper": '
-    S[f"S5 data: h100-80/hyper moved ({price} -> {moved}) with priceSource.price left at {READING['price']}"] = [
+    # Named without the prices: the job rewrites all three, and a name that moves with
+    # them reads as this sabotage dropped and another added (the second cold check of
+    # chore/derive-catalog-anchors, Q12, found this one so named).
+    S["S5 data: h100-80/hyper moved with priceSource.price left where it was"] = [
         (GPUS_JSON, row + json.dumps(price) + ",", row + json.dumps(moved) + ",", 1)]
 else:
     S["S5 data: h100-80/hyper moved with priceSource.price left where it was"] = [NO_READING]
