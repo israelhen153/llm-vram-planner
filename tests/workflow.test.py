@@ -50,20 +50,58 @@ def test(name, fn):
         fail_ct += 1
 
 
+class StrictLoader(yaml.SafeLoader):
+    """SafeLoader that refuses a key given twice in one mapping. pyyaml keeps the
+    last value and says nothing; GitHub refuses the whole workflow. The second
+    cold check of the off-the-hour fix wrote `on:` twice with the schedule only in
+    the second: every rule here read a complete schedule, from a file GitHub
+    would never have run."""
+
+
+def no_duplicate_keys(loader, node, deep=False):
+    seen = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        assert key not in seen, (
+            f"line {key_node.start_mark.line + 1}: {key!r} is given twice in one mapping. "
+            f"pyyaml keeps the last; GitHub refuses the workflow.")
+        seen.add(key)
+    return loader.construct_mapping(node, deep=deep)
+
+
+StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_duplicate_keys)
+
+
 def load(path):
     """Parse, and fail loudly on anything that is not a workflow. A file GitHub
     would reject must fail here too rather than be skipped."""
     with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
+        doc = yaml.load(fh, Loader=StrictLoader)
     assert isinstance(doc, dict), f"{os.path.basename(path)}: not a mapping"
     assert isinstance(doc.get("jobs"), dict), f"{os.path.basename(path)}: no jobs"
     return doc
 
 
 QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
-PRICE_PATH = os.path.join(WORKFLOWS, "price-refresh.yml")
 PR_ACTION = "peter-evans/create-pull-request"
 _cache = {}
+
+
+def price_path():
+    """The workflow whose job opens the pull request, found by what it does, as
+    JOB() finds the job. It was found by filename, so renaming price-refresh.yml
+    and changing nothing else crashed every rule below with FileNotFoundError,
+    and the schedule rule blamed a file that no longer existed (the first cold
+    check of the off-the-hour fix)."""
+    if "path" not in _cache:
+        hits = [f for f in present
+                if any(str(s.get("uses", "")).startswith(PR_ACTION)
+                       for j in load(os.path.join(WORKFLOWS, f))["jobs"].values()
+                       for s in j.get("steps") or [])]
+        assert len(hits) == 1, (
+            f"expected exactly one workflow to open the price pull request, found {hits}")
+        _cache["path"] = os.path.join(WORKFLOWS, hits[0])
+    return _cache["path"]
 
 
 def price():
@@ -71,7 +109,7 @@ def price():
     at module level, outside any test() — a crash rather than a named failure,
     which is how a suite stops reporting what it found."""
     if "doc" not in _cache:
-        _cache["doc"] = load(PRICE_PATH)
+        _cache["doc"] = load(price_path())
     return _cache["doc"]
 
 
@@ -199,6 +237,107 @@ test("tests.yml still provides the status check master's protection requires",
      check_the_required_status_check_still_exists)
 
 
+print("\nSchedules avoid the start of the hour")
+
+
+def crons(doc):
+    """The cron strings a workflow schedules. YAML 1.1 reads the key `on` as the
+    boolean True, and that is the key pyyaml hands back; `on:` given as a string
+    or a list of events schedules nothing."""
+    on = doc.get(True, doc.get("on"))
+    if not isinstance(on, dict):
+        return []
+    return [str(entry.get("cron", "")) for entry in on.get("schedule") or []]
+
+
+def check_no_schedule_fires_at_the_start_of_the_hour():
+    """GitHub: "The schedule event can be delayed during periods of high loads
+    ... High load times include the start of every hour. If the load is
+    sufficiently high enough, some queued jobs may be dropped." At "0 6 * * 1",
+    neither Monday the price job was due ran on time: 2026-09-21's started at
+    11:49 UTC, and 2026-09-28's had not started by 07:44, when it was run by
+    hand.
+
+    A minute field fires on a set of minutes, so "00", "*/30", "0,17" and "*"
+    are the start of the hour as surely as "0" is, and a check against the
+    string "0" passes all four. One fixed minute is all this accepts, rather
+    than parsing cron to look for 0 in the set. That refuses a schedule such as
+    "17,47" that never fires at minute 0, deliberately: no workflow here needs
+    one, and a parser for the set would be one more thing to get wrong. Every
+    workflow is read, not only the price job's."""
+    for f in present:
+        for cron in crons(load(os.path.join(WORKFLOWS, f))):
+            fields = cron.split()
+            assert len(fields) == 5, f"{f}: {cron!r} is not a five-field cron expression"
+            minute = fields[0]
+            assert re.fullmatch(r"[0-9]{1,2}", minute) and 1 <= int(minute) <= 59, (
+                f"{f}: {cron!r} fires at minute {minute!r}. Give it one fixed minute "
+                f"from 1 to 59: GitHub delays scheduled runs at the start of every "
+                f"hour, and drops some.")
+
+test("no workflow is scheduled at the start of the hour",
+     check_no_schedule_fires_at_the_start_of_the_hour)
+
+
+def check_the_price_job_runs_once_a_week():
+    """The price job is weekly by design ("Weekly, not daily", its own comment
+    says), and once a week is also what keeps its pull request safe to finish by
+    hand: every run rebuilds automation/price-refresh from master and
+    force-pushes it, so a second run that week replaces the goldens a person
+    committed after the first.
+
+    Being scheduled was not enough. The first cold check of the off-the-hour fix
+    kept minute 17 and scheduled February 31st, which GitHub accepts and never
+    runs, and then the 1st of every month; both passed a rule that asked only
+    for a schedule. So the one cron has to fix every field that decides how often
+    it fires: one minute, one hour, any day of the month, any month, and one
+    weekday. No schedule at all fails here too, since the job would then run
+    only when someone remembers to run it by hand.
+
+    The weekday is a number or a name, because GitHub's cron table allows both
+    ("0 - 6 or SUN-SAT"). The first version took numbers alone, and the second
+    cold check found it refusing `17 6 * * MON`, which GitHub runs."""
+    path = price_path()
+    f, got = os.path.basename(path), crons(load(path))
+    assert len(got) == 1, (
+        f"{f} schedules {got}, and the price job runs exactly once a week: with none "
+        f"it runs only when someone runs it by hand, and a second run the same week "
+        f"force-pushes over goldens committed after the first.")
+    fields = got[0].split()
+    assert len(fields) == 5, f"{f}: {got[0]!r} is not a five-field cron expression"
+    minute, hour, dom, month, dow = fields
+    assert (re.fullmatch(r"[0-9]{1,2}", minute) and 1 <= int(minute) <= 59
+            and re.fullmatch(r"[0-9]{1,2}", hour) and int(hour) <= 23
+            and dom == "*" and month == "*"
+            and re.fullmatch(r"[0-6]|SUN|MON|TUE|WED|THU|FRI|SAT", dow)), (
+        f"{f}: {got[0]!r} is not once a week. Write it as `minute hour * * weekday`: "
+        f"one minute from 1 to 59, one hour from 0 to 23, and one weekday, 0 to 6 "
+        f"or SUN to SAT.")
+
+test("the price job is scheduled once a week, at one fixed time",
+     check_the_price_job_runs_once_a_week)
+
+
+# A contract, so it is a literal: what may start the price job.
+PRICE_TRIGGERS = {"schedule", "workflow_dispatch"}
+
+
+def check_the_price_job_starts_only_on_its_schedule_or_by_hand():
+    """Once a week holds only if nothing else starts the job. The second cold
+    check added `push: branches: [master]` beside the schedule, and every rule
+    passed: GitHub runs a workflow on any of its triggers, so the job would also
+    have run on every merge to master, each run force-pushing its branch over
+    whatever a person had committed there since the last."""
+    on = price().get(True, price().get("on"))
+    got = sorted(on) if isinstance(on, dict) else on
+    assert isinstance(on, dict) and set(on) == PRICE_TRIGGERS, (
+        f"the price job is started by {got!r}; it may be started only by "
+        f"{sorted(PRICE_TRIGGERS)}, once a week on schedule or by hand.")
+
+test("the price job starts only on its schedule or by hand",
+     check_the_price_job_starts_only_on_its_schedule_or_by_hand)
+
+
 print("\nThe rules bind to the job that actually does the work")
 
 
@@ -279,6 +418,133 @@ def check_every_delivery_condition_is_one_of_the_two_permitted():
 
 test("every step after the suite carries one of the two permitted conditions",
      check_every_delivery_condition_is_one_of_the_two_permitted)
+
+
+# A contract, so it is a literal: what every step between the gate and the suite
+# is allowed to be conditioned on.
+GATE_IF = "steps.diff.outputs.changed == 'true'"
+
+
+def check_a_scheduled_run_takes_the_same_path_as_a_manual_one():
+    """The rule above pins every step after the suite, and nothing pinned the
+    ones before it. The first cold check of the off-the-hour fix put
+    `if: github.event_name == 'workflow_dispatch'` on the fetch step, then on
+    the gate: the job stayed scheduled, every Monday's run skipped the fetch (so
+    nothing moved) or the gate (so `changed` was never set and every delivery
+    step skipped), and every rule passed. A job that runs on schedule and does
+    nothing looks exactly like a job with nothing to report.
+
+    So the rest of the job is pinned by position too. Every step up to and
+    including the gate runs unconditionally, and every step after it, through
+    the suite, carries the gate's own condition and nothing else. Whatever
+    triggered the run, it takes the same path."""
+    steps = STEPS()
+    g, s = steps.index(gate_step()), steps.index(suite_step())
+    assert g < s, "the gate no longer comes before the suite"
+    for st in steps[:g + 1]:
+        assert "if" not in st, (
+            f"step {label(st)!r} carries if: {st['if']!r}. Up to and including the "
+            f"gate, a condition decides whether a run does anything at all, and a "
+            f"scheduled run must do what a manual one does.")
+    for st in steps[g + 1:s + 1]:
+        assert st.get("if") == GATE_IF, (
+            f"step {label(st)!r} has if: {st.get('if')!r}. Between the gate and the "
+            f"suite every step carries exactly {GATE_IF!r}.")
+
+test("a scheduled run takes the same path as a manual one, through the suite",
+     check_a_scheduled_run_takes_the_same_path_as_a_manual_one)
+
+
+# A contract, so it is a literal: every step before the gate, in order. An action
+# may move to a newer version; nothing else in these steps changes without this.
+HEAD_STEPS = [
+    {"uses": "actions/checkout"},
+    {"uses": "actions/setup-python", "with": {"python-version": "3.x"}},
+    {"uses": "actions/setup-node", "with": {"node-version": "lts/*"}},
+    {"name": "Fetch, validate, and (where confirmed or moved) apply",
+     "run": 'python3 tools/price_check.py --apply --report-out "$RUNNER_TEMP/price-check-report.md"\n'},
+    {"name": "Re-sync generated blocks from data/gpus.json",
+     "run": "python3 tools/sync_data.py"},
+]
+GATE_KEYS = {"name", "id", "run"}
+ACTION_VERSION = r"@(v[0-9]+(\.[0-9]+){0,2}|[0-9a-f]{40})"
+
+
+def check_the_head_of_the_job_is_pinned_whole():
+    """The rule above pins every condition, and the second cold check went
+    around it without writing one: `--apply` chosen by an expression inside the
+    fetch's `run:`, the fetch wrapped in a shell `if` on GITHUB_EVENT_NAME,
+    `--apply` dropped, `--slug` narrowing a scheduled run to one card, a re-sync
+    that throws the moves away on schedule, and a new step before the fetch that
+    fails on schedule. Each left the job scheduled and every rule green, and no
+    scheduled run proposed anything again.
+
+    No rule about what a command may contain can list every way a shell can ask
+    how it was started, so the head of the job is pinned whole, as the suite's,
+    the gate's and the PR body's shells already are: these steps, in this order,
+    with exactly these keys and values, and a gate with nothing beside its name,
+    id and shell (a `shell:` or `env:` there changes what its pinned shell does).
+    An action may move to a newer version (`@v5`, or a pinned commit). Anything
+    else changed here changes this literal in the same pull request, and that
+    diff is the review."""
+    steps = STEPS()
+    g = steps.index(gate_step())
+    assert g == len(HEAD_STEPS), (
+        f"{g} steps come before the gate, and the head of the job is exactly these "
+        f"{len(HEAD_STEPS)}: {[s.get('name') or s.get('uses') for s in HEAD_STEPS]}")
+    for want, st in zip(HEAD_STEPS, steps[:g]):
+        if "uses" in want:
+            uses = str(st.get("uses", ""))
+            assert re.fullmatch(re.escape(want["uses"]) + ACTION_VERSION, uses), (
+                f"step {label(st)!r} uses {uses!r}, where the head has {want['uses']}@<version>")
+            rest = {k: v for k, v in st.items() if k != "uses"}
+            wanted = {k: v for k, v in want.items() if k != "uses"}
+            assert rest == wanted, f"step {label(st)!r} carries {rest!r}, where the head has {wanted!r}"
+        else:
+            assert st == want, f"step {label(st)!r} is {st!r}, where the head has {want!r}"
+    assert set(steps[g]) == GATE_KEYS, (
+        f"the gate carries {sorted(steps[g])}, and nothing but {sorted(GATE_KEYS)}: its "
+        f"shell is pinned, and a `shell:` or `env:` beside it changes what that shell does.")
+
+test("the head of the job, up to the gate, is pinned whole",
+     check_the_head_of_the_job_is_pinned_whole)
+
+
+# A contract, so it is a literal: the shape around the price job.
+PRICE_TOP_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
+PRICE_JOB_KEYS = {"runs-on", "permissions", "steps"}
+PRICE_RUNNER = "ubuntu-latest"
+
+
+def check_the_price_job_runs_alone_on_a_runner_that_exists():
+    """Two of the second cold check's survivors sat outside the steps: `runs-on:`
+    chosen by an expression, so a scheduled run queues for a runner nobody has,
+    and `needs:` on a new job that fails on schedule, so the price job is
+    skipped. Every step rule stayed green through both. A third of the same kind
+    waits a level up: `defaults: run: shell:` on the workflow or the job changes
+    what every pinned shell does without touching one of them.
+
+    So the envelope is a literal too. The workflow carries only its name,
+    triggers, concurrency, permissions and jobs; it has exactly one job; and
+    that job carries only its runner, its permissions and its steps, on
+    ubuntu-latest."""
+    top = {"on" if k is True else k for k in price()}
+    assert top == PRICE_TOP_KEYS, (
+        f"the price workflow carries {sorted(map(str, top))}, and nothing but "
+        f"{sorted(PRICE_TOP_KEYS)}: a `defaults:` or `env:` here changes what every "
+        f"pinned step does.")
+    assert len(JOBS()) == 1, (
+        f"the price workflow has the jobs {sorted(JOBS())}, and it has one: a job the "
+        f"price job `needs:` can skip it on every scheduled run.")
+    job = JOB()
+    assert set(job) == PRICE_JOB_KEYS, (
+        f"the price job carries {sorted(job)}, and nothing but {sorted(PRICE_JOB_KEYS)}.")
+    assert job["runs-on"] == PRICE_RUNNER, (
+        f"the price job runs on {job['runs-on']!r}, and it runs on {PRICE_RUNNER!r}: "
+        f"an expression there can send a scheduled run to a runner nobody has.")
+
+test("the price job runs alone, on a runner that exists, with nothing around it",
+     check_the_price_job_runs_alone_on_a_runner_that_exists)
 
 
 def check_no_delivery_step_swallows_its_own_failure():

@@ -36,7 +36,14 @@ on:
     # low-volume, identified caller against unauthenticated (Azure, AWS,
     # Vast) and undocumented (AWS's feed) endpoints — "one run per day or
     # week, single-digit request counts per provider."
-    - cron: "0 6 * * 1" # Monday 06:00 UTC
+    #
+    # Never at minute 0. GitHub: "The schedule event can be delayed during
+    # periods of high loads ... High load times include the start of every
+    # hour. If the load is sufficiently high enough, some queued jobs may be
+    # dropped." Both Mondays at "0 6 * * 1" bore that out: 2026-09-21's run
+    # started at 11:49 UTC, and 2026-09-28's had not started by 07:44, when
+    # it was run by hand. tests/workflow.test.py refuses the start of the hour.
+    - cron: "17 6 * * 1" # Monday 06:17 UTC
   workflow_dispatch: {} # manual run, e.g. to check a single source sooner
 
 concurrency:

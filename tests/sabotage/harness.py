@@ -33,7 +33,8 @@ JUDGING_SUITES = [("model", ["node", "tests/model.test.js"]),
           ("report", ["python3", "tests/report.test.py"]),
           ("sync", ["python3", "tests/sync.test.py"]),
           ("price", ["python3", "tests/price_check.test.py"]),
-          ("workflow", ["python3", "tests/workflow.test.py"])]
+          ("workflow", ["python3", "tests/workflow.test.py"]),
+          ("watchdog", ["python3", "tests/watchdog.test.py"])]
 
 
 def run_judging_suites():
