@@ -19,7 +19,7 @@ Usage: python3 tests/sabotage/engine_r10_rocm_guidance.py [name-substring ...]
 import json, os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import run_driver, ROOT
+from harness import run_driver, Missing, ROOT
 from anchors import (INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON, JS_EXEC_COSTS,
                      JS_R10_FP8_LINE, JS_R10_BLOCKED, JS_R10_BUILD_REFUSE, JS_R10_ARCH, JS_R10_AITER,
                      JS_R10_IMAGE, JS_R10_GCD, JS_R10_PANEL_ROCM, JS_R10_EXPORT_ROCM, JS_R10_PEER,
@@ -31,6 +31,12 @@ from anchors import (INDEX_HTML, REPORT_PY, PRICE_PY, GPUS_JSON, JS_EXEC_COSTS,
                      PY_R10_LIBRARY, PY_R10_PEER, PY_R10_WHY, PY_R10_LEADS, PY_R10_PDF_ROCM,
                      PY_R10_NOTE_TEXT, PY_R10_HIP_SUB, PY_R10_IMAGE, PY_R10_HOURLY_SPEC,
                      PY_R10_CONTEXT_AMD, PY_R10_GFX90A, PY_R10_GFX942, PRICE_R10_NOTE_DROP)
+
+# Which tiers the price job reads, from its own SOURCE_MAP rather than from the readings
+# in the catalog: a sabotage built on a reading has to keep its name when a person takes
+# the reading out, and be refused by name then.
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+from price_check import SOURCE_MAP
 
 # The catalog, as text and as data, so every probe comes from it.
 TEXT = open(os.path.join(ROOT, GPUS_JSON)).read()
@@ -45,9 +51,17 @@ assert GATED and NOTED and LED and NULLED_NVIDIA, "the catalog no longer has wha
 
 
 def row_edit(slug, old, new):
-    """Replace old with new inside one catalog row's line, asserting it is there once."""
-    line = LINE[slug]
-    assert line.count(old) == 1, f"{slug}: {old!r} occurs {line.count(old)} times in its row"
+    """Replace old with new inside one catalog row's line.
+
+    Whether old is there once is settled as this driver loads, and a quote that is not
+    is refused when its sabotage is applied, by name, as a drifted anchor is. This was an
+    assertion, and one stale quote then stopped the driver loading and took every other
+    sabotage in it along, in a corpus run and in tests/corpus.test.py alike."""
+    line = LINE.get(slug)
+    if line is None:
+        return (GPUS_JSON, Missing(f"no row {slug!r} in the catalog to edit"), "", 1)
+    if line.count(old) != 1:
+        return (GPUS_JSON, Missing(f"{slug}: {old!r} occurs {line.count(old)} times in its row"), "", 1)
     return (GPUS_JSON, line, line.replace(old, new), 1)
 
 
@@ -116,9 +130,17 @@ reason = ROWS[slug]["priceNote"][tier]["reason"]
 S[f"N6 data: a dollar figure put in {slug}/{tier}'s note"] = [
     row_edit(slug, json.dumps(reason), json.dumps(reason[:-1] + ", about $0.99/hr."))]
 S["N7 price: --apply keeps a note beside the reading it records"] = [(PRICE_PY, PRICE_R10_NOTE_DROP, "        pass\n", 1)]
-slug = next(s for s, r in ROWS.items() if r["vendor"] == "nvidia" and "hyper" in (r.get("priceSource") or {}))
-S[f"N8 data: {slug}'s automated hyperscaler tier also given a note"] = [
-    row_edit(slug, '"priceNote": { ', '"priceNote": { "hyper": { "reason": "Stale.", "checked": "2026-09-23" }, ')]
+# The row comes from SOURCE_MAP: taken from the readings, it stopped this driver loading
+# once no NVIDIA row carried one (tests/corpus.test.py, the gone refresh).
+slug = next((s for s, tiers in SOURCE_MAP.items()
+             if "primary" in tiers.get("hyper", {}) and ROWS.get(s, {}).get("vendor") == "nvidia"), None)
+if slug and "hyper" in (ROWS[slug].get("priceSource") or {}):
+    S[f"N8 data: {slug}'s automated hyperscaler tier also given a note"] = [
+        row_edit(slug, '"priceNote": { ', '"priceNote": { "hyper": { "reason": "Stale.", "checked": "2026-09-23" }, ')]
+else:
+    S[f"N8 data: {slug}'s automated hyperscaler tier also given a note"] = [
+        (GPUS_JSON, Missing(f"{slug or 'no nvidia row'} carries no hyperscaler reading (priceSource.hyper) "
+                            "for a note to sit beside"), "", 1)]
 
 # ---- L: the leads ----
 S["L1 js: the monthly range counts a lead's price"] = [
@@ -157,9 +179,16 @@ S["O6 py: the PDF charges 0.3 per peer on every link, and says so"] = [
 for slug in NULLED_NVIDIA:
     S[f"P1 data: {slug}'s hyperscaler tier re-priced, with its note left saying nobody rents it"] = [
         row_edit(slug, '"hyper": null', '"hyper": 0.75')]
-S["P2 data: rtxpro-96's hyperscaler reading dropped, leaving a price with no provenance"] = [
-    row_edit("rtxpro-96", ', "hyper": { "provider": "aws", "sku": "g7e.2xlarge", "region": "US East (N. Virginia)", '
-                          '"date": "2026-09-28", "price": 3.36 }', "")]
+# The reading's date and price are read, not quoted: the weekly price job rewrites
+# both whenever it re-reads the tier, and a quoted one stops P2 applying.
+reading = (ROWS.get("rtxpro-96", {}).get("priceSource") or {}).get("hyper")
+if reading:
+    dropped = row_edit("rtxpro-96", ', "hyper": { "provider": "aws", "sku": "g7e.2xlarge", '
+                       '"region": "US East (N. Virginia)", "date": ' + json.dumps(reading["date"])
+                       + ', "price": ' + json.dumps(reading["price"]) + " }", "")
+else:
+    dropped = (GPUS_JSON, Missing("rtxpro-96 carries no hyperscaler reading (priceSource.hyper) to drop"), "", 1)
+S["P2 data: rtxpro-96's hyperscaler reading dropped, leaving a price with no provenance"] = [dropped]
 
 # ---- C: the PDF command names its quantization ----
 S["C1 py: the interactive menu's choice carries no quantization"] = [
