@@ -278,10 +278,13 @@ CORPUS = {
         [(SHELL, SHELL_LINE, SHELL_LINE + 'if slug == "l40s-48":\n    assert \'"hyper": '
           + json.dumps(L40S_HYPER) + '\' in line, "l40s-48: the hyperscaler price moved"\n', 1)]
         if isinstance(L40S_HYPER, (int, float)) else [(SHELL, Missing("l40s-48 has no hyperscaler price"), "", 1)],
-    "Q15 r5: rtx4090-24's spot SKU quoted through the first digit of its offer count":
+    "Q15 r5: rtx4090-24's spot SKU quoted through the first digit of its offer count, refused by name once the reading is gone":
         r5_or_missing(PREFIX is not None, "rtx4090-24/spot carries no reading counting its offers",
+            '_spot = ((json.load(open(os.path.join(ROOT, GPUS_JSON), encoding="utf-8"))["data"].get("rtx4090-24") or {})\n'
+            '         .get("priceSource") or {}).get("spot")\n'
             'S["Q15 data: rtx4090-24/spot\'s offer count given a digit"] = [\n'
-            '    (GPUS_JSON, ' + literal(PREFIX) + ', ' + literal(PREFIX) + ' + "0", 1)]\n'),
+            '    (GPUS_JSON, ' + literal(PREFIX) + ', ' + literal(PREFIX) + ' + "0", 1) if _spot\n'
+            '    else (GPUS_JSON, Missing("rtx4090-24/spot carries no reading (priceSource.spot) to edit"), "", 1)]\n'),
     "Q16 r5: a sabotage quoting the pinned HELD_UNDER_A_NOTE line of tests/price_check.test.py":
         r5_or_missing(PINNED is not None, "tests/price_check.test.py no longer pins HELD_UNDER_A_NOTE on one line",
             'S["Q16 price: the pinned held set emptied"] = [\n'
@@ -337,6 +340,13 @@ CORPUS_SUITE = [("corpus", ["python3", "tests/corpus.test.py"])]
 # The two tests that compare against tests/golden/: a catch made by them alone is hidden
 # by regenerating the goldens, so it is reported apart from a real one.
 GOLDEN = re.compile(r"golden records")
+# This driver, by the name tests/corpus.test.py reports a driver's problems under. Several
+# sabotages in S move text this driver's own sabotages anchor on (the pinned line, the
+# mixed-row line, a row of the catalog), so on their trees corpus.test.py lists this
+# driver's own anchors as stale. That is the sabotage meeting its own driver, not a catch,
+# and a corpus verdict made of nothing else is set aside and said so.
+ME = os.path.basename(__file__)
+PROBLEM = re.compile(r"^\s+((?:engine|workflow)_\w+\.(?:py|sh)|tests/sabotage/anchors\.py)(?:: | no longer loads)")
 
 
 def run_suites(suites):
@@ -347,8 +357,16 @@ def run_suites(suites):
         fails = [l.strip() for l in out.splitlines() if l.lstrip().startswith("FAIL")]
         errs = [l.strip() for l in out.splitlines() if re.search(r"Error|Traceback|node runner failed", l)]
         tally = re.findall(r"(\d+) passed, (\d+) failed", out)
-        res[name] = (p.returncode, fails, errs, tally[-1] if tally else None)
+        res[name] = (p.returncode, fails, errs, tally[-1] if tally else None, out)
     return res
+
+
+def corpus_problems(out):
+    """The sabotages and excerpts tests/corpus.test.py's failures list, by driver: the lines
+    under a FAIL naming a driver or anchors.py, not the refusals it lists as excused."""
+    lines = [l for l in out.splitlines() if PROBLEM.match(l) and "refused by name," not in l]
+    return [l.strip() for l in lines if PROBLEM.match(l).group(1) == ME], \
+           [l.strip() for l in lines if PROBLEM.match(l).group(1) != ME]
 
 
 def pick(sabotages, patterns):
@@ -383,18 +401,28 @@ def judge(sabotages, suites, names):
         finally:
             restore_files(touched)
         reds = {s: r for s, r in results.items() if r[0] != 0}
+        own, others = corpus_problems(reds["corpus"][4]) if "corpus" in reds else ([], [])
+        aside = "corpus" in reds and own and not others
+        if aside:
+            reds.pop("corpus")
         if not reds:
             survived.append(name)
             print(f"  GREEN  {name}   <-- SURVIVED")
-            continue
-        gold = all(fails and not errs and all(GOLDEN.search(f) for f in fails) for rc, fails, errs, _ in reds.values())
-        if gold:
-            golden_only.append(name)
-        print(f"  {'gold ' if gold else 'red  '}  {name}")
-        for suite, (rc, fails, errs, tally) in reds.items():
-            print(f"         {suite}[{tally[1] if tally else '?'} failed]")
-            for line in (fails or errs or ["(no FAIL line)"])[:12]:
-                print(f"           {line[:170]}")
+        else:
+            gold = all(fails and all(GOLDEN.search(f) for f in fails) for rc, fails, errs, _, _ in reds.values())
+            if gold:
+                golden_only.append(name)
+            print(f"  {'gold ' if gold else 'red  '}  {name}")
+            for suite, (rc, fails, errs, tally, _) in reds.items():
+                print(f"         {suite}[{tally[1] if tally else '?'} failed]")
+                for line in (fails or errs or ["(no FAIL line)"])[:12]:
+                    print(f"           {line[:170]}")
+                if suite == "corpus":
+                    print(f"           problems listed: {len(own)} in this driver, {len(others)} in others")
+                    for line in others[:4]:
+                        print(f"             {line[:170]}")
+        if aside:
+            print(f"         corpus red on {len(own)} of this driver's own anchors, which the sabotage moved: set aside")
     print(f"\n{len(names) - len(survived) - len(unapplied) - len(golden_only)} caught, "
           f"{len(golden_only)} caught by the goldens alone, {len(survived)} survived"
           + (f", {len(unapplied)} COULD NOT BE APPLIED" if unapplied else ""))
