@@ -65,6 +65,19 @@ Each driver applies a list of exact-string edits to committed files, refusing if
 string is not found the expected number of times — so a driver that has drifted from the code
 fails loudly rather than silently testing nothing.
 
+**Never quote a value the weekly price job rewrites.** `tools/price_check.py --apply` rewrites a
+tier's price, its reading's date and price, a Vast.ai reading's offer count, and drops the note
+a confirmed reading replaces, and `tools/sync_data.py` carries all of it into both engines. A
+sabotage that quotes one stops applying at the next refresh, so it reads them from
+`data/gpus.json` as its driver loads (`engine_r4`'s S5 and C2, `engine_r5`, `engine_r10`'s P2),
+and quotes only what the job leaves alone: a provider, a region, the part of a SKU that names the
+product. When the row, tier or note it attacks is gone, it keeps its name and carries
+`harness.Missing` where its anchor would be. The run refuses it by name, as it refuses a drifted
+anchor, rather than dropping it or failing to load the driver. So which tiers it attacks comes
+from `SOURCE_MAP`, which taking a reading out leaves alone, and not from the readings
+(`engine_r6`'s C12, `engine_r10`'s N8): derived from the readings, C12 dropped out of the corpus
+and N8 stopped its driver loading once they were gone.
+
 ### How the files are named
 
 A driver's name says what it attacks and which review round produced it:
@@ -77,7 +90,8 @@ came from a real run rather than a review.
 
 Two files are not drivers:
 
-- **`harness.py`** — the machinery every driver shares: `apply_edits`, `restore_files`,
+- **`harness.py`** — the machinery every driver shares: `apply_edits` and the one check it makes,
+  `refusal`, which `tests/corpus.test.py` makes too; `Missing`; `restore_files`,
   `run_judging_suites`, `require_green_baseline`, and `run_driver`, the one loop every Python driver
   calls. There used to be fifteen copies of that loop in six different shapes.
 - **`anchors.py`** — the exact excerpts of the engine files that `engine_*` sabotages anchor their
@@ -146,7 +160,23 @@ any edit, so it would report every sabotage as caught regardless of what the sab
 `tests/corpus.test.py` is excluded for the same reason — it checks the anchors still match the
 engine, and that every sabotage in every driver still applies, both of which every sabotage breaks.
 It runs in the ordinary suite instead, so a pull request that moves engine text a sabotage quotes,
-through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run.
+through `anchors.py` or inline, goes red in its own CI rather than at the next corpus run. It
+also refreshes the catalog in memory four ways, with the price job's own writers and the tiers
+its `SOURCE_MAP` reads: every reading re-read on a new day, every price moved to one sharing no
+text with it, every tier still held under a note confirmed at a new price, and every automated
+tier's reading and note taken away, as a person could. It does all four again from the tree the
+pull request confirming the held tiers leaves, the one line that pull request edits by hand
+included: the pinned held set in `tests/price_check.test.py`. Each time it loads every driver
+against the result and applies every sabotage again, so one that quotes a value the job rewrites
+goes red in the pull request that adds it, not in the bot's, and one whose target is gone has to be
+refused by name, never dropped and never renamed: every name a driver has before a refresh, it has
+after. The shell driver is run, not read: its heredoc executes against each refreshed catalog and
+has to reach its write. A sabotage that makes no edit, or expects its text 0 times, changes nothing
+and is refused, by a run and by this check alike. It writes nothing to disk. The refusals it lets pass are the ones the refreshed
+tree has to cause: after the fourth, any; otherwise a sabotage built on a note a reading has
+replaced, in that refresh or an earlier one, which says so with
+`harness.Missing(..., note=(slug, tier))`. The check of the tree as it is lists such a refusal
+and does not count it.
 `workflow.test.py` joined the judges with `workflow_r1_gate.py`: without it a workflow sabotage reads green,
 because none of the other five opens `.github/`. `watchdog.test.py` joined them with
 `workflow_r11_price_watchdog.py`, for the same reason: no other suite runs `tools/price_watchdog.py`.
@@ -224,6 +254,22 @@ request carries a commit it made:
 
 Three rounds found 4, 10 and 10 survivors, each ring outside the last; reading a workflow cannot
 prove a scheduled run will do its work, and watching the outcome can.
+
+The corpus check's second cold check (`tests/corpus.test.py`, on chore/derive-catalog-anchors at
+`97a2189`) left three ways past it that no test can close, accepted by the owner on 2026-09-30.
+Its driver is kept on `chore/derive-anchors-cold-check-2` (`82177d9`) rather than in the corpus:
+
+- A test that hard-codes a held tier's state, as `model.test.js` once named h100-80 its mixed row,
+  is green on the tree as it is and red only on the pull request that confirms the tier (G3e).
+  Catching it sooner would mean running `model.test.js` and `report.test.py` a second time, on the
+  simulated confirming tree, in every suite run. It costs a confusing red on a pull request that is
+  handled by hand anyway.
+- A sabotage that switches to another target once its own is gone, keeping its name, still applies
+  (Q13): nothing tells it from one written that way on purpose. The rule to refuse by name, above,
+  is what stands against it, in review.
+- A sabotage whose only edit claims a note was replaced by a reading is excused whenever that tier
+  has one, so it can stay refused indefinitely (Q18). The check lists it among those refused by
+  name, and a full run counts it under "could not be applied".
 
 ## Reading a result
 

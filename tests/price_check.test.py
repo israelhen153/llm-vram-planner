@@ -1808,6 +1808,57 @@ test("the tiers with no confirmed price are exactly the ones pinned here",
      check_the_tiers_with_no_confirmed_price_are_the_pinned_ones)
 
 
+# Every tier the price job reads (SOURCE_MAP gives it a primary source) that the
+# catalog still holds under a note, because no reading of it has been confirmed.
+# A reading invented on one passed everything but the goldens (engine_r5's C7),
+# and nothing in the catalog tells it from the job's own first reading: both put
+# a reading where the note was. So a tier leaves this set only on purpose, in the
+# pull request whose reading replaced its note.
+HELD_UNDER_A_NOTE = {"h100-80": ["spot"]}
+
+
+def check_the_read_tiers_held_under_a_note_are_the_pinned_ones():
+    with open(os.path.join(ROOT, "data", "gpus.json")) as f:
+        rows = json.load(f)["data"]
+    held = {(slug, t) for slug, tiers in pc.SOURCE_MAP.items() for t, cfg in tiers.items()
+            if "primary" in cfg and t in ((rows.get(slug) or {}).get("priceNote") or {})}
+    pinned = {(slug, t) for slug, tiers in HELD_UNDER_A_NOTE.items() for t in tiers}
+    released = sorted(f"{slug}/{t}" for slug, t in pinned - held)
+    unpinned = sorted(f"{slug}/{t}" for slug, t in held - pinned)
+    assert not released and not unpinned, (
+        f"no longer held under a note, though pinned: {released or 'none'} (if the price job's reading "
+        f"replaced the note, take the tier out of HELD_UNDER_A_NOTE in the same pull request; engine_r5's "
+        f"C7 is refused by name from then on); held under a note, though not pinned: {unpinned or 'none'}")
+
+test("the tiers the price job reads and the catalog holds under a note are exactly the ones pinned here",
+     check_the_read_tiers_held_under_a_note_are_the_pinned_ones)
+
+
+def check_the_pinned_sets_are_written_out():
+    """A pinned set derived from the catalog agrees with the catalog by construction, and
+    pins nothing: HELD_UNDER_A_NOTE derived that way left a reading invented on a held
+    tier to the goldens alone (the second cold check of chore/derive-catalog-anchors,
+    G4f). Both pins are assigned once, as literals, read from this file's own source."""
+    import ast
+    with open(os.path.join(ROOT, "tests", "price_check.test.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    pins = ("NO_CONFIRMED_PRICE", "HELD_UNDER_A_NOTE")
+    assigned = {name: [node.value for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign))
+                       and name in [t.id for t in (node.targets if isinstance(node, ast.Assign) else [node.target])
+                                    if isinstance(t, ast.Name)]]
+                for name in pins}
+    once = {name: len(values) for name, values in assigned.items() if len(values) != 1}
+    assert not once, f"each pin is assigned exactly once, and these are not: {once}"
+    for name, (value,) in assigned.items():
+        try:
+            ast.literal_eval(value)
+        except ValueError:
+            raise AssertionError(f"{name} is computed, not written out: derived from the catalog, it agrees with it "
+                                 "by construction") from None
+
+test("the pinned sets are written out, not derived from the catalog", check_the_pinned_sets_are_written_out)
+
+
 def check_no_two_tiers_of_a_card_name_the_same_source():
     """Two tiers of one card read off the same provider and SKU would print one
     source name beside two prices, and a reader could not tell them apart. The
