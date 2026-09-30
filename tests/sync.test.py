@@ -34,16 +34,32 @@ def test(name, fn):
         fail_ct += 1
 
 
-def js_eval(block, var):
-    """Evaluate a generated JS block under node and return the object it declares."""
+def js_eval_all(blocks, var):
+    """Evaluate generated JS blocks under one node process and return the object each
+    declares, in order. Each block runs in a fresh vm context of its own, so none can
+    reach another's globals. One node per block made the two hostile-text tests most
+    of this suite's time: about 0.15 s a start, nine starts."""
     proc = subprocess.run(
         ["node", "-e",
-         f"const b=process.argv[1];"
-         f"console.log(JSON.stringify(new Function(b + '; return {var};')()));",
-         block],
-        capture_output=True, text=True)
-    assert not proc.returncode, f"node could not evaluate the block:\n{proc.stderr}"
-    return json.loads(proc.stdout)
+         "const vm = require('vm');"
+         "const blocks = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+         "console.log(JSON.stringify(blocks.map(b => {"
+         "  try { return {ok: vm.runInNewContext("
+         f"'(new Function(b + \"; return {var};\"))()', {{b}})}}; }}"
+         "  catch (e) { return {error: String(e && e.stack || e)}; }"
+         "})));"],
+        input=json.dumps(blocks), capture_output=True, text=True)
+    assert not proc.returncode, f"node could not run the evaluator:\n{proc.stderr}"
+    results = json.loads(proc.stdout)
+    assert len(results) == len(blocks), f"{len(blocks)} blocks, {len(results)} results"
+    for i, result in enumerate(results):
+        assert "ok" in result, f"node could not evaluate block {i}:\n{result['error']}"
+    return [result["ok"] for result in results]
+
+
+def js_eval(block, var):
+    """Evaluate a generated JS block under node and return the object it declares."""
+    return js_eval_all([block], var)[0]
 
 
 print("\nGenerated blocks round-trip through the language they land in")
@@ -234,13 +250,12 @@ HOSTILE = [
 ]
 
 def check_hostile_notes_are_escaped():
-    for i, note in enumerate(HOSTILE):
-        rows = {"8b-h100-80": {"tokS": 1, "mode": "batch", "src": note, "note": note,
-                               "prec": "bf16", "date": "2026-01", "url": ""}}
-        block = sync_data.render_benchmark_js(rows)
-        body = "\n".join(l for l in block.splitlines() if not l.startswith("/*"))
+    cases = [{"8b-h100-80": {"tokS": 1, "mode": "batch", "src": note, "note": note,
+                             "prec": "bf16", "date": "2026-01", "url": ""}} for note in HOSTILE]
+    bodies = ["\n".join(l for l in sync_data.render_benchmark_js(rows).splitlines() if not l.startswith("/*"))
+              for rows in cases]
+    for i, (rows, body, got) in enumerate(zip(cases, bodies, js_eval_all(bodies, "BENCHMARK_DATA"))):
         # It must still be the same string once JS has parsed it...
-        got = js_eval(body, "BENCHMARK_DATA")
         assert got == rows, f"case {i}: value changed in transit: {got}"
         # ...and the raw text must not contain a sequence that ends the <script>
         # element, which the HTML parser resolves before JavaScript ever runs.
@@ -252,6 +267,47 @@ def check_hostile_notes_are_escaped():
 
 test("a hostile benchmark note round-trips intact and cannot close the script tag",
      check_hostile_notes_are_escaped)
+
+
+def check_each_block_is_evaluated_alone():
+    """The hostile and control-character cases share one node process, so each block
+    must run in a context of its own, and a block that can't be evaluated must still
+    fail its test, naming the block."""
+    got = js_eval_all(["globalThis.leak = 1; const X = 1;", "const X = typeof leak;"], "X")
+    assert got == [1, "undefined"], f"one block's global reached the next: {got}"
+    try:
+        js_eval_all(["const X = 1;", "const X = ;"], "X")
+    except AssertionError as e:
+        assert "block 1" in str(e), f"the failure doesn't name the block: {e}"
+    else:
+        raise AssertionError("a block node can't evaluate passed")
+
+test("each block the shared node process evaluates runs alone, and one that fails is named",
+     check_each_block_is_evaluated_alone)
+
+
+def check_the_evaluator_wants_one_result_per_block():
+    """The shared node process answers a list, one result per block; a reply one short
+    must fail, or the blocks after a lost one would be judged against the wrong rows.
+    The node process is real; only its reply is cut short."""
+    real = subprocess.run
+
+    def one_short(*args, **kwargs):
+        done = real(*args, **kwargs)
+        done.stdout = json.dumps(json.loads(done.stdout)[:-1])
+        return done
+
+    subprocess.run = one_short
+    try:
+        js_eval_all(["const X = 1;", "const X = 2;"], "X")
+    except AssertionError as e:
+        assert "2 blocks, 1 results" in str(e), f"refused, but not for the count: {e}"
+    else:
+        raise AssertionError("a reply missing one block's result passed")
+    finally:
+        subprocess.run = real
+
+test("the shared node process must answer one result per block", check_the_evaluator_wants_one_result_per_block)
 
 
 def check_missing_field_names_itself():
@@ -446,15 +502,19 @@ def check_control_characters_cannot_reach_the_page():
     U+FFFD first, so the note a contributor wrote is not the note the page
     shows. Node's evaluator does not tokenise HTML and cannot see this, so the
     check is on the rendered text itself."""
-    for raw in ("null\x00byte", "bell\x07here", "vertical\x0btab"):
+    raws = ("null\x00byte", "bell\x07here", "vertical\x0btab")
+    cases, bodies = [], []
+    for raw in raws:
         rows = {"8b-h100-80": {"tokS": 1, "mode": "batch", "src": "x", "note": raw,
                                "prec": "bf16", "date": "2026-01", "url": ""}}
         block = sync_data.render_benchmark_js(rows)
         for ch in block:
             assert ch >= " " or ch in "\n", (
                 f"a raw control character (U+{ord(ch):04X}) reached the generated block")
-        body = "\n".join(l for l in block.splitlines() if not l.startswith("/*"))
-        assert js_eval(body, "BENCHMARK_DATA") == rows, f"{raw!r} did not round-trip"
+        cases.append(rows)
+        bodies.append("\n".join(l for l in block.splitlines() if not l.startswith("/*")))
+    for raw, rows, got in zip(raws, cases, js_eval_all(bodies, "BENCHMARK_DATA")):
+        assert got == rows, f"{raw!r} did not round-trip"
 
 test("control characters are escaped, not passed through as raw bytes",
      check_control_characters_cannot_reach_the_page)
