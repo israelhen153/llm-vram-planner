@@ -224,7 +224,33 @@ def judge_shell(tree, driver):
     return {"status": "shell", "rc": p.returncode, "output": p.stdout}
 
 
-def worker_main(tree, early_exit):
+def refuse_unless_proven(tree, sha):
+    """A worker judges only at the commit the run proved, on a clean tree: the first
+    worker's proof holds for the others only while each is that commit, unchanged."""
+    head = git("rev-parse", "HEAD", cwd=tree).stdout.strip()
+    if head != sha:
+        raise RuntimeError(f"the worker is at {head[:7]}, not at {sha[:7]}")
+    if git("status", "--porcelain", cwd=tree).stdout.strip():
+        raise RuntimeError("the worker is not clean")
+
+
+def prove_or_trust(harness, tree, sha, golden_file):
+    """The golden failures this worker judges with. With no golden_file, this is the
+    first worker, and it proves the commit for the run: its suites green, and which
+    failures are golden ones. When every worker proved it, eight workers on four cores
+    ran sixteen suite passes at once before judging anything. Any other worker trusts
+    that proof, read from golden_file, once it has checked it is the proved commit, clean."""
+    if golden_file is None:
+        harness.require_green_baseline()
+        golden = golden_failures(harness, tree)
+    else:
+        with open(golden_file, encoding="utf-8") as fh:
+            golden = set(json.load(fh))
+    refuse_unless_proven(tree, sha)
+    return golden
+
+
+def worker_main(tree, early_exit, sha, golden_file):
     # The task stream and the results travel on this process's own stdin and stdout.
     # Children inherit fd 0 and fd 1, so both are moved out of their reach first: a
     # suite reading stdin would eat tasks, and one printing would corrupt results.
@@ -256,10 +282,7 @@ def worker_main(tree, early_exit):
     started = time.monotonic()
     try:
         harness = load_harness(tree)
-        harness.require_green_baseline()
-        golden = golden_failures(harness, tree)
-        if git("status", "--porcelain", cwd=tree).stdout.strip():
-            raise RuntimeError("the worker is not clean after finding the golden failures")
+        golden = prove_or_trust(harness, tree, sha, golden_file)
     except SystemExit as e:
         send({"ready": False, "error": str(e.code)})
         return 2
@@ -466,7 +489,12 @@ def run(args):
     os.makedirs(logdir, exist_ok=True)
 
     jobs = args.jobs or os.cpu_count() or 2
-    lock = hold_the_workers(root)  # noqa: F841 — held until exit
+    # Held until this process exits, and only while something refers to it: the file
+    # closes, and the lock goes with it, when its last reference does. It was named
+    # `lock`, and the results' threading.Lock below took that name, so the workers were
+    # free to a second run for the whole of the judging (the third cold check saw one
+    # pass it and refuse on a worker the first run had dirty).
+    workers_lock = hold_the_workers(root)  # noqa: F841
     workers = prepare_workers(root, sha, jobs)
     drivers = discover(workers[0], args.drivers)
     py = [d for d, kind in drivers if kind == "py"]
@@ -482,27 +510,37 @@ def run(args):
           f"in {os.path.join(root, WORKERS_DIR)}; logs in {logdir}", flush=True)
 
     t_start = time.monotonic()
-    procs = []
-    for i, w in enumerate(workers, 1):
+    procs, baselines = [], []
+    golden_file = os.path.join(logdir, "golden-failures.json")
+
+    def start(i, w, proof):
         err = open(os.path.join(logdir, f"worker-w{i}.stderr"), "w")
-        procs.append(subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__), "--worker", w,
-                                       *(["--early-exit"] if args.early_exit else [])],
-                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
-                                      text=True, bufsize=1, start_new_session=True))
-    baselines, goldens = [], []
-    for i, p in enumerate(procs, 1):
+        p = subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__), "--worker", w, "--sha", sha,
+                              *(["--early-exit"] if args.early_exit else []),
+                              *([] if proof else ["--golden", golden_file])],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
+                             text=True, bufsize=1, start_new_session=True)
+        procs.append(p)
+        return p
+
+    def ready(i, p):
         line = p.stdout.readline()
-        msg = json.loads(line) if line else {"ready": False, "error": "exited before its baseline"}
+        msg = json.loads(line) if line else {"ready": False, "error": "exited before it was ready"}
         if not msg.get("ready"):
             for q in procs:
                 q.stdin.close()
             sys.exit(f"w{i} refused to judge on {sha[:7]}: {msg.get('error')}")
         baselines.append(msg["baseline_s"])
-        goldens.append(msg["golden"])
-    if any(g != goldens[0] for g in goldens):
-        for q in procs:
-            q.stdin.close()
-        sys.exit("the workers disagree about which failures are golden ones, so no catch can be classified")
+        return msg
+
+    # The first worker proves the commit alone, then the rest start from its proof.
+    golden = ready(1, start(1, workers[0], proof=True))["golden"]
+    with open(golden_file, "w", encoding="utf-8") as fh:
+        json.dump(golden, fh, indent=1)
+    rest = [(i, start(i, w, proof=False)) for i, w in enumerate(workers[1:], 2)]
+    for i, p in rest:
+        ready(i, p)
+    goldens = [golden]
 
     todo = queue.Queue()
     for t in tasks:
@@ -657,7 +695,9 @@ def compare(serial_dir, parallel_dir, subset=False):
 
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--worker":
-        return worker_main(sys.argv[2], "--early-exit" in sys.argv[3:])
+        rest = sys.argv[3:]
+        return worker_main(sys.argv[2], "--early-exit" in rest, rest[rest.index("--sha") + 1],
+                           rest[rest.index("--golden") + 1] if "--golden" in rest else None)
     if len(sys.argv) >= 3 and sys.argv[1] == "--list":
         return list_main(sys.argv[2], sys.argv[3:])
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])

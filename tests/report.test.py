@@ -95,10 +95,51 @@ PAGE_DATES = []   # the bare dates each page callback drew
 _building = []
 
 
+# One parsed paragraph per distinct markup and style, for story_strings() alone. Over
+# the suite it builds about 56,000 paragraphs from about 1,700 distinct markups, and
+# reportlab's markup parse was most of the suite's time. It never lays a story out, so
+# the stories it reads can share a parse, but only where nothing a paragraph reads
+# differs: the same markup, and a style equal attribute by attribute, not only by
+# name, since a paragraph with no bullet of its own takes its style's bulletText and a
+# build can change a style (a cold check planted a figure that way, and a memo keyed
+# on the name served every later card the first card's). A paragraph given anything
+# more than its markup and style parses its own, a parse that fails is never kept, and
+# builds that lay paragraphs out parse their own. What is kept is a copy of the first
+# paragraph's attributes, not the paragraph: a build that changes a paragraph after
+# making it must not change the ones made after it.
+_PARSED = {}
+_reading = []   # non-empty while story_strings() builds a story it only reads
+
+
+def style_state(style):
+    """What a style gives the text a story is read for: every attribute the style
+    carries but its parent, whose values reportlab has already copied into it, and the
+    bullet as reportlab reads it, getattr(style, 'bulletText', None), whatever answers
+    that: the style, its class, a property or a class-level __getattr__. A paragraph
+    with no bullet of its own takes its style's, and three cold checks planted a
+    figure there, on the style, on ParagraphStyle itself, through a __getattr__ and as
+    a callable str; each time a memo that looked elsewhere served the first card's
+    parse to every later card. Nothing else a style carries changes that text (fonts
+    and colours shape the layout, which story_strings() never builds), so reading the
+    class for them, as round 2's fix did, bought nothing the bullet does not cover."""
+    state = {k: v for k, v in vars(style).items() if k != "parent"}
+    state["bulletText"] = getattr(style, "bulletText", None)
+    return state
+
+
 class RecordingParagraph(gr.Paragraph):
     def __init__(self, text, *args, **kwargs):
         if _building:
             _building[-1].update(COVER_CLOCK.findall(str(text)))
+        if _reading and isinstance(text, str) and len(args) == 1 and not kwargs:
+            key, state = (text, args[0].name), style_state(args[0])
+            parsed = _PARSED.get(key)
+            if parsed is not None and parsed[1] == state:
+                self.__dict__.update(parsed[0])
+                return
+            super().__init__(text, *args)
+            _PARSED[key] = (dict(self.__dict__), state)
+            return
         super().__init__(text, *args, **kwargs)
 
 
@@ -1351,6 +1392,7 @@ def story_strings(cfg, comp=None):
 
     real_doc = gr.SimpleDocTemplate
     printed, complained = io.StringIO(), io.StringIO()
+    _reading.append(True)
     try:
         gr.SimpleDocTemplate = DocSpy
         with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(complained):
@@ -1358,6 +1400,7 @@ def story_strings(cfg, comp=None):
         for item in captured.get("story", []):
             harvest(item)
     finally:
+        _reading.pop()
         gr.SimpleDocTemplate = real_doc
     # Every string the document was named with, whatever the keyword was called.
     seen.extend(v for v in list(captured.get("doc_args", ())) + list(captured.get("doc_kw", {}).values())
@@ -1373,6 +1416,106 @@ def story_strings(cfg, comp=None):
     for stream in (printed, complained):
         seen.extend(line for line in stream.getvalue().splitlines() if line.strip())
     return seen
+
+
+def check_the_parse_memo_changes_nothing_a_test_reads():
+    """story_strings() shares one parse per markup and style, and that must change
+    nothing a test reads: a markup that fails to parse fails every time; a style
+    changed since, under the same name, gets a parse of its own, bullet included (the
+    cold check's planted figure rode a style's bulletText); a bullet given by position
+    or by keyword is the paragraph's own, every time; a bullet on the style's class is
+    read as reportlab reads it (the second cold check's figure rode ParagraphStyle
+    itself); a paragraph changed after it was built changes none built after it; and a
+    paragraph built outside a story being read parses its own."""
+    style = gr.getSampleStyleSheet()["Normal"]
+    _reading.append(True)
+    try:
+        for attempt in (1, 2):
+            try:
+                RecordingParagraph("<b>never closed", style)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"attempt {attempt}: a markup that fails to parse was served from the memo")
+        first, again = RecordingParagraph("<b>shared</b>", style), RecordingParagraph("<b>shared</b>", style)
+        assert again.frags is first.frags, "a story being read parsed a markup it had parsed before"
+        changed = gr.getSampleStyleSheet()["Normal"]
+        changed.bulletText = "a figure riding the style"
+        got = RecordingParagraph("<b>shared</b>", changed)
+        assert got.bulletText == "a figure riding the style", f"a changed style was served an earlier bullet: {got.bulletText!r}"
+        for bullet in ("first", "second"):
+            by_position = RecordingParagraph("<b>shared</b>", style, bullet)
+            by_keyword = RecordingParagraph("<b>shared</b>", style, bulletText=bullet)
+            assert (by_position.bulletText, by_keyword.bulletText) == (bullet, bullet), (
+                bullet, by_position.bulletText, by_keyword.bulletText)
+        # A bullet on the style's class, which every style without one of its own reads:
+        # the second cold check set it on ParagraphStyle around one heading, for cards
+        # without constants only, where a comparison of vars(style) cannot see it. A
+        # markup of its own, so its entry is this style's: "<b>shared</b>" was last parsed
+        # for the changed style above, and missed the memo whatever the comparison saw.
+        plain = RecordingParagraph("<b>on the class</b>", style)
+        cls = type(style)
+        had, old = "bulletText" in vars(cls), vars(cls).get("bulletText")
+        cls.bulletText = "a figure riding the class"
+        try:
+            got = RecordingParagraph("<b>on the class</b>", style)
+        finally:
+            if had:
+                cls.bulletText = old
+            else:
+                del cls.bulletText
+        assert plain.bulletText is None, f"the style carried a bullet before its class did: {plain.bulletText!r}"
+        assert got.bulletText == "a figure riding the class", (
+            f"a bullet on the style's class was served an earlier parse: {got.bulletText!r}")
+        # A bullet only a class-level __getattr__ answers, and a bullet that is also
+        # callable: reportlab reads both through getattr(style, 'bulletText', None), and
+        # the third cold check reached a heading's bullet each way. Markups of their own.
+        RecordingParagraph("<b>through getattr</b>", style)
+        had_hook, old_hook = "__getattr__" in vars(cls), vars(cls).get("__getattr__")
+
+        def answer(self, name):
+            if name == "bulletText":
+                return "a figure only getattr answers"
+            raise AttributeError(name)
+
+        cls.__getattr__ = answer
+        try:
+            hooked = RecordingParagraph("<b>through getattr</b>", style)
+        finally:
+            if had_hook:
+                cls.__getattr__ = old_hook
+            else:
+                del cls.__getattr__
+        assert hooked.bulletText == "a figure only getattr answers", (
+            f"a bullet a class-level __getattr__ answers was served an earlier parse: {hooked.bulletText!r}")
+
+        class CallableFigure(str):
+            def __call__(self):
+                return None
+
+        own = gr.getSampleStyleSheet()["Normal"]
+        RecordingParagraph("<b>a callable bullet</b>", own)
+        own.bulletText = CallableFigure("a figure that is also callable")
+        called = RecordingParagraph("<b>a callable bullet</b>", own)
+        assert called.bulletText == "a figure that is also callable", (
+            f"a callable bullet was served an earlier parse: {called.bulletText!r}")
+        # A paragraph changed after it was built changes no paragraph built after it.
+        origin = RecordingParagraph("<u>changed after it was built</u>", style)
+        origin.bulletText = "a figure added afterwards"
+        later = RecordingParagraph("<u>changed after it was built</u>", style)
+        assert later.bulletText is None, (
+            f"a paragraph changed after it was built was served to a later one: {later.bulletText!r}")
+        # A markup of its own, so nothing above has replaced its entry: the check below
+        # passed with the memo serving every build, because the changed style had.
+        inside = RecordingParagraph("<i>laid out elsewhere</i>", style)
+    finally:
+        _reading.pop()
+    outside = RecordingParagraph("<i>laid out elsewhere</i>", style)
+    assert outside.frags is not inside.frags, "a paragraph built outside story_strings() came from the memo"
+
+test("the parse memo changes nothing a test reads: failing markup, a changed style, a bullet of its own "
+     "or its class's, a paragraph changed later, a laid-out build",
+     check_the_parse_memo_changes_nothing_a_test_reads)
 
 
 def check_parallelism_row_agrees_with_the_command():
