@@ -1834,6 +1834,31 @@ test("the tiers the price job reads and the catalog holds under a note are exact
      check_the_read_tiers_held_under_a_note_are_the_pinned_ones)
 
 
+def check_the_pinned_sets_are_written_out():
+    """A pinned set derived from the catalog agrees with the catalog by construction, and
+    pins nothing: HELD_UNDER_A_NOTE derived that way left a reading invented on a held
+    tier to the goldens alone (the second cold check of chore/derive-catalog-anchors,
+    G4f). Both pins are assigned once, as literals, read from this file's own source."""
+    import ast
+    with open(os.path.join(ROOT, "tests", "price_check.test.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    pins = ("NO_CONFIRMED_PRICE", "HELD_UNDER_A_NOTE")
+    assigned = {name: [node.value for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign))
+                       and name in [t.id for t in (node.targets if isinstance(node, ast.Assign) else [node.target])
+                                    if isinstance(t, ast.Name)]]
+                for name in pins}
+    once = {name: len(values) for name, values in assigned.items() if len(values) != 1}
+    assert not once, f"each pin is assigned exactly once, and these are not: {once}"
+    for name, (value,) in assigned.items():
+        try:
+            ast.literal_eval(value)
+        except ValueError:
+            raise AssertionError(f"{name} is computed, not written out: derived from the catalog, it agrees with it "
+                                 "by construction") from None
+
+test("the pinned sets are written out, not derived from the catalog", check_the_pinned_sets_are_written_out)
+
+
 def check_no_two_tiers_of_a_card_name_the_same_source():
     """Two tiers of one card read off the same provider and SKU would print one
     source name beside two prices, and a reader could not tell them apart. The
