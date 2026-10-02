@@ -5134,20 +5134,36 @@ test('the sabotage README names every driver, and no driver it does not have', (
 /* The test above asks whether the README names a driver, not how often. A merge left
    rounds 15, 16 and 21 in the table twice, word for word, and it passed. Two rows for
    one driver drift apart the first time only one of them is edited, and the README
-   then says two things about the same driver. */
+   then says two things about the same driver.
+
+   Rows are read the way GitHub renders the table: from its header to the first blank
+   line, edge pipes optional, up to three spaces of indent, and the driver found
+   anywhere in the first cell. The first version matched one exact spacing, and a
+   cold check put a second row past it five ways (extra spaces, no backticks, a
+   leading space, no padding, bold) plus a row for a driver that does not exist. */
 test('the sabotage README gives each driver exactly one table row', () => {
   const dir = path.join(ROOT, 'tests', 'sabotage');
-  const doc = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
-  const drivers = fs.readdirSync(dir).filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f));
+  const lines = fs.readFileSync(path.join(dir, 'README.md'), 'utf8').split('\n');
+  const drivers = fs.readdirSync(dir).filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f)).sort();
   assert.ok(drivers.length > 0, 'no sabotage drivers found — has the directory moved?');
-  const rows = (doc.match(/^\| `(?:engine|workflow)_[0-9a-z_]+\.(?:py|sh)` \|/gm) || [])
-    .map(row => row.split('`')[1]);
-  const wrong = drivers.sort()
-    .map(f => [f, rows.filter(r => r === f).length])
-    .filter(([, n]) => n !== 1)
-    .map(([f, n]) => `${f} (${n} rows)`);
+  const stem = name => name.replace(/\.(py|sh)$/i, '').replace(/_+$/, '');
+  const head = lines.findIndex(l => /^ {0,3}\|?\s*Driver\s*\|\s*Round\s*\|/.test(l));
+  assert.ok(head >= 0, "tests/sabotage/README.md has no table headed 'Driver | Round'");
+  assert.ok(/^ {0,3}\|?\s*:?-+/.test(lines[head + 1] || ''), 'the driver table has no delimiter row');
+  const blank = lines.findIndex((l, i) => i > head && !l.trim());
+  const counts = new Map(drivers.map(f => [stem(f), 0]));
+  const wrong = [];
+  for (const row of lines.slice(head + 2, blank < 0 ? lines.length : blank)) {
+    const cell = row.replace(/^ {0,3}\|?/, '').split(/(?<!\\)\|/)[0];
+    const names = cell.match(/(?:engine|workflow)_[0-9a-z_]+(?:\.(?:py|sh))?/gi) || [];
+    if (names.length !== 1) { wrong.push(`a row naming ${names.length} drivers: ${row.slice(0, 60)}`); continue; }
+    const s = stem(names[0]);
+    if (counts.has(s)) counts.set(s, counts.get(s) + 1);
+    else wrong.push(`a row for ${names[0]}, which is not a driver here`);
+  }
+  for (const f of drivers) if (counts.get(stem(f)) !== 1) wrong.push(`${f} (${counts.get(stem(f))} rows)`);
   assert.deepStrictEqual(wrong, [],
-    `tests/sabotage/README.md must give each driver one table row: ${wrong.join(', ')}`);
+    `tests/sabotage/README.md must give each driver one table row: ${wrong.join('; ')}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
