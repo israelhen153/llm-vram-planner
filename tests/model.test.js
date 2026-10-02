@@ -5140,20 +5140,62 @@ test('the sabotage README names every driver, and no driver it does not have', (
    line, edge pipes optional, up to three spaces of indent, and the driver found
    anywhere in the first cell. The first version matched one exact spacing, and a
    cold check put a second row past it five ways (extra spaces, no backticks, a
-   leading space, no padding, bold) plus a row for a driver that does not exist. */
+   leading space, no padding, bold) plus a row for a driver that does not exist.
+
+   A second check found three ways the reader disagreed with GitHub:
+   - A heading, list, quote, rule, fence or HTML block right below the table ends
+     it, and the reader counted that line as a row. That is a false failure on a
+     valid README.
+   - An example table inside a code fence was taken for the real one.
+   - A second table under the same header went unread.
+
+   So the reader is a function of its own, tested on those shapes below. */
+function driverTableRows(text) {
+  const lines = text.split(/\r?\n/);
+  const BLOCK = /^ {0,3}(#{1,6}(\s|$)|[-*+]\s|\d{1,9}[.)]\s|>|([-*_])(\s*\3){2,}\s*$|`{3,}|~{3,}|<)/;
+  const rows = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const mark = (lines[i].match(/^ {0,3}(`{3,}|~{3,})/) || [])[1];
+    if (mark) {
+      if (!fence) fence = mark;
+      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence || !/^ {0,3}\|?\s*Driver\s*\|\s*Round\s*\|/.test(lines[i])
+        || !/^ {0,3}\|?\s*:?-+/.test(lines[i + 1] || '')) continue;
+    let j = i + 2;
+    for (; j < lines.length && lines[j].trim() && !BLOCK.test(lines[j]); j++) rows.push(lines[j]);
+    i = j - 1;
+  }
+  return rows;
+}
+
+test('the README row reader ends, skips and gathers tables as GitHub does', () => {
+  const table = rows => ['| Driver | Round | What |', '|---|---|---|', ...rows].join('\n');
+  const one = '| `a.py` | 1 | x |';
+  for (const next of ['## Next', '- item', '1. item', '> | `b.py` | 2 | y |', '---', '```', '<!-- | `b.py` | 2 | y | -->'])
+    assert.deepStrictEqual(driverTableRows(table([one, next, '| `b.py` | 2 | y |'])), [one],
+      `"${next}" right below the table should end it`);
+  // A plain line right below the last row is a row (GFM spec, example 201).
+  assert.deepStrictEqual(driverTableRows(table([one, 'stray'])), [one, 'stray']);
+  const fenced = ['```', table(['| `x.py` | 9 | example |']), '```', '', table([one])].join('\n');
+  assert.deepStrictEqual(driverTableRows(fenced), [one], 'a table inside a fence is an example, not the table');
+  assert.deepStrictEqual(driverTableRows([table([one]), '', table(['| `b.py` | 2 | y |'])].join('\n')),
+    [one, '| `b.py` | 2 | y |'], 'every table under the header counts');
+  assert.deepStrictEqual(driverTableRows(table([one]).replace(/\n/g, '\r\n')), [one], 'CRLF line ends');
+});
+
 test('the sabotage README gives each driver exactly one table row', () => {
   const dir = path.join(ROOT, 'tests', 'sabotage');
-  const lines = fs.readFileSync(path.join(dir, 'README.md'), 'utf8').split('\n');
+  const rows = driverTableRows(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'));
   const drivers = fs.readdirSync(dir).filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f)).sort();
   assert.ok(drivers.length > 0, 'no sabotage drivers found — has the directory moved?');
+  assert.ok(rows.length > 0, "tests/sabotage/README.md has no table headed 'Driver | Round' with rows");
   const stem = name => name.replace(/\.(py|sh)$/i, '').replace(/_+$/, '');
-  const head = lines.findIndex(l => /^ {0,3}\|?\s*Driver\s*\|\s*Round\s*\|/.test(l));
-  assert.ok(head >= 0, "tests/sabotage/README.md has no table headed 'Driver | Round'");
-  assert.ok(/^ {0,3}\|?\s*:?-+/.test(lines[head + 1] || ''), 'the driver table has no delimiter row');
-  const blank = lines.findIndex((l, i) => i > head && !l.trim());
   const counts = new Map(drivers.map(f => [stem(f), 0]));
   const wrong = [];
-  for (const row of lines.slice(head + 2, blank < 0 ? lines.length : blank)) {
+  for (const row of rows) {
     const cell = row.replace(/^ {0,3}\|?/, '').split(/(?<!\\)\|/)[0];
     const names = cell.match(/(?:engine|workflow)_[0-9a-z_]+(?:\.(?:py|sh))?/gi) || [];
     if (names.length !== 1) { wrong.push(`a row naming ${names.length} drivers: ${row.slice(0, 60)}`); continue; }
