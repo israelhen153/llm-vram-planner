@@ -5131,5 +5131,24 @@ test('the sabotage README names every driver, and no driver it does not have', (
     `these drivers would leave __pycache__ behind: ${writesBytecode.join(', ')}`);
 });
 
+/* The test above asks whether the README names a driver, not how often. A merge left
+   rounds 15, 16 and 21 in the table twice, word for word, and it passed. Two rows for
+   one driver drift apart the first time only one of them is edited, and the README
+   then says two things about the same driver. */
+test('the sabotage README gives each driver exactly one table row', () => {
+  const dir = path.join(ROOT, 'tests', 'sabotage');
+  const doc = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+  const drivers = fs.readdirSync(dir).filter(f => /^(engine|workflow)_.*\.(py|sh)$/.test(f));
+  assert.ok(drivers.length > 0, 'no sabotage drivers found — has the directory moved?');
+  const rows = (doc.match(/^\| `(?:engine|workflow)_[0-9a-z_]+\.(?:py|sh)` \|/gm) || [])
+    .map(row => row.split('`')[1]);
+  const wrong = drivers.sort()
+    .map(f => [f, rows.filter(r => r === f).length])
+    .filter(([, n]) => n !== 1)
+    .map(([f, n]) => `${f} (${n} rows)`);
+  assert.deepStrictEqual(wrong, [],
+    `tests/sabotage/README.md must give each driver one table row: ${wrong.join(', ')}`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
