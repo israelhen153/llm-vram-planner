@@ -156,7 +156,7 @@ One change landed first:
 
 ---
 
-## v1.2.0 — Repo-side pipeline + catalog import
+## v1.2.0 — Repo-side pipeline, catalog import and planner features
 
 Keeping the baked-in data fresh without giving the tool a runtime network dependency.
 The first piece, the weekly price check, shipped early in v1.1: it opens a PR against
@@ -166,11 +166,31 @@ offline.
 **What changes:**
 - Catalog import, for the air-gapped "my card isn't in your list" case
 - Benchmark ingestion in CI, so contributed entries are validated on arrival
+- Hyperscaler prices by GPU count, so a plan on more than one GPU stops reading low: the
+  known issue in v1.1's [changelog](CHANGELOG.md)
 
 **What doesn't change:**
 - No backend, no database, no service, no second engine. **"Live updates" here means a
   build job that bakes fresh data into the same file** — not something the page calls
   at runtime. The offline guarantee is the product.
+
+### Planner features, moved here from v1.1
+
+Five features first planned for v1.1 moved here on 2026-09-20, when v1.1 was held to what
+this roadmap promised. Each works inside the single offline file.
+
+- **A config the PDF report reads.** The page saves its settings as the JSON that
+  `generate_report.py --json` takes, so a plan goes from the page to the PDF without
+  re-entering every setting. Today the page copies a written summary or a link to its own
+  state, and the PDF report reads neither.
+- **Show the calculation.** Every figure expands to its formula, with this configuration's
+  numbers filled in.
+- **What breaks first.** Which limit a configuration hits first, in the words vLLM itself
+  would use to report it.
+- **Ranked levers.** The changes that would free the most memory, ranked by how much each
+  frees, such as how much an FP8 KV cache would save.
+- **Cost per token,** shown only beside the utilisation it assumes, which the reader sets,
+  and never in the executive summary, where it would travel without that assumption.
 
 ---
 

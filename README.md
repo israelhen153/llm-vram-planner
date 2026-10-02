@@ -149,7 +149,7 @@ The hosted copy at [israelhen153.github.io](https://israelhen153.github.io/llm-v
 
 - **v1.0** (shipped) — NVIDIA GPUs, vLLM
 - **v1.1** (released 2026-09-30) — AMD ROCm, and correct above 8 GPUs
-- **v1.2** — Repo-side price and catalog pipeline; the tool itself stays offline
+- **v1.2** — Repo-side price and catalog pipeline, and five planner features; the tool itself stays offline
 - **v2.0** — UI polish, guided wizard, mobile, PWA
 
 See [ROADMAP.md](ROADMAP.md) for details, and [CHANGELOG.md](CHANGELOG.md) for what each release changed.
