@@ -450,5 +450,88 @@ test("the watch as a process: one issue for a newer release, exit 1 when PyPI ca
      check_the_watch_as_a_process)
 
 
+print("\nThe watch's own workflow")
+
+# A contract, so it is a literal: the watch's workflow, whole. An action may move to a
+# newer version; nothing else changes without this.
+WATCH_TOP_KEYS = {"name", "on", "permissions", "jobs"}
+WATCH_JOB_KEYS = {"runs-on", "permissions", "steps"}
+WORKFLOW_PERMISSIONS = {"contents": "read"}
+WATCH_PERMISSIONS = {"contents": "read", "issues": "write"}
+WATCH_STEPS = [
+    {"uses": "actions/checkout"},
+    {"uses": "actions/setup-python", "with": {"python-version": "3.x"}},
+    {"name": "Compare vLLM's releases with the pinned one",
+     "env": {"GH_TOKEN": "${{ github.token }}"},
+     "run": 'python3 tools/vllm_watch.py --repo "$GITHUB_REPOSITORY"'},
+]
+ACTION_VERSION = r"@(v[0-9]+(\.[0-9]+){0,2}|[0-9a-f]{40})"
+# Cron's weekday names, Sunday first ("0 - 6 or SUN-SAT", GitHub's cron table).
+CRON_DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
+WEEK = 7 * 24 * 60
+
+
+def workflows():
+    """{file: parsed} for every workflow file."""
+    import yaml
+    where = os.path.join(ROOT, ".github", "workflows")
+    found = {}
+    for name in sorted(os.listdir(where)):
+        if name.endswith((".yml", ".yaml")):
+            with open(os.path.join(where, name), encoding="utf-8") as fh:
+                found[name] = yaml.safe_load(fh)
+    return found
+
+
+def schedule_of(doc):
+    on = doc.get(True, doc.get("on"))
+    return (on.get("schedule") or []) if isinstance(on, dict) else []
+
+
+def minute_of_week(cron):
+    """When a once-a-week cron fires, in minutes from Sunday 00:00 UTC."""
+    minute, hour, dom, month, dow = cron.split()
+    assert dom == month == "*" and minute.isdigit() and hour.isdigit(), f"{cron!r} is not `minute hour * * weekday`"
+    return (int(dow) if dow.isdigit() else CRON_DAYS.index(dow)) * 1440 + int(hour) * 60 + int(minute)
+
+
+def check_the_workflow_runs_the_watch_weekly_and_can_fail():
+    """One workflow runs the watch: once a week at one fixed minute, never minute 0,
+    where GitHub delays and drops scheduled runs, and at least an hour from every other
+    workflow's slot; with no permission beyond reading the tree and writing its issue;
+    and pinned whole, so nothing can keep its step green (`|| true`,
+    continue-on-error), retire it, or give it more than it needs."""
+    docs = workflows()
+    mine = [name for name, doc in docs.items()
+            if any("tools/vllm_watch.py" in str(s.get("run", "")) for j in doc["jobs"].values() for s in j.get("steps") or [])]
+    assert len(mine) == 1, f"{len(mine)} workflows run the watch: {mine}"
+    doc = docs[mine[0]]
+    assert {"on" if k is True else k for k in doc} == WATCH_TOP_KEYS, sorted(map(str, doc))
+    on = doc.get(True, doc.get("on"))
+    assert isinstance(on, dict) and set(on) == {"schedule", "workflow_dispatch"}, on
+    (entry,) = schedule_of(doc)
+    assert set(entry) == {"cron"}, f"the schedule entry is {entry}: its cron alone, in UTC"
+    minute = entry["cron"].split()[0]
+    assert minute.isdigit() and 1 <= int(minute) <= 59, f"{entry['cron']!r}: one fixed minute from 1 to 59"
+    slot = minute_of_week(entry["cron"])
+    near = [f"{name} ({e['cron']})" for name, other in docs.items() if name != mine[0] for e in schedule_of(other)
+            if min((slot - minute_of_week(e["cron"])) % WEEK, (minute_of_week(e["cron"]) - slot) % WEEK) < 60]
+    assert not near, f"the watch runs within an hour of {near}"
+    assert doc["permissions"] == WORKFLOW_PERMISSIONS, doc["permissions"]
+    (job,) = doc["jobs"].values()
+    assert set(job) == WATCH_JOB_KEYS and job["runs-on"] == "ubuntu-latest", sorted(job)
+    assert job["permissions"] == WATCH_PERMISSIONS, job["permissions"]
+    assert len(job["steps"]) == len(WATCH_STEPS), [s.get("name") or s.get("uses") for s in job["steps"]]
+    for want, got in zip(WATCH_STEPS, job["steps"]):
+        if "uses" in want:
+            assert re.fullmatch(re.escape(want["uses"]) + ACTION_VERSION, str(got.get("uses", ""))), got
+            assert {k: v for k, v in got.items() if k != "uses"} == {k: v for k, v in want.items() if k != "uses"}, got
+        else:
+            assert got == want, f"the watch step is {got!r}, where the workflow has {want!r}"
+
+test("the watch runs once a week, off the hour and apart, pinned whole, and can fail",
+     check_the_workflow_runs_the_watch_weekly_and_can_fail)
+
+
 print(f"\n{pass_ct} passed, {fail_ct} failed\n")
 sys.exit(1 if fail_ct else 0)

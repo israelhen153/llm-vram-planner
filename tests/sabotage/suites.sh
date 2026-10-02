@@ -12,8 +12,9 @@ declare -A CMD=(
   [sync]="python3 tests/sync.test.py"
   [price]="python3 tests/price_check.test.py"
   [workflow]="python3 tests/workflow.test.py"
+  [vllm_watch]="python3 tests/vllm_watch.test.py"
 )
-for s in model parity report sync price workflow; do
+for s in model parity report sync price workflow vllm_watch; do
   out=$(${CMD[$s]} 2>&1); rc=$?
   summary=$(echo "$out" | grep -E '^[0-9]+ passed, [0-9]+ failed' | tail -1)
   if [ $rc -eq 0 ]; then
