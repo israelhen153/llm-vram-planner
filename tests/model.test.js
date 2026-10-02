@@ -4850,6 +4850,10 @@ const SLIDER_MAX = Number(((html.match(/<input\b[^>]*\bid="gpu-count"[^>]*>/) ||
   .match(/\bmax="(\d+)"/) || [])[1]);
 const LAYER_SPLIT_DEVICES = [2, 3, 4, 5, 6, 7, 8, 9];
 for (let n = 16; n <= SLIDER_MAX; n *= 2) LAYER_SPLIT_DEVICES.push(n);
+/* Every count the slider reaches, for one card of each kind (below). A cold check put
+   the tile back at exactly 12 devices and it passed a sweep of 2-9 and the powers of
+   two. The rest of the catalog keeps the shorter list, which keeps the suite fast. */
+const LAYER_SPLIT_EVERY = Array.from({ length: 2 * SLIDER_MAX - 1 }, (_, i) => i + 2);
 /* What a reader takes off one surface: visible text with block boundaries as line
    breaks, so two neighbouring tiles never read as one phrase, plus every attribute
    value and every write that never touched innerHTML. */
@@ -4900,8 +4904,10 @@ const layerSplitPlans = () => {
   const presets = Object.entries(PAGE_PRESETS);
   const dense = presets.find(([, p]) => !p.moe), moe = presets.find(([, p]) => p.moe);
   const plans = [];
+  const everyCount = new Set([cards.find(([, c]) => supportsNVLink(c))?.[0],
+    cards.find(([, c]) => !supportsNVLink(c))?.[0], '(synthetic) dual-GCD']);
   for (const [slug, card] of cards)
-    for (const devices of LAYER_SPLIT_DEVICES) {
+    for (const devices of everyCount.has(slug) ? LAYER_SPLIT_EVERY : LAYER_SPLIT_DEVICES) {
       const boards = devices / (card.devices || 1);
       if (!Number.isInteger(boards) || boards > SLIDER_MAX) continue;
       for (const [key, p] of [dense, moe])
