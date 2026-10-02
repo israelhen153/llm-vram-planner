@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Notice when vLLM ships a final release newer than the one the planner pins.
+
+The planner prints `vllm serve` commands and, on AMD, a `docker run` of vLLM's ROCm
+image pinned at one release. What it says about that release was read against it:
+which quantization names vLLM accepts, which methods are FP8, where FP8 is refused,
+what GGUF needs, the ROCm lines and the date they were checked. All of it can go stale
+the week vLLM ships again, and nothing in the tree notices.
+
+So once a week this reads the pin from both engines' ROCm table (index.html and
+generate_report.py, which tests/parity.test.py holds equal; when they differ it stops
+there), asks PyPI which final releases of vLLM exist, and when any is newer than the
+pin it opens one issue, or adds to the one open, saying what to re-check: every tracked
+file that mentions the pin, searched at run time, and where each contract a release
+decides lives, found at run time. It changes nothing in the tree.
+
+Each version is announced once. The notice carries a marker per version, and a version
+an issue under the title already carries, open or closed, is not announced again. A
+closed issue is never written to: a release after it is closed opens a new one.
+
+A failure to fetch PyPI's answer, or to read it, exits 1, never "no news". So do
+engines that disagree on the pin, a contract it cannot find, and a gh call that fails.
+
+Run:  python3 tools/vllm_watch.py --repo owner/name
+      (needs the gh CLI, and GH_TOKEN with issues:write)
+"""
+import argparse
+import ast
+import http.client
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENGINES = ("index.html", "generate_report.py")
+PYPI_URL = "https://pypi.org/pypi/vllm/json"
+ISSUE_TITLE = "vLLM has shipped a release newer than the pinned one"
+MARK = "<!-- vllm-watch announced {} -->"
+MARKED = re.compile(r"<!-- vllm-watch announced (\S+) -->")
+urlopen = urllib.request.urlopen   # tests answer in its place
+
+# The contracts a vLLM release decides, by the names the engines give them. Where each
+# lives is found at run time in both engines; one found in neither is an error, because
+# a notice that quietly drops a contract sends its reader past it. The ROCm table's
+# `checked` date is found inside that table, in contracts() below.
+CONTRACTS = [
+    ("`VLLM_QUANTIZATIONS`", "the quantization names each vendor's vLLM accepts",
+     r"(?:const\s+)?VLLM_QUANTIZATIONS\s*="),
+    ("`FP8_METHODS`", "the methods vLLM loads as FP8", r"(?:const\s+)?FP8_METHODS\s*="),
+    ("`GGUF_GUIDANCE`", "what the planner says vLLM needs to serve GGUF", r"(?:const\s+)?GGUF_GUIDANCE\s*="),
+    ("the FP8 refusal", "no command where vLLM cannot run FP8 weights", r"def refuse_fp8_where_vllm_cannot\("),
+]
+CHECKED_KEY = r"\s*[\"']checked[\"']\s*:"
+
+
+class WatchError(Exception):
+    """The watch could not read what it needs. Loud, never "no news"."""
+
+
+# ---------------------------------------------------------------- versions
+
+# PEP 440's public version, as packaging spells it (no local segment: PyPI refuses
+# those). Written out rather than imported, so the job needs nothing pip installs.
+VERSION = re.compile(r"""
+    v?
+    (?:(?P<epoch>[0-9]+)!)?
+    (?P<release>[0-9]+(?:\.[0-9]+)*)
+    (?P<pre>[-_.]?(?:alpha|a|beta|b|preview|pre|c|rc)[-_.]?[0-9]*)?
+    (?P<post>-[0-9]+|[-_.]?(?:post|rev|r)[-_.]?[0-9]*)?
+    (?P<dev>[-_.]?dev[-_.]?[0-9]*)?
+    """, re.VERBOSE | re.IGNORECASE)
+
+
+def parse(version):
+    """(final, key) for a version. `final` is False for an alpha, beta, rc or dev
+    release. `key` orders final releases as numbers, never as text: PyPI lists vLLM's
+    releases sorted as strings (on 2026-10-02 its last key was 0.9.2 and its newest
+    release 0.30.0), and vLLM ships four-part versions too (0.9.0.1, 0.10.1.1).
+
+    A post-release counts, and sorts after its release and before the next. PEP 440
+    does not call it a pre-release and pip installs it without --pre, and vLLM uses
+    them to ship fixes: on 2026-10-02 PyPI listed 10, from 0.2.1.post1 to 0.8.5.post1,
+    and every file of 0.2.1 itself is yanked, so its post-release was the only 0.2.1
+    anyone could install. A watch that skipped them would stay silent about the build
+    pip actually installs. A post-release of a pre-release is still a pre-release."""
+    m = VERSION.fullmatch(str(version).strip())
+    if not m:
+        raise WatchError(f"{version!r} is not a version PEP 440 allows, so it cannot be ordered")
+    release = [int(part) for part in m.group("release").split(".")]
+    while len(release) > 1 and release[-1] == 0:   # 0.30 and 0.30.0 are one release
+        release.pop()
+    post = m.group("post")
+    post_n = -1 if post is None else int(re.sub(r"[^0-9]", "", post) or 0)
+    return not (m.group("pre") or m.group("dev")), (int(m.group("epoch") or 0), tuple(release), post_n)
+
+
+def newer_releases(pin, data):
+    """The final releases in PyPI's answer `data` that are newer than `pin`, oldest
+    first. A release none of whose files can be installed is skipped: one whose files
+    are all yanked, or which has none."""
+    releases = data.get("releases") if isinstance(data, dict) else None
+    if not isinstance(releases, dict) or not releases:
+        raise WatchError("PyPI's answer lists no releases, so it says nothing about what vLLM shipped")
+    final, pin_key = parse(pin)
+    if not final:
+        raise WatchError(f"the pin {pin!r} is not a final release, and only final releases are compared")
+    found = []
+    for version, files in releases.items():
+        if not isinstance(files, list) or not all(isinstance(f, dict) and isinstance(f.get("yanked"), bool)
+                                                  for f in files):
+            raise WatchError(f"PyPI's files for {version!r} are not a list of files each marked yanked or not")
+        is_final, key = parse(version)
+        if not is_final:
+            continue
+        installable = [f for f in files if not f["yanked"]]
+        if not installable:
+            continue
+        if key > pin_key:
+            found.append((key, version))
+    return [version for _, version in sorted(found)]
+
+
+def fetch(url=PYPI_URL):
+    """PyPI's JSON for vllm. Failing to fetch it or to read it raises WatchError."""
+    try:
+        with urlopen(url, timeout=60) as answer:
+            return json.loads(answer.read().decode("utf-8"))
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        raise WatchError(f"could not read vLLM's releases from {url}: {type(e).__name__}: {e}")
+
+
+# ---------------------------------------------------------------- the tree
+
+def rocm_tables(root=None):
+    """{engine: (its ROCm table, first line, last line)}, read from each engine as
+    tests/model.test.js and tests/parity.test.py find it."""
+    root = root or ROOT
+    with open(os.path.join(root, "index.html"), encoding="utf-8") as fh:
+        html = fh.read()
+    blocks = list(re.finditer(r"^const ROCM = (\{.*?\n\});$", html, re.M | re.S))
+    if len(blocks) != 1:
+        raise WatchError(f"index.html: expected one `const ROCM = {{...}};`, found {len(blocks)}")
+    try:
+        js = json.loads(blocks[0].group(1))
+    except ValueError as e:
+        raise WatchError(f"index.html: its ROCM table is not the JSON this reads: {e}")
+    with open(os.path.join(root, "generate_report.py"), encoding="utf-8") as fh:
+        source = fh.read()
+    try:
+        nodes = [n for n in ast.parse(source).body if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == "ROCM" for t in n.targets)]
+        if len(nodes) != 1:
+            raise WatchError(f"generate_report.py: expected one `ROCM = {{...}}`, found {len(nodes)}")
+        py = ast.literal_eval(nodes[0].value)
+    except (SyntaxError, ValueError, TypeError) as e:
+        raise WatchError(f"generate_report.py: its ROCM table is not a literal this reads: {e}")
+    return {"index.html": (js, html.count("\n", 0, blocks[0].start()) + 1, html.count("\n", 0, blocks[0].end()) + 1),
+            "generate_report.py": (py, nodes[0].lineno, nodes[0].end_lineno)}
+
+
+def pinned(root=None):
+    """The vLLM release both engines pin, as their ROCm table spells it."""
+    pins = {engine: table.get("vllm") if isinstance(table, dict) else None
+            for engine, (table, _, _) in rocm_tables(root).items()}
+    if len(set(pins.values())) != 1:
+        raise WatchError("the engines disagree on the vLLM release they pin: "
+                         + ", ".join(f"{engine} says {pin!r}" for engine, pin in pins.items())
+                         + ". tests/parity.test.py holds them equal; settle that first.")
+    (pin,) = set(pins.values())
+    if not isinstance(pin, str):
+        raise WatchError(f"the engines' ROCm table pins {pin!r}, which is not a version")
+    return pin
+
+
+def mentions(pin, root=None):
+    """[(path, lines)] for every tracked file that mentions the pin, with or without its
+    `v`, found by searching the tree as it stands: never a list, which is the thing that
+    goes stale."""
+    root = root or ROOT
+    bare = pin[1:] if pin[:1] in ("v", "V") else pin
+    pattern = re.compile(r"(?<![0-9.])[vV]?" + re.escape(bare) + r"(?![0-9])")
+    try:
+        listed = subprocess.run(["git", "-C", root, "ls-files", "-z"], capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise WatchError(f"could not list the tracked files to search for {pin}: {e}")
+    found = []
+    for path in sorted(p for p in listed.decode("utf-8", "surrogateescape").split("\0") if p):
+        try:
+            with open(os.path.join(root, path), "rb") as fh:
+                data = fh.read()
+        except OSError:   # tracked, but not in this working tree
+            continue
+        if b"\0" in data:   # an image or another binary file
+            continue
+        hits = sum(1 for line in data.decode("utf-8", "replace").splitlines() if pattern.search(line))
+        if hits:
+            found.append((path, hits))
+    if not found:
+        raise WatchError(f"no tracked file mentions {pin}, not even the engines it was read from")
+    return found
+
+
+def contracts(root=None):
+    """[(name, what, [(engine, line)])] for each contract a release decides, found at
+    run time. Raises WatchError for one neither engine defines."""
+    root = root or ROOT
+    text = {}
+    for engine in ENGINES:
+        with open(os.path.join(root, engine), encoding="utf-8") as fh:
+            text[engine] = fh.read().split("\n")
+    found = [(name, what, [(engine, n) for engine in ENGINES
+                           for n, line in enumerate(text[engine], start=1) if re.match(pattern, line)])
+             for name, what, pattern in CONTRACTS]
+    checked, dates = [], set()
+    for engine, (table, first, last) in rocm_tables(root).items():
+        hits = [n for n in range(first, last + 1) if re.match(CHECKED_KEY, text[engine][n - 1])]
+        if len(hits) != 1:
+            raise WatchError(f"{engine}: expected one `checked` in its ROCm table, found {len(hits)}")
+        checked.append((engine, hits[0]))
+        dates.add(str(table.get("checked")))
+    found.insert(2, ("the ROCm table's `checked`",
+                     f"the date its lines were checked against the pin ({', '.join(sorted(dates))})", checked))
+    missing = [name for name, _, sites in found if not sites]
+    if missing:
+        raise WatchError(f"cannot say where {', '.join(missing)} lives: neither engine defines it")
+    return found
+
+
+def notice(pin, newer, fresh, files, where):
+    """The issue body or comment that announces `fresh`."""
+    lines = [f"vLLM has shipped {', '.join(f'`{v}`' for v in fresh)}, newer than the planner's pin, `{pin}`."]
+    if newer != fresh:
+        lines.append(f"Every final release newer than the pin: {', '.join(f'`{v}`' for v in newer)}.")
+    lines += ["", "Nothing has been changed. Before the pin moves, re-check:", "",
+              f"**Every tracked file that mentions `{pin}`**, as a search of the tree found them:"]
+    lines += [f"- `{path}` ({n} line{'' if n == 1 else 's'})" for path, n in files]
+    lines += ["", "**Where each contract the release decides lives:**"]
+    lines += [f"- {name}, {what}: " + ", ".join(f"`{engine}:{n}`" for engine, n in sites)
+              for name, what, sites in where]
+    lines += ["", "Posted by `.github/workflows/vllm-watch.yml` (`tools/vllm_watch.py`)."]
+    lines += [MARK.format(v) for v in fresh]
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------- GitHub, through gh
+
+def gh(*args, check=True):
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=check)
+
+
+def gh_json(*args):
+    out = gh(*args).stdout
+    try:
+        return json.loads(out)
+    except ValueError as e:
+        raise WatchError(f"gh {' '.join(args[:2])} did not answer JSON: {e}")
+
+
+def announce(repo, pin, newer, files, where):
+    """Announce each release in `newer` that no issue under the title has announced:
+    as a comment on the open issue, or as a new issue when none is open. Returns the
+    releases it announced."""
+    listed = gh_json("issue", "list", "--repo", repo, "--state", "all", "--search", f'in:title "{ISSUE_TITLE}"',
+                     "--json", "number,title,state,body,comments", "--limit", "200")
+    ours = [i for i in listed if i.get("title") == ISSUE_TITLE]
+    told = {version for issue in ours
+            for text in [issue.get("body") or ""] + [c.get("body") or "" for c in issue.get("comments") or []]
+            for version in MARKED.findall(text)}
+    fresh = [v for v in newer if v not in told]
+    if not fresh:
+        return []
+    open_issues = sorted(i["number"] for i in ours if str(i.get("state", "")).lower() == "open")
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write(notice(pin, newer, fresh, files, where))
+    try:
+        if open_issues:
+            gh("issue", "comment", str(open_issues[0]), "--repo", repo, "--body-file", fh.name)
+        else:
+            gh("issue", "create", "--repo", repo, "--title", ISSUE_TITLE, "--body-file", fh.name)
+    finally:
+        os.unlink(fh.name)
+    return fresh
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--repo", required=True, help="owner/name")
+    ap.add_argument("--pypi-url", default=PYPI_URL,
+                    help="where to read vLLM's releases; the tests point it at a file:// fixture")
+    args = ap.parse_args(argv)
+    try:
+        pin = pinned()
+        files, where = mentions(pin), contracts()
+        newer = newer_releases(pin, fetch(args.pypi_url))
+        if not newer:
+            print(f"vllm watch: no final release of vLLM is newer than the pinned {pin}.")
+            return 0
+        fresh = announce(args.repo, pin, newer, files, where)
+    except WatchError as e:
+        print(f"vllm watch: {e}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(f"vllm watch: {' '.join(map(str, e.cmd[:3]))} failed: {(e.stderr or '').strip()[-300:]}",
+              file=sys.stderr)
+        return 1
+    if fresh:
+        print(f"vllm watch: announced {', '.join(fresh)}, newer than the pinned {pin}.")
+    else:
+        print(f"vllm watch: {', '.join(newer)} newer than the pinned {pin}, every one already announced.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
