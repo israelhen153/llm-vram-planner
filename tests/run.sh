@@ -36,6 +36,9 @@ python3 tests/workflow.test.py
 echo "== the price job's watchdog (tools/price_watchdog.py) =="
 python3 tests/watchdog.test.py
 
+echo "== the vLLM release watch (tools/vllm_watch.py) =="
+python3 tests/vllm_watch.test.py
+
 echo "== the sabotage corpus can reach the engine (tests/sabotage/anchors.py) =="
 python3 tests/corpus.test.py
 
