@@ -1577,20 +1577,16 @@ function renderGPUCards(state, computed) {
     // Individual GPU cards
     html += `<div class="gpu-grid" style="grid-template-columns:repeat(${computed.deviceCount},1fr)">`;
     for (let i = 0; i < computed.deviceCount; i++) {
-      const layerStart = Math.floor(state.layers / computed.deviceCount * i);
-      const layerEnd = Math.floor(state.layers / computed.deviceCount * (i + 1)) - 1;
       html += '<div class="gpu-card">';
       html += `<p class="gpu-title"><svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-device-desktop"></use></svg>Device ${i}`;
       if (computed.deviceCount > 1 && fabric !== 'PCIe') html += `<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${fabric}</span>`;
       html += '</p>';
       html += buildBar(14);
-      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)${computed.deviceCount > 1 ? ' · L' + layerStart + '–' + layerEnd : ''}</p></div>`;
+      html += `<p class="gpu-detail">${formatGB(perGPU.total)} / ${capacityLabel(computed.deviceGB)} (${Math.min(usagePct, 999)}%)</p></div>`;
     }
     html += '</div>';
   } else {
     // Condensed view for 5+ GPUs
-    const layersPerGPU = Math.ceil(state.layers / computed.deviceCount);
-
     html += '<div class="gpu-card" style="margin:10px 0">';
     html += `<p class="gpu-title"><svg class="ti-ico" style="font-size:16px" aria-hidden="true" focusable="false"><use href="#ico-server"></use></svg> <b>${state.gpuCount}× ${state.gpuName}</b>`;
     if (fabric !== 'PCIe') html += `<span class="nvlink-badge"><svg class="ti-ico" style="font-size:11px" aria-hidden="true" focusable="false"><use href="#ico-arrows-exchange"></use></svg>${fabric}</span>`;
@@ -1622,15 +1618,6 @@ function renderGPUCards(state, computed) {
         ? `<br><span style="font-size:10px;color:var(--text-muted)">inside each of ${dp} replicas</span>` : '';
       html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Weights sharded</span><br><b>${computed.shardDivisor}-way</b> (${formatGB(perGPU.weights)}/device)${replicaNote}</div>`;
     }
-    /* layersPerGPU = ceil(layers / deviceCount) is now the only figure in this
-       panel still divided by the device count, and it is wrong for a reason
-       the weights divisor never had: dividing layers across devices is
-       *pipeline* parallelism, and neither engine ever emits --pipeline-
-       parallel-size. Under TP x DP every device holds a slice of every layer.
-       Left as it is here on purpose — correcting it is a separate change with
-       its own caption to rewrite — so the caveat stays and keeps naming the
-       divisor this tile really used. */
-    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Layers per device</span><br><b>~${layersPerGPU}</b> of ${state.layers}${dp > 1 ? '<br><span style="font-size:10px;color:var(--text-muted)">assumes sharding across all ' + computed.deviceCount + '</span>' : ''}</div>`;
     /* The per-field heuristic label. The slider runs to 128 rather than
        stopping at one NVLink domain, and this is the honesty that decision
        leans on: above 8 devices the split is chosen by a rule of thumb, and

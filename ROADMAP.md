@@ -208,10 +208,10 @@ Only after v1.0–1.2 are stable and there's validated user demand.
 
 ## Not planned (but open to PRs)
 
-- **Pipeline parallel** — TP/DP covers most deployments, PP is niche. Note that the
-  "Layers per device" tile currently divides layers by the device count, which *is*
-  pipeline-parallel arithmetic on a command that never emits it. That tile is wrong and
-  is flagged as wrong; it is a bug to fix, not a feature in progress.
+- **Pipeline parallel** — TP/DP covers most deployments, PP is niche. The page used to
+  show a "Layers per device" tile and per-card layer ranges, both dividing layers by the
+  device count, which *is* pipeline-parallel arithmetic on a command that never emits it.
+  Both were removed: they were a bug, not a preview of this.
 - **Apple Silicon / unified memory** — was on this roadmap as v1.2, and is dropped
   rather than quietly deferred. It needs a second memory model (unified, shared with
   the OS), a second command generator (`ollama run` / `mlx_lm.server`), and a second
