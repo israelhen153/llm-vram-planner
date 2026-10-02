@@ -4385,6 +4385,100 @@ def capture_golden():
     return out
 
 
+# ---- no part of the PDF states a per-device layer count ----------------------
+# The page's "Layers per device" tile and its per-card L<start>–<end> ranges divided
+# layers by the device count: pipeline-parallel arithmetic, on a command that never
+# emits --pipeline-parallel-size. Under TP × DP every device holds a slice of every
+# layer. The PDF never printed the figure, and this holds it to that on the axes
+# tests/model.test.js sweeps the page on, derived the same way: every row of
+# data/gpus.json and the synthetic dual-GCD board, every device count from 2 to 9 and
+# each power of two from 16 to the page's GPU-count slider maximum, the first dense
+# and the first MoE preset, and NVLink asked for and not, granted only where the
+# board has it. The rules are the page test's, so a wording one catches the other does.
+
+def layer_split_claims(text, layers, devices):
+    figures = sorted({math.ceil(layers / devices), layers // devices} - {0})
+    num = lambda n: rf"(?<![\d.,])~?\s*{n}(?!\d|[.,]\d)"
+    gap = r"[^\d.!?;\n]{0,30}?"
+    rules = [('"layers per device" or "per GPU"', re.compile(
+                 r"\blayers?\s*(?:per|/|for each|on each)\s*(?:device|gpu|gcd|card|rank)s?\b", re.I)),
+             ("an L<a>–<b> range", re.compile(r"(?<!#)\bL\d+\s*[–-]\s*L?\d+\b")),
+             ('a "layers <a>–<b>" range', re.compile(r"\blayers?:?\s+\d+\s*[–-]\s*\d+", re.I)),
+             (f'"~N of {layers}"', re.compile(rf"~\s*\d+\s+of\s+{layers}(?!\d)"))]
+    for n in figures:
+        rules += [(f'{n} beside the word "layer"',
+                   re.compile(rf"\blayers?\b{gap}{num(n)}(?!\s*-?\s*ways?\b)", re.I)),
+                  (f'{n} before the word "layer"', re.compile(rf"{num(n)}{gap}\blayers?\b", re.I)),
+                  (f"{n} of {layers}", re.compile(rf"{num(n)}\s+of\s+{layers}(?!\d)")),
+                  (f"{n} per device", re.compile(
+                      rf"{num(n)}\s*(?:per|/|for each|on each)\s*(?:device|gpu|gcd|card|rank)s?\b", re.I))]
+    return [f"{what}: {m.group(0)!r}" for what, rx in rules for m in [rx.search(text)] if m]
+
+
+def layer_split_plans():
+    rows = json.load(open(os.path.join(ROOT, "data", "gpus.json")))["data"]
+    cards = list(rows.items()) + [("(synthetic) dual-GCD", DUAL)]
+    page = open(os.path.join(ROOT, "index.html")).read()
+    top = int(re.search(r'\bmax="(\d+)"',
+                        re.search(r'<input\b[^>]*\bid="gpu-count"[^>]*>', page).group(0)).group(1))
+    counts = list(range(2, 10)) + [n for n in (2 ** k for k in range(4, 12)) if n <= top]
+    dense = next((k, p) for k, p in gr.PRESETS.items() if not p.get("moe"))
+    moe = next((k, p) for k, p in gr.PRESETS.items() if p.get("moe"))
+    plans = []
+    for slug, card in cards:
+        for devices in counts:
+            boards, rest = divmod(devices, card.get("devices", 1))
+            if rest or boards > top:
+                continue
+            for key, preset in (dense, moe):
+                for asked in (True, False):
+                    if asked and not gr.supports_nvlink(card):
+                        continue  # not granted, so the same plan as not asked
+                    cfg = dict(gr.arch_fields(preset), bpp=2, ctx=8192, conc=16, n_gpu=boards,
+                               gpu=card, nvlink=asked, kv_bpp=2, vendor=card["vendor"],
+                               perfKey=card["perfKey"], hf_model=preset.get("hf", "m"),
+                               model_name=preset.get("name", key))
+                    plans.append((f"{slug} x{boards} ({devices} devices), {key}, "
+                                  f"{'NVLink asked' if asked else 'NVLink not asked'}",
+                                  slug, devices, cfg))
+    return plans, cards, counts
+
+
+def check_the_detector_finds_the_figures_the_page_used_to_print():
+    for text, layers, devices in (("Layers per device ~10 of 80", 80, 8),
+                                  ("41 GB / 80 GB (52%) · L40–79", 80, 2),
+                                  ("Layer split ~6 of 48", 48, 8), ("Layers per GPU: 3", 48, 16),
+                                  ("Layers/device ~4", 32, 8), ("~16 layers each", 32, 2),
+                                  ("Layers 80 (~10 per device)", 80, 8)):
+        assert layer_split_claims(text, layers, devices), f"the detector misses {text!r}"
+    assert not layer_split_claims("the dense layers shard only 8 ways", 64, 8), (
+        "a sharding degree beside 'layers' is not a layer count")
+
+
+def check_no_part_of_the_pdf_states_a_per_device_layer_count():
+    plans, cards, counts = layer_split_plans()
+    unreached = [n for n in counts if not any(p[2] == n for p in plans)]
+    assert not unreached, f"no plan has {unreached} devices"
+    for slug, _ in cards:
+        assert any(p[1] == slug and p[2] <= 4 for p in plans) and \
+            any(p[1] == slug and p[2] >= 5 for p in plans), f"{slug} misses a device-count regime"
+    found = []
+    for name, _, devices, cfg in plans:
+        text = "\n".join(re.sub(r"<[^>]*>", " ", re.sub(r"<br\s*/?>|</?para[^>]*>", "\n", s))
+                         for s in story_strings(cfg))
+        text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ")
+        assert "Layers" in text, f"{name}: the story was not read (its model table is missing)"
+        found += [f"{name}: {c}" for c in layer_split_claims(text, cfg["layers"], devices)]
+    assert not found, (f"{len(found)} place(s) in the PDF state a per-device layer count:\n  "
+                       + "\n  ".join(found[:6]))
+
+
+test("the per-device layer detector finds the figures the page used to print",
+     check_the_detector_finds_the_figures_the_page_used_to_print)
+test("no part of the PDF states a per-device layer count, on any card, count, model or link",
+     check_no_part_of_the_pdf_states_a_per_device_layer_count)
+
+
 def check_the_report_still_says_what_the_golden_records():
     now = capture_golden()
     if os.environ.get("UPDATE_GOLDEN"):
