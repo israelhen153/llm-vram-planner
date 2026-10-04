@@ -10,9 +10,10 @@ place, or dropped where one is all of a release that can be installed; the pin
 hard-coded, or taken from one engine when the two disagree; the files to re-check given
 as today's list rather than searched; a new issue every week, a release announced
 again, or told again under its post-release's name; a failure to read PyPI passed off as
-a quiet week, three ways, or gh's non-JSON answer read as an empty issue list; a
-contract nobody defines dropped from the notice without a word, or one both engines
-define searched in one engine only; and its workflow at minute 0, given
+a quiet week, three ways, or gh's answer read as an empty issue list, whether it is not
+JSON or JSON of another shape; a contract nobody defines dropped from the notice without
+a word, one both engines define searched in one engine only, or the FP8 refusal named at
+its Python gate and not at the rule in both engines; and its workflow at minute 0, given
 `contents: write`, or kept green with `|| true` or continue-on-error.
 
 The hard-coded pin and file list are read from the tree as this driver loads, so each
@@ -71,6 +72,8 @@ S = {
  'P5 a contract both engines define searched in generate_report.py only':
      swap(VW, '    found = [(name, what, [(engine, n) for engine in ENGINES\n',
               '    found = [(name, what, [(engine, n) for engine in ENGINES[-1:]\n'),
+ 'P6 the FP8 refusal named at its Python gate, and not at the rule in both engines':
+     swap(VW, r'r"(?:def\s+fp8_weights_blocked|function\s+fp8WeightsBlocked)\("', r'r"def refuse_fp8_where_vllm_cannot\("'),
 
  # ---- R: what it tells GitHub ----
  'R1 a new issue every week, the open one ignored':
@@ -94,6 +97,11 @@ S = {
      swap(VW, '    sys.exit(main())\n', '    main()\n'),
  "F4 gh's non-JSON answer read as an empty issue list":
      swap(VW, "        raise WatchError(f\"gh {' '.join(args[:2])} did not answer JSON: {e}\")\n", '        return []\n'),
+ "F5 the issue list's shape unchecked, so {} reads as no issues and a second issue is created":
+     swap(VW, '    check_issue_list(listed)\n', '    pass\n'),
+ 'F6 an issue missing a field the watch reads taken as it is':
+     [(VW, '            if field not in item:\n', '            if False:\n', 1),
+      (VW, '            if type(item[field]) is not kind:\n', '            if False:\n', 1)],
 
  # ---- W: the watch's own workflow ----
  'W1 the schedule moved to minute 0':
