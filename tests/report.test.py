@@ -3269,8 +3269,8 @@ print("\nA preset's own repo is no pre-quantized checkpoint")
 # level, and the line saying what goes there: a contract, so literals here with the repo
 # filled in, never read back from generate_report.py. tests/model.test.js holds the page
 # to the same literals, so the two engines print the same thing.
-STAND_IN_FORMS = {"awq": "the AWQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
-                  "gptq": "the GPTQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
+STAND_IN_FORMS = {"awq": "the Hugging Face id of the AWQ checkpoint, or its absolute path on the GPU server",
+                  "gptq": "the Hugging Face id of the GPTQ checkpoint, or its absolute path on the GPU server",
                   "gguf": "the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file"}
 
 
@@ -3291,6 +3291,9 @@ def assert_command_names(cmd, repo, quant, vendor, replaced, where):
     assert (lines[0] == want[1]) if want else not any("pre-quantized" in l for l in lines), \
         f"{where}: the stand-in's line is {'missing' if want else 'there'}:\n{cmd}"
     if want:
+        # The PDF wraps the line, so a command copied out of it pastes the wrapped part as
+        # shell input: nothing past the # may be a character a shell reads as special.
+        assert not re.search(r"['\"`$;&|<>(){}\\*?!#~]", lines[0][1:]), f"{where}: a shell-special character in {lines[0]!r}"
         assert model.startswith("/") and not re.search(r"[\s<>]", model) and not gr.unresolvable_model_path(model), \
             f"{where}: the stand-in {model} is not an absolute path free of spaces and <>"
     assert (f"    {model} \\" if vendor == "amd" else f"vllm serve {model} \\") in lines, \

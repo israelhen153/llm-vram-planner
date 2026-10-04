@@ -4363,8 +4363,8 @@ console.log('\nA preset\'s own repo is no pre-quantized checkpoint');
 /* The stand-in path a command names on a preset's own repo for AWQ, GPTQ and every GGUF
    level, and the line saying what goes there: a contract, so literals here with the repo
    filled in, never read back from the page. */
-const STAND_IN_FORMS = { awq: "the AWQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
-  gptq: "the GPTQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
+const STAND_IN_FORMS = { awq: 'the Hugging Face id of the AWQ checkpoint, or its absolute path on the GPU server',
+  gptq: 'the Hugging Face id of the GPTQ checkpoint, or its absolute path on the GPU server',
   gguf: 'the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file' };
 const standInFor = (q, repo) => {
   if (!STAND_IN_FORMS[q]) return null;
@@ -4398,6 +4398,10 @@ test('every preset at every weight option on every card: a stand-in path and its
           named++;
           assert.ok(want.path.startsWith('/') && !/[\s<>]/.test(want.path), `${where}: the stand-in ${want.path} is not an absolute path free of spaces and <>`);
           assert.strictEqual(lines[0], want.note, `${where}: the command's first line is not the stand-in's line`);
+          /* The PDF wraps the line, and a command copied out of the PDF pastes the wrapped
+             part as shell input: an apostrophe there opened a quote that swallowed the
+             command. Nothing past the # may be a character a shell reads as special. */
+          assert.ok(!/['"`$;&|<>(){}\*?!#~]/.test(lines[0].slice(1)), `${where}: the stand-in's line holds a shell-special character`);
           assert.strictEqual(modelLine, card.vendor === 'amd' ? `    ${want.path} \\` : `vllm serve ${want.path} \\`, `${where}: the command does not name the stand-in`);
           if (card.vendor === 'amd') assert.ok(lines.includes(`    -v ${want.path}:${want.path} \\`), `${where}: the stand-in is not mounted`);
         } else {

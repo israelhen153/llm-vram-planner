@@ -912,14 +912,16 @@ def prequantized_stand_in(quant, base_repo):
     """The stand-in model path a command names on a preset's own repo for a method that
     needs a pre-quantized checkpoint, and the line saying what goes there, or None.
     Absolute, so it passes both path rules, with no space and no <...>, which the PDF
-    reads as markup. Mirrors prequantizedStandIn() in index.html."""
+    reads as markup, and a line with nothing a shell reads as special, since the PDF wraps
+    it and a command copied out of the PDF pastes the wrapped part as shell input.
+    Mirrors prequantizedStandIn() in index.html."""
     method = PREQUANTIZED.get(quant or "")
     if not method:
         return None
     name = base_repo.split("/")[-1]
     path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"
     forms = ("the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file"
-             if quant == "gguf" else f"the {method} checkpoint's Hugging Face id, or its absolute path on the GPU server")
+             if quant == "gguf" else f"the Hugging Face id of the {method} checkpoint, or its absolute path on the GPU server")
     return path, f"# {method} needs a pre-quantized checkpoint, which {base_repo} is not: replace {path} with {forms}."
 
 

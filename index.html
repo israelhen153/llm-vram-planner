@@ -2123,7 +2123,9 @@ function fp8WeightsBlocked(gpu) {
    so. The path is absolute, so it passes both of the planner's path rules, and holds no
    space and no <...>, which the PDF reads as markup. GGUF also gets the base repo as
    --tokenizer, as vLLM's GGUF page and vllm-gguf-plugin's README recommend in every
-   example. A path the reader gave is never replaced. Mirrored by
+   example. The line holds nothing a shell reads as special, no quote among them: the
+   PDF wraps it, and a reader copying the command out of the PDF pastes the wrapped part
+   as shell input. A path the reader gave is never replaced. Mirrored by
    prequantized_stand_in() in generate_report.py. */
 const PREQUANTIZED = { awq: 'AWQ', gptq: 'GPTQ', gguf: 'GGUF' };
 function prequantizedStandIn(quantMethod, baseRepo) {
@@ -2132,7 +2134,7 @@ function prequantizedStandIn(quantMethod, baseRepo) {
   const path = quantMethod === 'gguf' ? `/opt/models/${name}.gguf` : `/opt/models/${name}-${method}`;
   const forms = quantMethod === 'gguf'
     ? 'the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file'
-    : `the ${method} checkpoint's Hugging Face id, or its absolute path on the GPU server`;
+    : `the Hugging Face id of the ${method} checkpoint, or its absolute path on the GPU server`;
   return { path, note: `# ${method} needs a pre-quantized checkpoint, which ${baseRepo} is not: replace ${path} with ${forms}.` };
 }
 
