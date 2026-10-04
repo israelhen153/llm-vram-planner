@@ -12,10 +12,12 @@ Usage:
 import argparse
 import json
 import math
+import re
 import os
 import shlex
 import sys
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -28,6 +30,8 @@ try:
         HRFlowable, KeepTogether, PageBreak
     )
     from reportlab.pdfgen import canvas
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.platypus.frames import Frame
     from reportlab.graphics.shapes import Drawing, Rect, String, Line
     from reportlab.graphics import renderPDF
 except ImportError:
@@ -308,7 +312,7 @@ def compute(cfg):
     # already renders as "FP8" through PREC_LABELS — so deriving the flag from
     # bpp as well is what stops the label and the arithmetic disagreeing. No
     # GGUF level is exactly 1.0 (Q8_0 is 1.1), so the test is unambiguous.
-    is_fp8 = cfg.get("quant", "") == "fp8" or bpp == 1
+    is_fp8 = asks_for_fp8_weights(cfg)
     layers = cfg["layers"]
     kv_heads = cfg["kv_heads"]
     h_dim = cfg["h_dim"]
@@ -818,7 +822,7 @@ def rocm_guidance(cfg):
     if gpu.get("vendor") != "amd":
         return []
     # No lines under a command that isn't printed: FP8 refused on this target.
-    if (cfg.get("quant") == "fp8" or cfg.get("bpp") == 1) and fp8_weights_blocked(gpu):
+    if asks_for_fp8_weights(cfg) and fp8_weights_blocked(gpu):
         return []
     arch = ROCM["arch"].get(gpu.get("gfx"), {})
     lines = ROCM["lines"]
@@ -842,6 +846,14 @@ class PlanRefused(ValueError):
     """A plan vLLM can't run as asked, with the reason. The CLI prints it and exits 2."""
 
 
+def asks_for_fp8_weights(cfg):
+    """Whether a plan's weights are FP8: an FP8 method named, or one byte per parameter with
+    no method named. A GGUF plan at 1 B/param was refused as FP8 on a card with no FP8
+    weight kernel. Mirrors the test in buildVllmCommand() and rocmGuidance() in index.html."""
+    quant = cfg.get("quant") or ""
+    return quant in FP8_METHODS or (not quant and cfg.get("bpp") == 1)
+
+
 def fp8_weights_blocked(gpu):
     """Why vLLM can't load FP8 weights on this card, or "" where it can: on AMD, by
     the ROCm table, since v0.30.0's FP8 weight kernels need CDNA3 or newer, or
@@ -860,12 +872,21 @@ def fp8_weights_blocked(gpu):
 
 def refuse_fp8_where_vllm_cannot(cfg):
     """Stop a plan asking for FP8 weights on a card vLLM can't run them on, the same
-    test compute() uses for FP8: quant says fp8, or the bytes per parameter are 1."""
-    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:
+    test compute() uses for FP8 (asks_for_fp8_weights())."""
+    if asks_for_fp8_weights(cfg):
         reason = fp8_weights_blocked(cfg.get("gpu"))
         if reason:
             raise PlanRefused(f"{reason} Choose --prec bf16, awq or gptq.")
     return cfg
+
+
+# The characters a model path may not hold: a control character, or whitespace other than
+# a plain space (every character str.isspace() or JavaScript's \\s calls whitespace). The
+# PDF prints them as a space or breaks its line there, and a newline split the command, so
+# a command copied out of it was another command. index.html carries the same ranges and
+# the same words, and tests/parity.test.py holds the two equal.
+MODEL_PATH_REFUSED_CHARS = "\\u0000-\\u001f\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
+MODEL_PATH_CHAR_REASON = "holds a control character or whitespace other than a plain space, which the printed command cannot carry intact"
 
 
 def unresolvable_model_path(model):
@@ -878,6 +899,8 @@ def unresolvable_model_path(model):
     model = str(model or "")
     if "$" in model:
         return "names a shell variable, which the printed command quotes, so the GPU server never expands it"
+    if re.search(f"[{MODEL_PATH_REFUSED_CHARS}]", model):
+        return MODEL_PATH_CHAR_REASON
     if not model:
         return "is empty"
     if not model or model.startswith("/"):
@@ -903,12 +926,34 @@ def refuse_model_path_the_server_cannot_resolve(cfg):
     return cfg
 
 
+# The methods whose checkpoint a preset's own repo is not. Mirrors PREQUANTIZED and
+# prequantizedStandIn() in index.html, which say why.
+PREQUANTIZED = {"awq": "AWQ", "gptq": "GPTQ", "gguf": "GGUF"}
+
+
+def prequantized_stand_in(quant, base_repo):
+    """The stand-in model path a command names on a preset's own repo for a method that
+    needs a pre-quantized checkpoint, and the line saying what goes there, or None.
+    Absolute, so it passes both path rules, with no space and no <...>, which the PDF
+    reads as markup, and a line with nothing a shell reads as special, since the PDF wraps
+    it and a command copied out of the PDF pastes the wrapped part as shell input.
+    Mirrors prequantizedStandIn() in index.html."""
+    method = PREQUANTIZED.get(quant or "")
+    if not method:
+        return None
+    name = base_repo.split("/")[-1]
+    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"
+    forms = ("the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file"
+             if quant == "gguf" else f"the Hugging Face id of the {method} checkpoint, or its absolute path on the GPU server")
+    return path, f"# {method} needs a pre-quantized checkpoint, which {base_repo} is not: replace {path} with {forms}."
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
     # FP8 weights on a card vLLM can't run them on: no command, whatever path brought
     # the config here. The CLI and JSON paths refuse it earlier; this is the last line.
-    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:
+    if asks_for_fp8_weights(cfg):
         reason = fp8_weights_blocked(cfg.get("gpu"))
         if reason:
             return f"# {reason} Choose BF16, AWQ or GPTQ."
@@ -918,6 +963,12 @@ def build_vllm_cmd(cfg, comp):
     # shlex.quote() is a no-op on an ordinary value and neutralizes anything
     # that isn't one, instead of executing it.
     model = cfg.get("hf_model", "/opt/models/YourModel")
+    # The stand-in for a pre-quantized checkpoint, on a preset's own repo only: a path
+    # the user gave (model_from_preset false or absent) is never replaced.
+    base_repo = model
+    stand_in = prequantized_stand_in(cfg.get("quant"), base_repo) if cfg.get("model_from_preset") else None
+    if stand_in:
+        model = stand_in[0]
     hf = shlex.quote(model)
     # The split compute() sharded against, not a second derivation of it: the
     # figures above this command and the command itself are now the same number
@@ -938,6 +989,8 @@ def build_vllm_cmd(cfg, comp):
         parts += [f"    {ROCM['image']} \\", f"    {hf} \\"]
     else:
         parts = [f"vllm serve {hf} \\"]
+    if stand_in:
+        parts.insert(0, stand_in[1])
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     # More than one device, which is what the board count used to mean on every
     # single-device card — so the command is unchanged for every catalogued row.
@@ -950,6 +1003,8 @@ def build_vllm_cmd(cfg, comp):
     parts.append("    --dtype auto \\")
     if cfg.get("quant"):
         parts.append(f"    --quantization {shlex.quote(cfg['quant'])} \\")
+    if stand_in and cfg.get("quant") == "gguf":
+        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\")
     if cfg.get("kv_bpp", 2) < 2:
         parts.append("    --kv-cache-dtype fp8 \\")
     # APC is on by default in vLLM V1, so only the opt-out is worth emitting —
@@ -969,6 +1024,149 @@ def build_vllm_cmd(cfg, comp):
     return "\n".join(parts)
 
 
+def _shell_words(line):
+    """A command line's words as a shell reads them, each a list of (quote, text) parts,
+    quote being "", "'" or '"'. A quote in a printed command is always closed."""
+    words, parts, bare, i = [], [], "", 0
+    while i < len(line):
+        ch = line[i]
+        if ch == " ":
+            if bare:
+                parts, bare = parts + [("", bare)], ""
+            if parts:
+                words, parts = words + [parts], []
+            i += 1
+        elif ch in "'\"":
+            if bare:
+                parts, bare = parts + [("", bare)], ""
+            j = i + 1
+            while j < len(line) and line[j] != ch:
+                j += 2 if ch == '"' and line[j] == "\\" else 1
+            if j >= len(line):
+                # No closing quote, which no printed command has: read it as a character.
+                bare += ch
+                i += 1
+                continue
+            parts.append((ch, line[i + 1:j]))
+            i = j + 1
+        else:
+            step = 2 if ch == "\\" and i + 1 < len(line) else 1
+            bare += line[i:i + step]
+            i += step
+    if bare:
+        parts.append(("", bare))
+    if parts:
+        words.append(parts)
+    return words
+
+
+def _word_atoms(parts):
+    """A word as (text, inside) atoms, inside being the quote a break after the atom falls
+    in. A run of spaces in a quoted part becomes adjacent quoted strings, which a shell
+    joins back, because the PDF prints any run of spaces as one."""
+    atoms = []
+    for quote, text in parts:
+        if not quote:
+            k = 0
+            while k < len(text):
+                step = 2 if text[k] == "\\" else 1
+                atoms.append((text[k:k + step], ""))
+                k += step
+            continue
+        atoms.append((quote, quote))
+        prev = ""
+        for ch in text:
+            if ch == " " and prev == " ":
+                atoms.append((quote + quote, quote))
+            atoms.append((ch, quote))
+            prev = ch
+        atoms.append((quote, ""))
+    return atoms
+
+
+def _wrap_comment(line, fits):
+    """A comment too wide for the column as more comments: a shell ends a comment at its
+    newline whatever precedes it, so a wrapped tail would run as a command."""
+    out, cur = [], "#"
+    for word in line.strip()[1:].split():
+        while len(word) > 1 and not fits(f"# {word}"):
+            k = max(k for k in range(1, len(word)) if k == 1 or fits(f"# {word[:k]}"))
+            if cur != "#":
+                out.append(cur)
+            out.append(f"# {word[:k]}")
+            cur, word = "#", word[k:]
+        if fits(f"{cur} {word}"):
+            cur = f"{cur} {word}"
+        else:
+            out.append(cur)
+            cur = f"# {word}"
+    return out + [cur]
+
+
+def _wrap_shell_line(line, fits):
+    """A command line as lines that each fit the column and paste as the same command:
+    broken between words with " \\", which a shell joins back, and inside a word too long
+    for a line with "\\", which bash removes even there, outside quotes and inside double
+    ones; a single-quoted part is closed before the break and reopened after it."""
+    indent = line[:len(line) - len(line.lstrip(" "))]
+    words = _shell_words(line)
+    tail = words and words[-1] == [("", "\\")]
+    if tail:
+        words = words[:-1]
+    out, cur = [], indent
+    for parts in words:
+        atoms = _word_atoms(parts)
+        word = "".join(text for text, _ in atoms)
+        sep = " " if cur.strip() else ""
+        if fits(f"{cur}{sep}{word} \\"):
+            cur = f"{cur}{sep}{word}"
+            continue
+        if cur.strip() and fits(f"{word} \\"):
+            out.append(f"{cur} \\")
+            cur = word
+            continue
+        # Too long for any line: break inside it, as many atoms per line as fit.
+        if cur.strip():
+            out.append(f"{cur} \\")
+        cur, rest = "", atoms
+        while rest:
+            if fits("".join(text for text, _ in rest) + " \\"):
+                cur += "".join(text for text, _ in rest)
+                break
+            # The longest prefix that fits with its break, leaving at least one atom for
+            # the next line, and after a / or : where one fits in the line's second half.
+            ok = [k for k in range(len(rest) - 1)
+                  if fits(cur + "".join(t for t, _ in rest[:k + 1]) + ("'\\" if rest[k][1] == "'" else "\\"))]
+            k = max(ok or [0])
+            k = max([j for j in ok if rest[j][0] == ":" and j >= k // 2]
+                    or [j for j in ok if rest[j][0] == "/" and j >= k // 2] or [k])
+            inside = rest[k][1]
+            out.append(cur + "".join(t for t, _ in rest[:k + 1]) + ("'\\" if inside == "'" else "\\"))
+            cur, rest = ("'" if inside == "'" else ""), rest[k + 1:]
+    return out + [f"{cur} \\" if tail else cur]
+
+
+def pdf_command_lines(cmd, fits):
+    """The command as the PDF prints it, line by line, each line short enough that the PDF
+    never wraps it, and the whole pasting as the same shell command. The PDF wraps any line
+    wider than its column, and a command copied out of a PDF keeps those breaks: a \\
+    wrapped onto a line of its own ended a docker command before its image, and a wrapped
+    comment ran its tail as a command. So the breaks are made here, where the shell can be
+    told about them. fits(text) says whether a line fits the column; the page and the
+    copied report print the command unbroken, since neither wraps it."""
+    out = []
+    for line in cmd.split("\n"):
+        if line.lstrip().startswith("#"):
+            out += [line] if fits(line) else _wrap_comment(line, fits)
+        else:
+            out += _wrap_shell_line(line, fits)
+    return out
+
+
+# The smallest the PDF prints a command, in points: see ReportCard.command_paragraphs().
+COMMAND_FONT_FLOOR = 6.5
+
+
 # =============================================================================
 # PDF Generation
 # =============================================================================
@@ -981,6 +1179,35 @@ class ReportCard:
         self.margin = 18 * mm
         self.styles = getSampleStyleSheet()
         self._setup_styles()
+
+    def command_width(self):
+        """The width a command line has in the PDF: the page's frame, inside reportlab's
+        own frame padding, as SimpleDocTemplate lays the story out."""
+        return Frame(0, 0, A4[0] - 2 * self.margin, A4[1])._aW
+
+    def command_paragraphs(self, cmd):
+        """The command as the PDF's flowables, one per line, none of which the PDF wraps:
+        see pdf_command_lines(). Escaped, since a Paragraph reads & and < as markup.
+
+        The font is sized so the block's longest word fits a line with its " \\", from the
+        style's 8 pt down to a floor of COMMAND_FONT_FLOOR, so a line breaks between words
+        and never inside one: pdftotext -layout indents every line, and a shell reads an
+        indented continuation as a new word, so an in-word break survives only an unindented
+        copy. Every preset's command fits this way. Past the floor a word is broken inside:
+        at 6.5 pt the column holds 123 characters, so that is a word over 121 characters, a
+        model path that long on NVIDIA, or one over 60 on AMD, where the -v mount names it
+        twice in one word."""
+        base, width = self.styles["CmdCode"], self.command_width()
+        words = ["".join(text for text, _ in _word_atoms(parts)) for line in cmd.split("\n")
+                 if not line.lstrip().startswith("#") for parts in _shell_words(line)]
+        need = max((stringWidth(f"{word} \\", base.fontName, 1) for word in words), default=0)
+        size = base.fontSize
+        if need * size > width:
+            size = max(COMMAND_FONT_FLOOR, math.floor(width / need * 4) / 4)
+        style = ParagraphStyle(f"CmdCode-{size:g}", parent=base, fontSize=size,
+                               leading=base.leading * size / base.fontSize)
+        fits = lambda text: stringWidth(" ".join(text.split()), style.fontName, size) <= width
+        return [Paragraph(escape(line), style) for line in pdf_command_lines(cmd, fits)]
 
     def _setup_styles(self):
         self.styles.add(ParagraphStyle(
@@ -1373,8 +1600,9 @@ class ReportCard:
         # ---- vLLM Command ----
         story.append(Paragraph("vLLM deployment command", self.styles["SectionHead"]))
         cmd = build_vllm_cmd(cfg, c)
-        for line in cmd.split("\n"):
-            story.append(Paragraph(line, self.styles["CmdCode"]))
+        # Kept on one page whenever it fits on one: a block that crossed a page pasted out of
+        # the PDF with the footer and the next header inside the command.
+        story.append(KeepTogether(self.command_paragraphs(cmd)))
         # What the page shows beside a GGUF command, with each source as an address:
         # a PDF is forwarded without the page, so the links have to be readable.
         if c["fits"] and cfg.get("quant") == "gguf":
@@ -1593,12 +1821,14 @@ def interactive_mode():
     # twice the memory the report sized it for.
     prec_opts = [(2.0, "BF16", ""), (1.0, "FP8", "fp8"), (0.5, "INT4/AWQ", "awq"),
                  (0.63, "Q4_K_M", "gguf"), (0.82, "Q6_K", "gguf")]
-    # No FP8 on a card vLLM has no FP8 weight kernel for, and why; INT4/AWQ stays the default.
+    # No FP8 on a card vLLM has no FP8 weight kernel for, and why. The default is --prec's:
+    # FP8, which loads from a preset's own repo, or BF16 where FP8 is not offered.
     blocked = fp8_weights_blocked(gpu)
     if blocked:
         prec_opts = [o for o in prec_opts if o[1] != "FP8"]
         print(f"FP8 is not offered: {blocked}")
-    default_prec = next(i for i, (_, l, _q) in enumerate(prec_opts, 1) if l == "INT4/AWQ")
+    default_label = "BF16" if default_precision(gpu) == "bf16" else "FP8"
+    default_prec = next(i for i, (_, l, _q) in enumerate(prec_opts, 1) if l == default_label)
     for i, (v, l, _q) in enumerate(prec_opts):
         print(f"  {i+1}. {l} ({v} B/param)")
     prec_choice = int(input(f"Select [{default_prec}]: ").strip() or str(default_prec)) - 1
@@ -1613,6 +1843,8 @@ def interactive_mode():
         "n_gpu": n_gpu, "gpu": gpu, "nvlink": nvlink, "vendor": gpu["vendor"],
         "perfKey": gpu["perfKey"],
         "kv_bpp": kv_bpp, "hf_model": hf_model, "model_name": model_name,
+        # The preset's own repo, not a path the user typed: see prequantized_stand_in().
+        "model_from_preset": choice.lower() != "custom",
     }
 
 
@@ -1809,6 +2041,9 @@ def from_json(path):
             "vendor": gpu["vendor"],
             "perfKey": gpu["perfKey"],
             "kv_bpp": raw.get("kv_bpp", 2),
+            # Whether hf_model below is the preset's own repo, which a JSON key can't
+            # claim: a path the user gave is never replaced (prequantized_stand_in()).
+            "model_from_preset": "hf_model" not in raw,
             # Same "raw wins" rule as everything else in this block — this
             # tool's origin story is an air-gapped deployment, and "pick a
             # preset, point it at my local weights" is the obvious thing to
@@ -1840,6 +2075,8 @@ def from_json(path):
     cfg.setdefault("n_gpu", 1)
     cfg["nvlink"] = nvlink_for(gpu, cfg.get("nvlink", True))
     cfg.setdefault("kv_bpp", 2)
+    # No preset, so no preset's repo, whatever the JSON says.
+    cfg["model_from_preset"] = False
     cfg.setdefault("hf_model", "/opt/models/YourModel")
     cfg.setdefault("model_name", f"{cfg['params']}B model")
     return validate_arch(cfg)
@@ -1895,14 +2132,24 @@ def gguf_widths():
     return " (GGUF: " + ", ".join(f"{name} {bpp:g}" for bpp, name in levels) + ")"
 
 
+def default_precision(gpu):
+    """--prec when none is given, which depends on the card: FP8, which vLLM v0.30.0
+    loads from a preset's own checkpoint, quantizing BF16 weights as it loads them, or
+    BF16 on a card it has no FP8 weight kernel for. It was AWQ, and a preset's repo is no AWQ checkpoint, so the
+    default plan's command did not load (docs/research/fp8-on-load.md)."""
+    return "bf16" if fp8_weights_blocked(gpu) else "fp8"
+
+
 def from_cli_args(args):
-    if args.prec not in PRECISIONS:
-        raise ValueError(f"Unknown precision: {args.prec}. Available: {', '.join(PRECISIONS)}")
-    preset = PRESETS.get(args.preset)
     gpu = GPUS.get(args.gpu, GPUS[DEFAULT_GPU_KEY])
+    # Resolved once the card is known; a --prec the user gave always wins.
+    prec = default_precision(gpu) if args.prec is None else args.prec
+    if prec not in PRECISIONS:
+        raise ValueError(f"Unknown precision: {prec}. Available: {', '.join(PRECISIONS)}")
+    preset = PRESETS.get(args.preset)
     if preset:
         cfg = arch_fields(preset)
-        bpp, quant = PRECISIONS[args.prec]
+        bpp, quant = PRECISIONS[prec]
         cfg.update({
             "bpp": bpp, "quant": quant,
             "ctx": args.ctx, "conc": args.conc,
@@ -1911,7 +2158,7 @@ def from_cli_args(args):
             "vendor": gpu["vendor"],
             "perfKey": gpu["perfKey"],
             "kv_bpp": 1 if args.fp8_kv else 2,
-            "hf_model": preset["hf"], "model_name": preset["name"],
+            "hf_model": preset["hf"], "model_name": preset["name"], "model_from_preset": True,
         })
         # --prec fp8 on a card vLLM has no FP8 weight kernel for is refused, not planned.
         return refuse_fp8_where_vllm_cannot(cfg)
@@ -1919,20 +2166,27 @@ def from_cli_args(args):
         raise ValueError(f"Unknown preset: {args.preset}. Available: {', '.join(PRESETS.keys())}")
 
 
-if __name__ == "__main__":
+def build_parser():
+    """The command line, built where a test can read its defaults."""
     parser = argparse.ArgumentParser(description="Generate LLM VRAM Planning Report Card (PDF)")
     parser.add_argument("--json", help="Path to JSON config file")
     parser.add_argument("--preset", help=f"Model preset: {', '.join(PRESETS.keys())}")
     parser.add_argument("--gpu", default=DEFAULT_GPU_KEY, help=f"GPU: {', '.join(GPUS.keys())}")
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs")
-    parser.add_argument("--prec", default="awq", choices=list(PRECISIONS),
-                        help=f"Precision: {', '.join(PRECISIONS)}")
+    # No fixed default: from_cli_args() resolves it once the card is known.
+    parser.add_argument("--prec", default=None, choices=list(PRECISIONS),
+                        help=f"Precision: {', '.join(PRECISIONS)}. Default: fp8, or bf16 on a card "
+                             f"vLLM has no FP8 weight kernel for")
     parser.add_argument("--fp8-kv", action="store_true", help="Use FP8 KV cache")
     parser.add_argument("--no-nvlink", action="store_true", help="PCIe only (no NVLink)")
     parser.add_argument("--ctx", type=int, default=8192, help="Context length")
     parser.add_argument("--conc", type=int, default=1, help="Concurrent requests")
     parser.add_argument("-o", "--output", default="llm-vram-report.pdf", help="Output PDF path")
-    args = parser.parse_args()
+    return parser
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
 
     # A plan vLLM can't run as asked is refused on every path, with the reason and
     # exit status 2, and no PDF is written for it.

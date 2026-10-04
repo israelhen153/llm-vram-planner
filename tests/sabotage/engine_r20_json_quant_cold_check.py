@@ -29,10 +29,7 @@ PY_NORMALISE = '    if isinstance(cfg.get("quant"), str):\n        cfg["quant"] 
 PY_WIDTH_READ = '    quant, bpp = cfg.get("quant") or "", cfg.get("bpp")\n'
 PY_AT_OR_BELOW_ZERO = '    if bpp is not None and bpp <= 0:\n'
 PY_FP8_FILL = '    if cfg.get("bpp") == 1 and not cfg.get("quant"):\n        cfg["quant"] = "fp8"\n'
-PY_FP8_GATE = ('    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:\n'
-               '        reason = fp8_weights_blocked(cfg.get("gpu"))\n'
-               '        if reason:\n'
-               '            raise PlanRefused(')
+PY_FP8_GATE = '    return quant in FP8_METHODS or (not quant and cfg.get("bpp") == 1)\n'
 PY_QUANT_RAISE = "        raise PlanRefused(f'\"quant\": {cfg[\"quant\"]!r} isn\\'t a quantization vLLM "
 PY_CMD_QUANT = ('    if cfg.get("quant"):\n'
                 '        parts.append(f"    --quantization {shlex.quote(cfg[\'quant\'])} \\\\")\n')
@@ -81,7 +78,7 @@ S = {
     "C12 py: one byte per parameter overrides every FP8 method's name with fp8": [
         (REPORT_PY, PY_FP8_FILL, '    if cfg.get("bpp") == 1:\n        cfg["quant"] = "fp8"\n', 1)],
     "C13 py: the FP8 gate sees the literal fp8 only": [
-        (REPORT_PY, PY_FP8_GATE, PY_FP8_GATE.replace(' or cfg.get("bpp") == 1', ""), 1)],
+        (REPORT_PY, PY_FP8_GATE, PY_FP8_GATE.replace("quant in FP8_METHODS", 'quant == "fp8"'), 1)],
     "C14 py: every no-width refusal names the GGUF levels": [
         (REPORT_PY, PY_WIDTH_GGUF_HINT,
          PY_WIDTH_GGUF_HINT.replace('{gguf_widths() if quant == "gguf" else ""}', "{gguf_widths()}"), 1)],

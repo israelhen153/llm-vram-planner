@@ -105,8 +105,9 @@ Download `index.html`. Open in any browser. Done.
 ### Generate a PDF report
 ```bash
 pip install reportlab pyyaml
-python generate_report.py --preset gemma4-26b --gpu a100-40 --prec awq --fp8-kv
+python generate_report.py --preset gemma4-26b --gpu a100-40 --fp8-kv
 ```
+Without `--prec`, the weights are FP8, which vLLM can load from the preset's own checkpoint, or BF16 on a card vLLM has no FP8 weight kernel for. The page starts the same way.
 
 ### Share a configuration
 Every slider change updates the URL. Copy it, send it to a teammate — they see exactly what you see.

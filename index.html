@@ -266,11 +266,15 @@ body.exec-mode .exec-summary { display: block; }
     <div class="field engineer-only"><label>Weight precision <span class="info-tip" tabindex="0" role="img" aria-label="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0." data-tip="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <!-- data-q = the value vLLM's --quantization expects. AWQ and GPTQ are the same
            bytes/param but different kernels and different flags, so they are separate
-           entries rather than one ambiguous "INT4" row. -->
-      <select id="weight-precision" onchange="recalculate()">
+           entries rather than one ambiguous "INT4" row.
+           FP8 is the default: vLLM v0.30.0 loads it from a preset's own checkpoint,
+           quantizing BF16 weights as it loads them, and syncPrecision() moves a card it
+           has no FP8 weight kernel for to BF16. AWQ, GPTQ and GGUF need a pre-quantized checkpoint, which no preset's repo
+           is (docs/research/fp8-on-load.md). -->
+      <select id="weight-precision" onchange="choosePrecision()">
         <option value="2" data-q="">BF16 / FP16 (2.0 B/param)</option>
-        <option value="1" data-q="fp8">FP8 (1.0 B/param)</option>
-        <option value="0.5" selected data-q="awq">AWQ 4-bit (0.50 B/param)</option>
+        <option value="1" selected data-q="fp8">FP8 (1.0 B/param)</option>
+        <option value="0.5" data-q="awq">AWQ 4-bit (0.50 B/param)</option>
         <option value="0.5" data-q="gptq">GPTQ 4-bit (0.50 B/param)</option>
         <option value="0.35" data-q="gguf">GGUF Q2_K (0.35 B/param)</option>
         <option value="0.5" data-q="gguf">GGUF Q3_K_M (0.50 B/param)</option>
@@ -839,10 +843,26 @@ function parseSafetensorsIndex(data, source) {
   } catch (e) { statusEl.className = 'import-status err'; statusEl.innerHTML = `<svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg> ${e.message}`; fieldsEl.innerHTML = ''; }
 }
 
+/* The characters a model path may not hold: a control character, or whitespace other than
+   a plain space. The PDF prints them as a space or breaks its line there, and a newline
+   split the command. The same ranges and words as MODEL_PATH_REFUSED_CHARS and
+   MODEL_PATH_CHAR_REASON in generate_report.py; tests/parity.test.py holds them equal. */
+const MODEL_PATH_REFUSED_CHARS = '\\u0000-\\u001f\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff';
+const MODEL_PATH_CHAR_REASON = 'holds a control character or whitespace other than a plain space, which the printed command cannot carry intact';
+function modelPathCharReason(path) {
+  return new RegExp(`[${MODEL_PATH_REFUSED_CHARS}]`).test(path) ? MODEL_PATH_CHAR_REASON : '';
+}
+
 async function fetchFromHuggingFace() {
   const modelId = document.getElementById('hf-model-id').value.trim();
   if (!modelId) return;
   const statusEl = document.getElementById('import-status');
+  // Refused before anything is fetched, with the reason the report gives.
+  if (modelPathCharReason(modelId)) {
+    statusEl.className = 'import-status err';
+    statusEl.textContent = `The model path ${JSON.stringify(modelId)} ${modelPathCharReason(modelId)}.`;
+    return;
+  }
   statusEl.className = 'import-status loading';
   statusEl.innerHTML = `<svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-loader"></use></svg>Fetching from huggingface.co/${modelId}...`;
   setHTML('import-parsed-fields', '');
@@ -1350,7 +1370,8 @@ function computeInference(state) {
    * that, and already labels such a config FP8. Both engines read both, or they
    * would disagree on a case the parity suite drives from one set of inputs.
    * No GGUF level is exactly 1.0 (Q8_0 is 1.1). */
-  const isFp8 = quantMethod === 'fp8' || bytesPerParam === 1;
+  // One byte per parameter is FP8 only when no method is named: a GGUF level is not.
+  const isFp8 = quantMethod === 'fp8' || (bytesPerParam === 1 && !quantMethod);
 
   /* Every figure from here to the end of this block reads a PERF constant, so
    * every one of them is null when there are none. Declared out here and
@@ -2085,7 +2106,7 @@ const ROCM = {
 function rocmGuidance(state) {
   if (state.vendor !== 'amd') return [];
   // No lines under a command that isn't printed: FP8 refused on this target.
-  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1)
+  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod))
       && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })) return [];
   const arch = ROCM.arch[state.gfx] || {};
   const L = ROCM.lines;
@@ -2112,16 +2133,43 @@ function fp8WeightsBlocked(gpu) {
     : `vLLM ${ROCM.vllm} loads FP8 weights only on CDNA3 or newer, or RDNA4, and ${name}'s LLVM target is not one this planner knows.`;
 }
 
-function buildVllmCommand(state, computed, modelPath) {
+/* A preset's repo is the model's own checkpoint, and AWQ, GPTQ and every GGUF level need
+   a pre-quantized one, which no preset's repo is: vLLM v0.30.0 quantizes to FP8 as it
+   loads, and to none of these (docs/research/fp8-on-load.md). So on a preset's own repo
+   the command names a stand-in path where that checkpoint goes, under one line saying
+   so. The path is absolute, so it passes both of the planner's path rules, and holds no
+   space and no <...>, which the PDF reads as markup. GGUF also gets the base repo as
+   --tokenizer, as vLLM's GGUF page and vllm-gguf-plugin's README recommend in every
+   example. The line holds nothing a shell reads as special, no quote among them: the
+   PDF wraps it, and a reader copying the command out of the PDF pastes the wrapped part
+   as shell input. A path the reader gave is never replaced. Mirrored by
+   prequantized_stand_in() in generate_report.py. */
+const PREQUANTIZED = { awq: 'AWQ', gptq: 'GPTQ', gguf: 'GGUF' };
+function prequantizedStandIn(quantMethod, baseRepo) {
+  if (!Object.hasOwn(PREQUANTIZED, quantMethod || '')) return null;
+  const method = PREQUANTIZED[quantMethod], name = baseRepo.split('/').pop();
+  const path = quantMethod === 'gguf' ? `/opt/models/${name}.gguf` : `/opt/models/${name}-${method}`;
+  const forms = quantMethod === 'gguf'
+    ? 'the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file'
+    : `the Hugging Face id of the ${method} checkpoint, or its absolute path on the GPU server`;
+  return { path, note: `# ${method} needs a pre-quantized checkpoint, which ${baseRepo} is not: replace ${path} with ${forms}.` };
+}
+
+/* fromPreset: modelPath is a preset's own repo, not a path the reader gave. */
+function buildVllmCommand(state, computed, modelPath, fromPreset = false) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
   /* FP8 weights on a card vLLM can't run them on: no command, whatever path brought
      the state here (the control offers no FP8 there, but a link or a snapshot can). */
-  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))
+  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod)) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))
     return `# ${fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })} Choose BF16, AWQ or GPTQ.`;
   // The split computeInference() sharded against, not a second derivation of
   // it: the figures above this command and the command itself are now the same
   // number by construction rather than by two call sites agreeing.
   const { tp, dp } = computed;
+  // The stand-in for a pre-quantized checkpoint, on a preset's own repo only (see above).
+  const baseRepo = modelPath;
+  const standIn = fromPreset ? prequantizedStandIn(state.quantMethod, baseRepo) : null;
+  if (standIn) modelPath = standIn.path;
   /* On AMD, vLLM's own ROCm image with the flags its docs give, then the same
      arguments `vllm serve` takes, since the image's entrypoint is `vllm serve`.
      AITER goes on where AMD says to set it, and a local model path is mounted at
@@ -2133,6 +2181,7 @@ function buildVllmCommand(state, computed, modelPath) {
       + (modelPath.startsWith('/') ? `    -v ${modelPath}:${modelPath} \\\n` : '')
       + `    ${ROCM.image} \\\n    ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`
     : `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
+  if (standIn) cmd = `${standIn.note}\n` + cmd;
   /* Emitted whenever more than one device is in play, which is what the board
      count used to mean and still means on every single-device card — so the
      command is unchanged for every catalogued row, including the odd counts
@@ -2149,6 +2198,7 @@ function buildVllmCommand(state, computed, modelPath) {
      activation dtype, where auto is also correct. */
   cmd += '    --dtype auto \\\n';
   if (state.quantMethod) cmd += `    --quantization ${state.quantMethod} \\\n`;
+  if (standIn && state.quantMethod === 'gguf') cmd += `    --tokenizer ${baseRepo} \\\n`;
   if (state.kvBytesPerValue < 2) cmd += '    --kv-cache-dtype fp8 \\\n';
   // APC is on by default in vLLM V1, so only the opt-out is worth emitting.
   if (!state.prefixCaching) cmd += '    --no-enable-prefix-caching \\\n';
@@ -2183,7 +2233,7 @@ const GGUF_GUIDANCE = [
 function renderCommand(state, computed) {
   const preset = MODEL_PRESETS[state.presetKey];
   const modelPath = preset ? preset.hf : (importedModelId && !importedModelId.endsWith('.json') ? importedModelId : '/opt/models/YourModel');
-  const cmd = buildVllmCommand(state, computed, modelPath);
+  const cmd = buildVllmCommand(state, computed, modelPath, !!preset);
 
   let warning = '';
   if (computed.fits) {
@@ -2444,6 +2494,15 @@ function syncPrecision() {
     if (bf16.selected) fp8.selected = true;
     precisionForcedFromFp8 = false;
   }
+}
+
+/* The reader picked a precision, so what the control says is now their choice and not
+   a fallback the gate made: a card that runs FP8 must not turn it back into FP8. The
+   default, FP8, is never a choice, so on a card vLLM has no FP8 weight kernel for it is
+   BF16, and it comes back with the next card that runs FP8. */
+function choosePrecision() {
+  precisionForcedFromFp8 = false;
+  recalculate();
 }
 
 function recalculate() {
@@ -2761,13 +2820,19 @@ function renderRestoreNotice() {
   if (!el) return;
   const live = urlRestoreLost.filter(e => document.getElementById(e.id).value === e.fallback);
   if (!live.length) { el.style.display = 'none'; return; }
-  const parts = live.map(e => `${e.label} (“${e.raw}”)`);
+  /* An entry with a why is in the tool and can't be used on this card: it gets its own
+     sentence with the reason, since "not in this version of the tool" would be false. */
+  const gone = live.filter(e => !e.why), refused = live.filter(e => e.why);
+  const parts = gone.map(e => `${e.label} (“${e.raw}”)`);
   const list = parts.length === 1 ? parts[0]
     : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
-  el.textContent = `This link could not be fully restored: ${list} `
+  el.textContent = (parts.length ? `This link could not be fully restored: ${list} `
     + `${parts.length === 1 ? 'is' : 'are'} not in this version of the tool. `
     + `${parts.length === 1 ? 'That field is' : 'Those fields are'} showing a default — `
-    + `set ${parts.length === 1 ? 'it' : 'them'} yourself before trusting these numbers.`;
+    + `set ${parts.length === 1 ? 'it' : 'them'} yourself before trusting these numbers.`
+    : 'This link could not be fully restored.')
+    + refused.map(e => ` ${e.label[0].toUpperCase()}${e.label.slice(1)} (“${e.raw}”) can’t be used on this card. `
+      + `${e.why} That field is showing ${e.shown} instead — set it yourself before trusting these numbers.`).join('');
   el.style.display = '';
 }
 
@@ -2805,6 +2870,12 @@ function loadURLHash() {
       const match = opts.find(o => precisionToken(o) === val) || opts.find(o => o.value === val);
       if (match) match.selected = true;
       else urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val, fallback: sel.value });
+      /* A link's FP8 on a card vLLM has no FP8 weight kernel for: syncPrecision() shows
+         BF16 instead, and the notice says the link's precision was not used, and why. */
+      const refused = match && match.dataset.q === 'fp8' && fp8WeightsBlocked(GPU_TABLE[document.getElementById('gpu-model').value]);
+      const bf16 = opts.find(o => o.dataset.q === '');
+      if (refused && bf16) urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val,
+                                                 fallback: bf16.value, why: refused, shown: 'BF16' });
     }
     if (params.has('kvp')) applyParam('kv-precision', params.get('kvp'), 'the KV cache precision');
     if (params.has('pre') && params.get('pre')) applyParam('preset', params.get('pre'), 'the model preset');

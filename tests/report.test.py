@@ -52,6 +52,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from xml.sax.saxutils import unescape
 import types
 import unittest.mock
 
@@ -252,9 +253,9 @@ def expected_cfg(pd):
     return cfg
 
 
-def cli_args_for(preset_key):
+def cli_args_for(preset_key, prec="awq"):
     return types.SimpleNamespace(
-        preset=preset_key, gpu=REQ["gpu"], prec="awq", ctx=REQ["ctx"],
+        preset=preset_key, gpu=REQ["gpu"], prec=prec, ctx=REQ["ctx"],
         conc=REQ["conc"], ngpu=REQ["n_gpu"], no_nvlink=not REQ["nvlink"],
         fp8_kv=REQ["kv_bpp"] == 1,
     )
@@ -777,11 +778,12 @@ test("a malicious hf_model value is shell-quoted in the generated command, not i
 def check_ordinary_values_are_not_needlessly_quoted():
     # shlex.quote() must be invisible for the common case — no stray quotes
     # around a plain HuggingFace id or quant name that never needed escaping.
-    cfg = gr.from_cli_args(cli_args_for("llama31-8b"))
+    # The CLI's own default precision, which names the preset's repo and FP8.
+    cfg = gr.from_cli_args(cli_args_for("llama31-8b", prec=None))
     cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
     assert "vllm serve meta-llama/Llama-3.1-8B-Instruct \\" in cmd, \
         f"an ordinary HF model id got quoted unnecessarily:\n{cmd}"
-    assert "--quantization awq \\" in cmd, f"an ordinary quant value got quoted unnecessarily:\n{cmd}"
+    assert "--quantization fp8 \\" in cmd, f"an ordinary quant value got quoted unnecessarily:\n{cmd}"
 
 test("ordinary hf_model/quant values render unquoted, exactly as before",
      check_ordinary_values_are_not_needlessly_quoted)
@@ -2706,7 +2708,7 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
 # $MODEL with no /, a dotted three-part relative path, absolute paths with a ~ or a
 # space inside, then models/llama/, a//b, x$ and a path with both a ~ and a $.
 PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/", "-", "--")
-PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
+PATH_BODIES = ("m", "a\tb", "line\nbreak", "nb\u00a0sp", "del\x7fx", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
                "models/llama/x.gguf", "a/b/c/d/e/f", "models/llama/", "a//b")
 BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/",
               "", "-", "-8b", "-$X", "-a/b/c")
@@ -2727,13 +2729,24 @@ MODEL_PATH_REASONS = {
                  "the ROCm container that is /vllm-workspace"),
     "empty": "is empty",
     "dash": "starts with -, so vLLM would read it as an option",
+    "control": ("holds a control character or whitespace other than a plain space, which the printed "
+                "command cannot carry intact"),
 }
 MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
+# What JavaScript's \s matches (ECMAScript's WhiteSpace and LineTerminator), which the page's
+# field refuses too, so the report refuses it as well.
+JS_WHITESPACE = "\t\n\x0b\x0c\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+# Every character a model path may not hold, derived: the controls, and whatever Python or
+# JavaScript calls whitespace, but a plain space.
+REFUSED_PATH_CHARS = sorted({chr(c) for c in range(32)} | {"\x7f"} | set(JS_WHITESPACE) - {" "}
+                            | {c for c in map(chr, range(sys.maxunicode + 1)) if c.isspace() and c != " "})
+REFUSED_PATH_SET = set(REFUSED_PATH_CHARS)
 
 
 def path_kind(path):
     """The requirement, restated: the reason a path is refused for, or None when it is
-    planned. A shell variable anywhere, a leading ~, or a relative path (., .., ./ or
+    planned. A shell variable anywhere, then a control character or whitespace but a plain
+    space anywhere, a leading ~, or a relative path (., .., ./ or
     ../ first, or three or more parts) is refused; an absolute path, or a name with at
     most one / (a Hugging Face id's shape), is planned. An empty path, and one starting
     with - (vLLM would read it as an option), are refused too."""
@@ -2741,6 +2754,8 @@ def path_kind(path):
         return "empty"
     if "$" in path:
         return "variable"
+    if any(c in REFUSED_PATH_SET for c in path):
+        return "control"
     if path.startswith("/"):
         return None
     if path.startswith("-"):
@@ -3195,8 +3210,8 @@ test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn
 
 def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
     """After a gated card is chosen, the precision menu leaves FP8 out and says why,
-    and its default is still INT4/AWQ. On every other card, FP8 is offered and the
-    default is the same. At every one of BOARD_SAMPLE's counts: the test answered one
+    and its default is BF16. On every other card, FP8 is offered and is the default: the
+    menu's default was INT4/AWQ, which a preset's own repo cannot load. At every one of BOARD_SAMPLE's counts: the test answered one
     GPU, and a menu offering FP8 on a gated card above one board passed."""
     for slug, row in gr.GPUS.items():
         for n_gpu in BOARD_SAMPLE:
@@ -3213,10 +3228,414 @@ def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
                 assert f"FP8 is not offered: {fp8_reason(row)}" in out.getvalue(), f"{where}: the reason is missing"
             else:
                 assert "FP8 is not offered" not in out.getvalue(), f"{where}: FP8 said to be withheld on a card that runs it"
-            assert cfg["bpp"] == 0.5, f"{where}: the default precision is {cfg['bpp']}, not INT4/AWQ"
+            want = (2.0, "") if gated else (1.0, "fp8")
+            assert (cfg["bpp"], cfg["quant"]) == want, f"{where}: the default precision is {cfg['bpp']}/{cfg['quant']!r}, not {want}"
 
-test("the interactive menu offers no FP8 on a gated card, says why, and keeps INT4/AWQ as its default",
+test("the interactive menu offers no FP8 on a gated card, says why, and defaults to BF16 there and FP8 elsewhere",
      check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it)
+
+
+print("\nThe default precision follows the card")
+
+# The README's statement of the default, a public claim pinned as a literal.
+README_DEFAULT = ("Without `--prec`, the weights are FP8, which vLLM can load from the preset's own "
+                  "checkpoint, or BF16 on a card vLLM has no FP8 weight kernel for.")
+
+
+def check_the_cli_default_precision_follows_the_card():
+    """--prec as argparse leaves it when none is given, resolved by from_cli_args(): FP8
+    on every card vLLM v0.30.0 loads FP8 weights on, BF16 on the three it has no FP8
+    weight kernel for, on every catalog row and every preset. It was AWQ, and no preset's
+    repo is an AWQ checkpoint, so the default plan's command did not load. A --prec the
+    user gives always wins, FP8 on a gated card included, which is refused rather than
+    quietly planned as BF16."""
+    assert FP8_GATED == {"mi210-64", "mi250x-128", "rx7900xtx-24"}, sorted(FP8_GATED)
+    parser = gr.build_parser()
+    for preset in gr.PRESETS:
+        for slug in gr.GPUS:
+            args = ["--preset", preset, "--gpu", slug]
+            cfg = gr.from_cli_args(parser.parse_args(args))
+            want = (2, "") if slug in FP8_GATED else (1, "fp8")
+            assert (cfg["bpp"], cfg["quant"]) == want, f"{preset} on {slug}: the default is {cfg['bpp']}/{cfg['quant']!r}"
+    for slug in gr.GPUS:
+        for prec, want in (("bf16", (2, "")), ("awq", (0.5, "awq")), ("gptq", (0.5, "gptq")),
+                           ("q4km", (0.63, "gguf")), ("fp8", (1, "fp8"))):
+            args = parser.parse_args(["--preset", "llama31-8b", "--gpu", slug, "--prec", prec])
+            if prec == "fp8" and slug in FP8_GATED:
+                try:
+                    gr.from_cli_args(args)
+                except gr.PlanRefused:
+                    continue
+                raise AssertionError(f"{slug}: an explicit --prec fp8 was planned on a gated card")
+            cfg = gr.from_cli_args(args)
+            assert (cfg["bpp"], cfg["quant"]) == want, f"{slug}: --prec {prec} became {cfg['bpp']}/{cfg['quant']!r}"
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    assert README_DEFAULT in readme, "README.md no longer states the default the CLI takes"
+    assert "--prec awq --fp8-kv" not in readme, "README.md's example asks for AWQ on a preset's own repo again"
+
+test("the CLI's default precision is FP8, and BF16 on a card vLLM has no FP8 weight kernel for; an explicit --prec wins",
+     check_the_cli_default_precision_follows_the_card)
+
+
+print("\nA model path holds no control character and no whitespace but a plain space")
+
+def check_a_model_path_with_a_control_character_or_odd_whitespace_is_refused_on_every_route():
+    """Every refused character, derived from both languages' whitespace and the controls,
+    inside a path on the JSON and menu routes, and three of them through the CLI: refused
+    with the pinned words, before a PDF is built. A newline in a JSON path crashed the PDF
+    build, and a tab or a no-break space pasted out of the PDF as a plain space. A plain
+    space and a printable non-ASCII letter are planned."""
+    assert len(REFUSED_PATH_CHARS) >= 40, len(REFUSED_PATH_CHARS)
+    h100 = str(list(gr.GPUS).index("h100-80") + 1)
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "c.json")
+        for c in REFUSED_PATH_CHARS + [" ", "\u00e9"]:
+            path = f"/opt/models/a{c}b"
+            want = model_path_refusal(path)
+            assert (want is None) == (c in " \u00e9"), (repr(c), want)
+            for preset in (True, False):
+                with open(config, "w") as fh:
+                    json.dump(dict({"preset": "llama31-8b"} if preset else {"params": 8, "layers": 32, "kv_heads": 8},
+                                   gpu="h100-80", hf_model=path), fh)
+                try:
+                    gr.from_json(config)
+                    got = None
+                except gr.PlanRefused as refused:
+                    got = str(refused)
+                assert got == want, f"JSON {repr(c)}: {got!r}"
+            answers = ["custom", "8", "100", "32", "8", "128", "0", path, "mine", h100, "1", "1", "n", "8192", "1"]
+            try:
+                with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(io.StringIO()):
+                    gr.interactive_mode()
+                got = None
+            except gr.PlanRefused as refused:
+                got = str(refused)
+            assert got == want, f"menu {repr(c)}: {got!r}"
+        for c in ("\n", "\t", "\u00a0"):
+            with open(config, "w") as fh:
+                json.dump({"preset": "llama31-8b", "gpu": "mi250x-128", "quant": "awq", "hf_model": f"/opt/models/a{c}b"}, fh)
+            run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config,
+                                  "-o", os.path.join(tmp, "x.pdf")], capture_output=True, text=True)
+            assert run.returncode == 2 and run.stderr.strip() == f"error: {model_path_refusal(f'/opt/models/a{c}b')}", \
+                (repr(c), run.returncode, run.stderr[-300:])
+            assert not os.path.exists(os.path.join(tmp, "x.pdf")), f"CLI {repr(c)}: a PDF was written"
+
+test("a model path with a control character or whitespace other than a space is refused on the JSON, menu and CLI routes",
+     check_a_model_path_with_a_control_character_or_odd_whitespace_is_refused_on_every_route)
+
+
+def check_the_pdf_line_breaker_never_raises():
+    """Arbitrary strings, quotes left open, backslashes at the end, comments, controls and
+    letters outside ASCII among them: breaking them for the PDF, and laying them out, never
+    raises and always ends, at the real column and at a column nothing fits. An unclosed
+    quote ran _shell_words() off the end of a line."""
+    import random
+    rng = random.Random(27)
+    alphabet = "ab /:-_.'\"\\#$&<>\n\t\x00\x7f\u00a0\u00e9\u4e2d \\"
+    obj = gr.ReportCard(gr.from_cli_args(gr.build_parser().parse_args(["--preset", "llama31-8b"])), output_path=os.devnull)
+    for n in range(1500):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 260)))
+        gr.pdf_command_lines(text, lambda line: len(line) < 40)
+        gr.pdf_command_lines(text, lambda line: False)
+        for p in obj.command_paragraphs(text):
+            p.wrap(obj.command_width(), 10_000)
+
+test("the PDF's line breaker never raises on any string, and always ends", check_the_pdf_line_breaker_never_raises)
+
+
+def check_a_command_block_is_kept_on_one_page():
+    """The command's flowables go into the story inside one KeepTogether, and a long plan
+    laid out for real lands on one page: a block that crossed a page pasted out of the PDF
+    with the footer and the next header inside the command."""
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "c.json")
+        with open(config, "w") as fh:
+            json.dump({"preset": "llama31-8b", "gpu": "mi250x-128", "n_gpu": 2, "quant": "awq",
+                       "hf_model": "/srv/" + "m" * 400}, fh)
+        cfg = gr.from_json(config)
+        cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+        real, seen = gr.SimpleDocTemplate, {"story": None, "pages": []}
+
+        class Recording(real):
+            def build(self, story, **kw):
+                seen["story"] = list(story)
+                return super().build(story, **kw)
+
+            def afterFlowable(self, flowable):
+                if getattr(getattr(flowable, "style", None), "name", "").startswith("CmdCode"):
+                    seen["pages"].append(self.page)
+
+        with unittest.mock.patch.object(gr, "SimpleDocTemplate", Recording), contextlib.redirect_stdout(io.StringIO()):
+            gr.ReportCard(cfg, os.path.join(tmp, "r.pdf")).generate()
+    blocks = [f for f in seen["story"] if isinstance(f, gr.KeepTogether)
+              and any(getattr(p, "style", None) and p.style.name.startswith("CmdCode") for p in f._content)]
+    assert len(blocks) == 1 and all(p.style.name.startswith("CmdCode") for p in blocks[0]._content), \
+        "the command's flowables are not one KeepTogether in the story"
+    assert not [f for f in seen["story"] if getattr(getattr(f, "style", None), "name", "").startswith("CmdCode")], \
+        "a command flowable sits loose in the story"
+    assert len(seen["pages"]) == len(blocks[0]._content) >= 20 and len(set(seen["pages"])) == 1, \
+        f"the command's {len(seen['pages'])} lines landed on pages {sorted(set(seen['pages']))}"
+
+test("the command block is kept on one page, and a long one laid out for real lands on one",
+     check_a_command_block_is_kept_on_one_page)
+
+
+def check_a_gguf_plan_at_one_byte_per_parameter_is_not_refused_as_fp8():
+    """One byte per parameter means FP8 only when no method is named: a GGUF plan at 1
+    B/param on a card with no FP8 weight kernel was refused as FP8. Planned there and on an
+    H100, with its command and, on AMD, the ROCm lines; FP8 by width alone, or by an FP8
+    method's name, is still refused on the gated card."""
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "c.json")
+        for slug in ("mi210-64", "h100-80"):
+            with open(config, "w") as fh:
+                json.dump({"preset": "llama31-8b", "gpu": slug, "quant": "gguf", "bpp": 1}, fh)
+            cfg = gr.from_json(config)
+            cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+            assert "    --quantization gguf \\" in cmd.split("\n") and "FP8" not in cmd, f"{slug}:\n{cmd}"
+            assert bool(gr.rocm_guidance(cfg)) == (slug == "mi210-64"), f"{slug}: the ROCm lines"
+        for raw in ({"bpp": 1}, {"quant": "fp8"}, {"quant": "fbgemm_fp8"}):
+            with open(config, "w") as fh:
+                json.dump(dict({"preset": "llama31-8b", "gpu": "mi210-64"}, **raw), fh)
+            try:
+                gr.from_json(config)
+            except gr.PlanRefused as refused:
+                assert "no FP8 weight kernel" in str(refused), (raw, str(refused))
+            else:
+                raise AssertionError(f"{raw}: FP8 weights planned on an MI210")
+
+test("a GGUF plan at one byte per parameter is not refused as FP8; FP8 by width or by name still is",
+     check_a_gguf_plan_at_one_byte_per_parameter_is_not_refused_as_fp8)
+
+
+print("\nA command copied out of the PDF pastes as the same command")
+
+
+def shell_words(text):
+    """The commands a shell reads from pasted text, each as its words: a backslash-newline
+    outside single quotes removed, as bash removes it even inside a word; any other newline
+    outside quotes ending a command, which shlex alone would read as a space; then quotes,
+    escapes and comments read the way a shell reads them. Comment-only lines read as none."""
+    commands, out, quote, i = [], "", "", 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and quote != "'" and i + 1 < len(text):
+            out += "" if text[i + 1] == "\n" else text[i:i + 2]
+            i += 2
+            continue
+        if ch == "\n" and not quote:
+            commands, out = commands + [out], ""
+            i += 1
+            continue
+        if ch in "'\"" and quote in ("", ch):
+            quote = "" if quote else ch
+        out += ch
+        i += 1
+    return [words for words in (shlex.split(c, comments=True) for c in commands + [out]) if words]
+
+
+def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
+    """Every command the PDF can print, each line laid out by reportlab at the width of the
+    PDF's own frame: no line wraps, and the lines as the PDF prints them (reportlab's own
+    text, runs of spaces as one) paste as the command's own words. A wrapped `\\` used to
+    land on a line of its own, ending the ROCm command before its image, and a wrapped
+    comment ran its tail as a command. Swept over every preset at every --prec on every
+    card, the FP8 refusal, a plan that does not fit, and model paths a user gives: a long
+    absolute path, a long hub id, and one with a run of spaces, a quote and an &, each on
+    both vendors at three precisions."""
+    parser = gr.build_parser()
+    small = gr.arch_fields(gr.PRESETS["llama31-8b"])
+    obj = gr.ReportCard(gr.from_cli_args(parser.parse_args(["--preset", "llama31-8b"])), output_path=os.devnull)
+    # The frame's text width, from reportlab's own document and frame, not from the report.
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.platypus.frames import Frame
+    doc = SimpleDocTemplate(io.BytesIO(), pagesize=gr.A4, leftMargin=obj.margin, rightMargin=obj.margin)
+    width = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height)._aW
+    cmds = set()
+    for key in gr.PRESETS:
+        for prec in gr.PRECISIONS:
+            for slug in gr.GPUS:
+                args = ["--preset", key, "--gpu", slug, "--prec", "bf16" if prec == "fp8" and slug in FP8_GATED else prec]
+                cfg = dict(gr.from_cli_args(parser.parse_args(args)), **small)
+                if prec == "fp8" and slug in FP8_GATED:
+                    cfg.update(bpp=1, quant="fp8")
+                cmds.add(gr.build_vllm_cmd(cfg, gr.compute(cfg)))
+                cmds.add(gr.build_vllm_cmd(cfg, dict(gr.compute(cfg), fits=False)))
+    presets = set(cmds)
+    users = ["/mnt/" + "/".join(f"team-{i}/checkpoints-v{i}.{i}" for i in range(8)) + "/model.gguf",
+             "some-organisation/" + "-".join(["a-very-long-model-name"] * 6),
+             "/opt/my  models/x & y'z",
+             # What a Paragraph reads as markup, which escape() keeps as text.
+             "/opt/models/<x>", "/opt/a>b", "/opt/a&amp;b", "/opt/a<br/>b",
+             # Long enough that a break falls inside the quotes shlex.quote() puts round it.
+             "/srv/team  shared/" + "/".join(f"run {i}" for i in range(16)) + "/model weights.gguf"]
+    # Every length from a line that fits to one that breaks between words (the path on a
+    # line of its own) to one that breaks inside the path, as an absolute path, which the
+    # ROCm command also mounts, and as a hub id.
+    flat = "/srv/" + "/".join(f"d{i:03d}" for i in range(60))
+    users += [flat[:n] for n in range(20, 181, 4)] + ["org/" + "m" * (n - 4) for n in range(20, 181, 4)]
+    with tempfile.TemporaryDirectory() as tmp:
+        for model in users:
+            for slug in ("h100-80", "mi300x-192", "mi250x-128"):
+                for extra in ({}, {"quant": "awq"}, {"quant": "gguf", "bpp": 0.63}):
+                    if model.startswith(("org/", flat[:20])) and extra:
+                        continue
+                    config = os.path.join(tmp, "c.json")
+                    with open(config, "w") as fh:
+                        json.dump(dict(small, gpu=slug, n_gpu=3, hf_model=model, **extra), fh)
+                    cfg = gr.from_json(config)
+                    cmds.add(gr.build_vllm_cmd(cfg, gr.compute(cfg)))
+    broken, kinds = 0, {"between words": 0, "inside a word": 0, "inside quotes": 0}
+    for cmd in sorted(cmds):
+        paras = obj.command_paragraphs(cmd)
+        for p in paras:
+            p.wrap(width, 10_000)
+            assert len(p.blPara.lines) == 1, f"the PDF wraps {p.text!r} at {width:.1f} pt"
+        printed = [unescape(p.text) for p in paras]
+        assert shell_words("\n".join(printed)) == shell_words(cmd), \
+            f"copied out of the PDF, this is another command:\n{cmd}\n--- the PDF prints ---\n" + "\n".join(printed)
+        broken += len(paras) > len(cmd.split("\n"))
+        sizes = {p.style.fontSize for p in paras}
+        assert len(sizes) == 1 and 6.5 <= min(sizes) <= max(sizes) <= 8, f"the block's font sizes {sizes}:\n{cmd}"
+        if cmd in presets:
+            # pdftotext -layout indents every line by a space, and a shell reads an indented
+            # continuation as a new word: a preset's command must paste the same that way too.
+            assert not [l for l in printed if not l.startswith("#") and l.endswith("\\") and not l.endswith(" \\")], \
+                f"a preset's command is broken inside a word:\n" + "\n".join(printed)
+            assert shell_words("\n".join(" " + l for l in printed)) == shell_words(cmd), \
+                "an indented copy of a preset's command is another command:\n" + "\n".join(printed)
+        ends = [line for line in printed if not line.startswith("#")]
+        kinds["between words"] += sum(l.endswith(" \\") for l in ends) - sum(l.endswith(" \\") for l in cmd.split("\n"))
+        kinds["inside a word"] += sum(l.endswith("\\") and not l.endswith((" \\", "'\\")) for l in ends)
+        kinds["inside quotes"] += sum(l.endswith("'\\") for l in ends)
+    assert len(cmds) >= 300 and broken >= 40, f"{len(cmds)} commands, {broken} of them broken: the sweep reached too few"
+    assert all(n >= 10 for n in kinds.values()), f"the sweep broke too few lines of some kind: {kinds}"
+
+test("a command copied out of the PDF pastes as the same command, for every preset, precision, card and a user's long or odd path",
+     check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command)
+
+
+print("\nA preset's own repo is no pre-quantized checkpoint")
+
+# The stand-in path a command names on a preset's own repo for AWQ, GPTQ and every GGUF
+# level, and the line saying what goes there: a contract, so literals here with the repo
+# filled in, never read back from generate_report.py. tests/model.test.js holds the page
+# to the same literals, so the two engines print the same thing.
+STAND_IN_FORMS = {"awq": "the Hugging Face id of the AWQ checkpoint, or its absolute path on the GPU server",
+                  "gptq": "the Hugging Face id of the GPTQ checkpoint, or its absolute path on the GPU server",
+                  "gguf": "the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file"}
+
+
+def stand_in_for(quant, repo):
+    if quant not in STAND_IN_FORMS:
+        return None
+    name = repo.split("/")[-1]
+    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{quant.upper()}"
+    return path, f"# {quant.upper()} needs a pre-quantized checkpoint, which {repo} is not: replace {path} with {STAND_IN_FORMS[quant]}."
+
+
+def pdf_prints(strings, cmd):
+    """Whether the PDF's strings carry every line of the command: a comment the PDF breaks
+    into several (pdf_command_lines()) read back as one."""
+    strings = [s.strip() for s in strings]
+    comments = " ".join(s[1:].strip() for s in strings if s.startswith("#"))
+    return all(" ".join(line.split()[1:]) in comments if line.startswith("#") else line.strip() in strings
+               for line in cmd.split("\n"))
+
+
+def assert_command_names(cmd, repo, quant, vendor, replaced, where):
+    """The rule, on one printed command: a stand-in and its line exactly when `replaced`,
+    the base repo as --tokenizer exactly for GGUF then, and the repo itself otherwise."""
+    lines = cmd.split("\n")
+    want = stand_in_for(quant, repo) if replaced else None
+    model = want[0] if want else repo
+    assert (lines[0] == want[1]) if want else not any("pre-quantized" in l for l in lines), \
+        f"{where}: the stand-in's line is {'missing' if want else 'there'}:\n{cmd}"
+    if want:
+        # The PDF wraps the line, so a command copied out of it pastes the wrapped part as
+        # shell input: nothing past the # may be a character a shell reads as special.
+        assert not re.search(r"['\"`$;&|<>(){}\\*?!#~]", lines[0][1:]), f"{where}: a shell-special character in {lines[0]!r}"
+        assert model.startswith("/") and not re.search(r"[\s<>]", model) and not gr.unresolvable_model_path(model), \
+            f"{where}: the stand-in {model} is not an absolute path free of spaces and <>"
+    assert (f"    {model} \\" if vendor == "amd" else f"vllm serve {model} \\") in lines, \
+        f"{where}: the command does not name {model}:\n{cmd}"
+    assert (f"    --tokenizer {repo} \\" in lines) == bool(want and quant == "gguf"), \
+        f"{where}: --tokenizer {'missing from' if want and quant == 'gguf' else 'on'} the command:\n{cmd}"
+    return lines
+
+
+def check_every_preset_at_every_precision_names_a_stand_in_exactly_for_awq_gptq_and_gguf():
+    """from_cli_args() for every preset at every --prec on every catalog row, the
+    architecture shrunk to 8B so every plan fits and prints a command: AWQ, GPTQ and each
+    GGUF level name the stand-in under its line, GGUF with the base repo as --tokenizer,
+    and BF16 and FP8 the preset's repo. Then the PDF prints every line of it, on both
+    vendors, at every precision."""
+    parser = gr.build_parser()
+    small = gr.arch_fields(gr.PRESETS["llama31-8b"])
+    named = 0
+    for key, preset in gr.PRESETS.items():
+        for prec in gr.PRECISIONS:
+            for slug, card in gr.GPUS.items():
+                if prec == "fp8" and slug in FP8_GATED:
+                    continue
+                cfg = gr.from_cli_args(parser.parse_args(["--preset", key, "--gpu", slug, "--prec", prec]))
+                cfg.update(small)
+                comp = gr.compute(cfg)
+                if not comp["fits"]:
+                    continue
+                quant = cfg["quant"]
+                assert_command_names(gr.build_vllm_cmd(cfg, comp), preset["hf"], quant, card["vendor"],
+                                     quant in ("awq", "gptq", "gguf"), f"{key} --prec {prec} on {slug}")
+                named += quant in ("awq", "gptq", "gguf")
+    assert named >= len(gr.PRESETS) * 5 * 10, f"only {named} plans named a stand-in"
+    for slug in ("h100-80", "mi300x-192"):
+        for prec in gr.PRECISIONS:
+            cfg = gr.from_cli_args(parser.parse_args(["--preset", "llama31-8b", "--gpu", slug, "--prec", prec]))
+            cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+            assert pdf_prints(story_strings(cfg), cmd), f"--prec {prec} on {slug}: the PDF does not print the command"
+
+test("every preset at every --prec on every card: a stand-in path and its line exactly for AWQ, GPTQ and GGUF, in the command and the PDF",
+     check_every_preset_at_every_precision_names_a_stand_in_exactly_for_awq_gptq_and_gguf)
+
+
+def check_a_model_path_the_user_gave_is_never_replaced():
+    """A JSON config's hf_model, even one naming the preset's own repo, a JSON config with
+    no preset that claims to carry one, and the menu's own model id: never replaced. A
+    preset's repo is, on the JSON and menu paths too."""
+    path = "/srv/models/llama-8b-awq"
+    cases = [({"preset": "llama31-8b", "hf_model": path}, path, False),
+             ({"preset": "llama31-8b", "hf_model": "meta-llama/Llama-3.1-8B-Instruct"},
+              "meta-llama/Llama-3.1-8B-Instruct", False),
+             ({"params": 8, "layers": 32, "kv_heads": 8, "hf_model": path, "model_from_preset": True}, path, False),
+             ({"preset": "llama31-8b"}, "meta-llama/Llama-3.1-8B-Instruct", True)]
+    with tempfile.TemporaryDirectory() as tmp:
+        for raw, repo, replaced in cases:
+            for quant, bpp in (("awq", None), ("gptq", None), ("gguf", 0.63)):
+                for slug in ("h100-80", "mi300x-192"):
+                    config = os.path.join(tmp, "c.json")
+                    with open(config, "w") as fh:
+                        json.dump(dict(raw, gpu=slug, quant=quant, **({"bpp": bpp} if bpp else {})), fh)
+                    cfg = gr.from_json(config)
+                    cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+                    assert_command_names(cmd, repo, quant, gr.GPUS[slug]["vendor"], replaced,
+                                         f"JSON {sorted(raw)} --quantization {quant} on {slug}")
+                    assert pdf_prints(story_strings(cfg), cmd), \
+                        f"JSON {sorted(raw)} --quantization {quant}: the PDF does not print the command"
+    # The menu: a model id typed for a custom architecture, then a preset, each at AWQ and Q4_K_M.
+    h100 = str(list(gr.GPUS).index("h100-80") + 1)
+    for choice, typed in (("custom", path), ("custom", "meta-llama/Llama-3.1-8B-Instruct"),
+                          (str(list(gr.PRESETS).index("llama31-8b") + 1), None)):
+        for menu_pick, quant in (("3", "awq"), ("4", "gguf")):
+            answers = ([choice] + (["8", "100", "32", "8", "128", "0", typed, "mine"] if typed else [])
+                       + [h100, "1", menu_pick, "n", "8192", "1"])
+            with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(io.StringIO()):
+                cfg = gr.interactive_mode()
+            assert cfg["quant"] == quant, (choice, menu_pick, cfg["quant"])
+            assert_command_names(gr.build_vllm_cmd(cfg, gr.compute(cfg)), typed or "meta-llama/Llama-3.1-8B-Instruct",
+                                 quant, "nvidia", typed is None, f"the menu's {choice} at {quant}")
+
+test("a model path the user gave is never replaced, on the JSON and menu paths; a preset's own repo is",
+     check_a_model_path_the_user_gave_is_never_replaced)
 
 
 # What each interactive menu choice is, as the contract: its bytes per parameter and
@@ -3406,7 +3825,9 @@ def json_precision_on(quant, bpp, row):
     """json_precision() on this card: FP8 weights on a card that can't run them get the
     FP8 refusal instead."""
     want = json_precision(None if quant is ABSENT else quant, bpp, row["vendor"])
-    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+    # FP8 by an FP8 method's name, or by one byte per parameter with no method named.
+    if isinstance(want, tuple) and (want[1] in FP8_METHODS_CONTRACT or (want[0] == 1 and not want[1])) \
+            and gr.fp8_weights_blocked(row):
         want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
     return want
 
@@ -4326,7 +4747,13 @@ def golden_cases():
          cfg(t4, 1, bpp=1, quant="fp8", nvlink=False)),
         ("h100-80 x1 — GGUF weights, so the plugin guidance under the command",
          cfg(h, 1, bpp=0.63, quant="gguf")),
-        ("h100-80 x1 — AWQ weights, the CLI's default precision", cfg(h, 1, bpp=0.5, quant="awq")),
+        ("h100-80 x1 — AWQ weights", cfg(h, 1, bpp=0.5, quant="awq")),
+        # The CLI as it runs with no --prec, through its own parser: every case above
+        # names its precision, so the default itself was invisible here while it was AWQ.
+        ("h100-80 x1 — GGUF on a preset's own repo, so a stand-in path, the base tokenizer and the line saying why",
+         gr.from_cli_args(gr.build_parser().parse_args(["--preset", "llama31-8b", "--gpu", "h100-80", "--prec", "q4km"]))),
+        ("(CLI defaults) a100-40 x1 — --preset gemma4-26b and nothing else",
+         gr.from_cli_args(gr.build_parser().parse_args(["--preset", "gemma4-26b"]))),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
         # ROCm: vLLM's own image, and the lines that apply to the plan.
         ("mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines",
@@ -4464,7 +4891,11 @@ def check_the_golden_records_the_shapes_that_matter():
         # The one quantization the report prints guidance for under the command,
         # as the page golden records it under its command panel.
         "GGUF weights": lambda cs: any(c.get("quant") == "gguf" and comp(c)["fits"] for c in cs),
-        "AWQ weights, the default": lambda cs: any(c.get("quant") == "awq" for c in cs),
+        "AWQ weights": lambda cs: any(c.get("quant") == "awq" for c in cs),
+        "a stand-in for a pre-quantized checkpoint": lambda cs: any(
+            c.get("model_from_preset") and c.get("quant") in ("awq", "gptq", "gguf") for c in cs),
+        "the CLI as it runs with no --prec": lambda cs: any(c.get("model_name") == gr.PRESETS["gemma4-26b"]["name"]
+                                                            and c["bpp"] == 1 for c in cs),
         "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),
         "FP8 weights refused on a card vLLM has no FP8 kernel for":
             lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["vendor"] == "amd" and c["gpu"].get("gfx") != "gfx942"

@@ -210,7 +210,7 @@ PY_GGUF_RELEASE_SRC = "     \"https://github.com/vllm-project/vllm/releases/tag/
 # its lines, the notes, the leads, and the overhead's words ----
 JS_R10_FP8_LINE = "  if (!arch.fp8Weights) out.push(L.fp8Weights);\n"
 JS_R10_BLOCKED = "  if (!gpu || gpu.vendor !== 'amd' || (ROCM.arch[gpu.gfx] || {}).fp8Weights) return '';\n"
-JS_R10_BUILD_REFUSE = "  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
+JS_R10_BUILD_REFUSE = "  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod)) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
 JS_R10_ARCH = "  const arch = state.vendor === 'amd' ? (ROCM.arch[state.gfx] || {}) : null;\n"
 JS_R10_AITER = "      + (arch.aiter ? '    --env VLLM_ROCM_USE_AITER=1 \\\\\\n' : '')\n"
 JS_R10_IMAGE = "  \"image\": \"vllm/vllm-openai-rocm:v0.30.0\",\n"
@@ -332,6 +332,49 @@ PY_FP8_WIDTHS = 'METHOD_WIDTH = {**method_widths(), **{method: 1 for method in F
 PY_FP8_METHODS_TAIL = '               "mxfp8", "modelopt_mxfp8")\n'
 PY_QUANT_NVIDIA_TAIL = '               "nvfp4_per_token", "mxfp8", "gguf"),\n'
 PY_QUANT_AMD_TAIL = '            "gguf"),\n'
+
+# ---- fix/fp8-default (engine_r27_fp8_default.py): the default precision follows the card,
+# and a stand-in path names the pre-quantized checkpoint on a preset's own repo ----
+JS_R27_DEFAULT_OPTIONS = '        <option value="1" selected data-q="fp8">FP8 (1.0 B/param)</option>\n        <option value="0.5" data-q="awq">AWQ 4-bit (0.50 B/param)</option>\n'
+JS_R27_RENDER_CALL = '  const cmd = buildVllmCommand(state, computed, modelPath, !!preset);\n'
+JS_R27_STAND_IN = '  const standIn = fromPreset ? prequantizedStandIn(state.quantMethod, baseRepo) : null;\n'
+JS_R27_NOTE = '  if (standIn) cmd = `${standIn.note}\\n` + cmd;\n'
+JS_R27_TOKENIZER = "  if (standIn && state.quantMethod === 'gguf') cmd += `    --tokenizer ${baseRepo} \\\\\\n`;\n"
+JS_R27_PATH = "  const path = quantMethod === 'gguf' ? `/opt/models/${name}.gguf` : `/opt/models/${name}-${method}`;\n"
+JS_R27_REPORT_CMD = "  report += `\\n## vLLM command\\n\\`\\`\\`\\n${emitted ? emitted.textContent : ''}\\n\\`\\`\\`\\n`;\n"
+PY_R27_PREC_ARG = '    parser.add_argument("--prec", default=None, choices=list(PRECISIONS),\n'
+PY_R27_MENU_DEFAULT = '    default_label = "BF16" if default_precision(gpu) == "bf16" else "FP8"\n'
+PY_R27_DEFAULT_RULE = '    return "bf16" if fp8_weights_blocked(gpu) else "fp8"\n'
+PY_R27_CLI_FLAG = '            "hf_model": preset["hf"], "model_name": preset["name"], "model_from_preset": True,\n'
+PY_R27_JSON_FLAG = '            "model_from_preset": "hf_model" not in raw,\n'
+PY_R27_JSON_OWN = '    cfg["model_from_preset"] = False\n'
+PY_R27_MENU_FLAG = '        "model_from_preset": choice.lower() != "custom",\n'
+PY_R27_STAND_IN = '    stand_in = prequantized_stand_in(cfg.get("quant"), base_repo) if cfg.get("model_from_preset") else None\n'
+PY_R27_NOTE = '    if stand_in:\n        parts.insert(0, stand_in[1])\n'
+PY_R27_TOKENIZER = '    if stand_in and cfg.get("quant") == "gguf":\n        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\\\")\n'
+PY_R27_PATH = '    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"\n'
+
+PY_R27_PDF_LINES = '        story.append(KeepTogether(self.command_paragraphs(cmd)))\n'
+PY_R27_PDF_SPLIT = '        return [Paragraph(escape(line), style) for line in pdf_command_lines(cmd, fits)]\n'
+PY_R27_COMMENT_TAIL = '            cur = f"# {word}"\n'
+PY_R27_WORD_BREAK = '            out.append(cur + "".join(t for t, _ in rest[:k + 1]) + ("\'\\\\" if inside == "\'" else "\\\\"))\n'
+PY_R27_WORD_REOPEN = '            cur, rest = ("\'" if inside == "\'" else ""), rest[k + 1:]\n'
+PY_R27_FRAME_WIDTH = '        return Frame(0, 0, A4[0] - 2 * self.margin, A4[1])._aW\n'
+PY_R27_QUOTED_RUN = '            if ch == " " and prev == " ":\n                atoms.append((quote + quote, quote))\n'
+PY_R27_BETWEEN_WORDS = '            out.append(f"{cur} \\\\")\n            cur = word\n'
+JS_R27_NOTICE_PUSH = "      if (refused && bf16) urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val,\n"
+JS_R27_NOTICE_SPLIT = '  const gone = live.filter(e => !e.why), refused = live.filter(e => e.why);\n'
+JS_R27_NOTICE_WHY = "                                                 fallback: bf16.value, why: refused, shown: 'BF16' });\n"
+
+PY_R27_PATH_CHARS = '    if re.search(f"[{MODEL_PATH_REFUSED_CHARS}]", model):\n        return MODEL_PATH_CHAR_REASON\n'
+JS_R27_FIELD_CHARS = '  if (modelPathCharReason(modelId)) {\n'
+PY_R27_PATH_RANGES = 'MODEL_PATH_REFUSED_CHARS = "\\\\u0000-\\\\u001f\\\\u007f\\\\u0085\\\\u00a0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff"\n'
+JS_R27_PATH_RANGES = "const MODEL_PATH_REFUSED_CHARS = '\\\\u0000-\\\\u001f\\\\u007f\\\\u0085\\\\u00a0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff';\n"
+PY_R27_UNCLOSED = '            while j < len(line) and line[j] != ch:\n'
+PY_R27_FONT_FITS = '        if need * size > width:\n'
+PY_R27_FONT_FLOOR = '            size = max(COMMAND_FONT_FLOOR, math.floor(width / need * 4) / 4)\n'
+PY_R27_FP8_RULE = '    return quant in FP8_METHODS or (not quant and cfg.get("bpp") == 1)\n'
+JS_R27_ROCM_FP8 = "  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod))\n"
 
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"

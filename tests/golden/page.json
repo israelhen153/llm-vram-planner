@@ -1,4 +1,224 @@
 {
+ "(markup defaults) a100-40 — Gemma 4 26B MoE, as the page first loads": {
+  "props": {
+   "url-restore-warning": {
+    "style.display": "none"
+   }
+  },
+  "shows": {
+   "(copied report)": "# LLM VRAM Plan — Gemma 4 26B MoE ## Model - Parameters: 26B (MoE, 15% active) - Precision: 1 bytes/param - KV cache: BF16 - Layers: 30, KV heads: 8, head dim: 256 ## GPU - 1× A100 40GB - Total VRAM: 40 GiB ## VRAM breakdown - Weights: 24.2 GiB - KV cache: 0.51 GiB - Act + overhead: 1.60 GiB - Per-device: 26.3 GiB / 40 GiB (FITS) ## Capacity - Max context (1 user): 256K - Max concurrent @ 8K: 20 - Single-stream decode: ~245 tok/s - Aggregate @ 1 concurrent: ~245 tok/s - TTFT: ~455 ms ## Cost (1× A100 40GB) - Hyperscaler: $3.40/hr · $2,482/mo (source: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-28) - Specialized: $1.99/hr · $1,453/mo (source: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-28) - Spot: $0.63/hr · $460/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the A100 40 GB hasn't been confirmed against a live query yet. Checked 2026-09-23. ## vLLM command ``` vllm serve google/gemma-4-26B-A4B-it \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization fp8 \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ```",
+   "capacity-output": {
+    "attrs": [
+     "style=margin-top:0"
+    ],
+    "text": "Max context (1 user, 90% util) 256K tokens 10.2 GiB free for KV Max concurrent @ 8K 20 users Each: 0.51 GiB KV Max concurrent @ 4K 28 users Each: 0.25 GiB KV KV per token (effective) 66560 B SWA · 25 local capped at 1K + 5 global × 8K"
+   },
+   "command-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-copy",
+     "onclick=copyCommand(this)",
+     "style=font-size:13px"
+    ],
+    "text": "Copy vllm serve google/gemma-4-26B-A4B-it \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization fp8 \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192"
+   },
+   "comparison-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-x",
+     "onclick=removeSnapshot(0)",
+     "style=color:var(--success-text)",
+     "style=color:var(--warning-text);font-size:10px;font-weight:500",
+     "style=font-size:10px;line-height:1.5;text-align:right",
+     "style=grid-template-columns:repeat(1,1fr)",
+     "title=Remove"
+    ],
+    "text": "Gemma 4 26B MoE GPU 1× A100 40GB Precision 1 B/param KV dtype BF16 Weights 24.2 GiB Per-device 26.3 GiB / 40 Max ctx (1u) 256K Max users @8K 20 Per-user / aggregate ~245 / 245 tok/s no FP8 tensor cores — aggregate is the FP16 ceiling Cost/hr $0.63–$3.40 Cost source Hyper: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-28 Spec: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-28 Spot: not recorded"
+   },
+   "cost-output": {
+    "attrs": [
+     "style=border-bottom:.5px solid var(--border)",
+     "style=border-bottom:.5px solid var(--border)",
+     "style=border-bottom:.5px solid var(--border)",
+     "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
+     "style=color:var(--success);font-weight:500;padding:8px 10px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px;padding:4px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=overflow-x:auto",
+     "style=padding:8px 10px",
+     "style=padding:8px 10px",
+     "style=padding:8px 10px"
+    ],
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-28 $3.40 $3.40 $2,482 Specialized Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-28 $1.99 $1.99 $1,453 Spot / marketplace not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. The weekly check can read Vast.ai, but its name for the A100 40 GB hasn't been confirmed against a live query yet. Checked 2026-09-23. $0.63 $0.63 $460 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+   },
+   "exec-summary": {
+    "attrs": [
+     "aria-hidden=true",
+     "aria-hidden=true",
+     "focusable=false",
+     "focusable=false",
+     "href=#ico-check",
+     "href=#ico-check",
+     "style=align-items:center;background:var(--success-bg);border-radius:var(--radius);color:var(--success-text);display:inline-flex;font-size:14px;font-weight:500;gap:6px;margin:0 0 16px;padding:6px 14px",
+     "style=border:none",
+     "style=color:var(--success);margin-right:6px",
+     "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=color:var(--warning-text);font-weight:500",
+     "style=font-size:11px",
+     "style=font-size:16px"
+    ],
+    "text": "Gemma 4 26B MoE READY TO DEPLOY Hardware 1× A100 40GB VRAM used 26.3 GiB / 40 GiB per device (66%) Max concurrent users (8K context) 20 Speed per user ~245 tokens/sec Total server throughput ~245 tokens/sec · no FP8 tensor cores, FP16 rate Monthly cost range $460 – $2,482/mo Cost source Hyper: Azure · Standard_ND96asr_A100_v4 · eastus · read 2026-09-28 · Spec: Lambda · NVIDIA A100 SXM (40 GB, 124 vCPU tier) · global · read 2026-09-28 · Spot: not recorded Precision FP8"
+   },
+   "gpu-cards": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-device-desktop",
+     "style=background:#1D9E75;width:0.5%",
+     "style=background:#7F77DD;color:#EEEDFE;width:57.7%",
+     "style=background:#888780;width:3.6%",
+     "style=background:#EF9F27;color:#412402;width:1.2%",
+     "style=background:var(--bg-primary);border-left:.5px solid var(--border);color:var(--text-muted);width:32.6%",
+     "style=grid-template-columns:repeat(1,1fr)"
+    ],
+    "text": "Device 0 24.2 GiB 13.7 GiB 26.3 GiB / 40 GiB (66%)"
+   },
+   "gpu-model": {
+    "attrs": [
+     "label=AMD",
+     "label=NVIDIA",
+     "value=a100-40",
+     "value=a100-80",
+     "value=b200-192",
+     "value=h100-80",
+     "value=h200-141",
+     "value=l4-24",
+     "value=l40s-48",
+     "value=mi210-64",
+     "value=mi250x-128",
+     "value=mi300x-192",
+     "value=mi325x-256",
+     "value=rtx4090-24",
+     "value=rtx5090-32",
+     "value=rtx6000ada-48",
+     "value=rtxpro-96",
+     "value=rx7900xtx-24",
+     "value=t4-16"
+    ],
+    "text": "T4 16 GB L4 24 GB RTX 4090 24 GB RTX 5090 32 GB A100 40 GB RTX 6000 Ada 48 GB L40S 48 GB A100 80 GB H100 80 GB RTX PRO 6000 96 GB H200 141 GB B200 192 GB RX 7900 XTX 24 GB MI210 64 GB MI250X 128 GB MI300X 192 GB MI325X 256 GB"
+   },
+   "metrics-output": "Weights 24.2 GiB KV cache (8,192 tok) 0.51 GiB Act + overhead 1.60 GiB Total 26.3 GiB Total VRAM 40 GiB Per-device 26.3 GiB",
+   "notes-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-info-circle"
+    ],
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+   },
+   "strategy-badges": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-cpu",
+     "style=background:var(--accent-bg);color:var(--accent-text)",
+     "style=background:var(--success-bg);color:var(--success-text)",
+     "style=display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px",
+     "style=font-size:13px"
+    ],
+    "text": "Single device MoE (15% active)"
+   },
+   "throughput-output": {
+    "attrs": [
+     "href=https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md",
+     "style=background:#1D9E75;width:100.0%",
+     "style=color:var(--accent-text)",
+     "style=color:var(--text-muted);font-size:11px;margin:4px 0;padding:4px 10px",
+     "style=color:var(--warning-text)",
+     "style=color:var(--warning-text)",
+     "style=color:var(--warning-text);font-weight:500",
+     "style=color:var(--warning-text);font-weight:500",
+     "style=margin-top:0",
+     "target=_blank"
+    ],
+    "text": "Single-stream decode (1 user) ~245 tok/s Bandwidth-bound · A100 40GB @ 1555 GB/s × 70% MBU Aggregate ceiling @ 1 concurrent ~245 tok/s Ceiling · observed range ~98–223 in practice · 245 tok/s per user under load · No FP8 tensor cores — A100 40GB stores FP8 weights but runs the GEMM at FP16 rate, so this is the FP16 ceiling TTFT estimate ~455 ms Compute-bound prefill at 8K context · No FP8 tensor cores — A100 40GB stores FP8 weights but runs the GEMM at FP16 rate, so this is the FP16 ceiling Max batch at this context 20 seq KV cache has room for your concurrency No published benchmark for A100 40GB at any model size. Theoretical estimate only — contribute one ."
+   },
+   "training-results": {
+    "attrs": [
+     "aria-hidden=true",
+     "aria-hidden=true",
+     "focusable=false",
+     "focusable=false",
+     "href=#ico-info-circle",
+     "href=#ico-x",
+     "style=background:#1D9E75",
+     "style=background:#1D9E75;color:#fff;width:0.9%",
+     "style=background:#7F77DD",
+     "style=background:#7F77DD;color:#fff;width:91.2%",
+     "style=background:#888780",
+     "style=background:#888780;color:#fff;width:2.8%",
+     "style=background:#9F8FEE",
+     "style=background:#9F8FEE;color:#fff;width:0.5%",
+     "style=background:#E87040",
+     "style=background:#E87040;color:#fff;width:0.5%",
+     "style=background:#EF9F27",
+     "style=background:#EF9F27;color:#fff;width:0.5%",
+     "style=background:var(--danger-bg);color:var(--danger-text)",
+     "style=margin-top:12px",
+     "style=margin-top:4px",
+     "style=margin-top:8px",
+     "style=margin-top:8px",
+     "style=margin-top:8px"
+    ],
+    "text": "Training does not fit. Over by 10.6 GiB per device. Need 2+ boards or switch to QLoRA with smaller rank. Weights Adapters Gradients Optimizer Activations Overhead 48.4 GiB Method LoRA Trainable params 16M Weights (frozen) 48.4 GiB LoRA adapters 0.03 GiB Gradients 0.03 GiB Optimizer states 0.12 GiB Activations (ckpt) 0.47 GiB Total per device 50.6 GiB Training uses 50.6 GiB/device vs inference at 26.3 GiB/device (2x more). LoRA trains 16M adapter params (rank 16 × 4 modules × 30 layers). Base weights frozen but in VRAM. Gradient checkpointing: ~30% slower, ~60-70% less activation memory. Reduce batch size first if it doesn't fit."
+   },
+   "verdict-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-check",
+     "style=background:var(--success-bg);color:var(--success-text)"
+    ],
+    "text": "Fits. 26.3 GiB / 40 GiB (66%)."
+   }
+  },
+  "text": {
+   "active-percent-display": "15%",
+   "concurrency-display": "1",
+   "context-length-display": "8K",
+   "counting-toggle": "Don’t count my visits",
+   "gpu-count-display": "1",
+   "head-dim-display": "256",
+   "kv-head-count-display": "8",
+   "layer-count-display": "30",
+   "param-count-display": "26B",
+   "shared-experts-display": "0",
+   "shared-prefix-display": "0",
+   "train-batch-size-display": "1",
+   "train-hidden-size-display": "4096",
+   "train-lora-rank-display": "16",
+   "train-lora-targets-display": "4",
+   "train-seq-len-display": "2K"
+  }
+ },
  "(no constants) h100-80 x1 — 8B bf16, the reason in place of the figures": {
   "props": {
    "url-restore-warning": {
@@ -1741,7 +1961,7 @@
    "train-seq-len-display": "2K"
   }
  },
- "h100-80 x1 — AWQ weights, the page's default precision": {
+ "h100-80 x1 — AWQ weights": {
   "props": {
    "url-restore-warning": {
     "style.display": "none"
@@ -1934,6 +2154,233 @@
      "style=background:var(--success-bg);color:var(--success-text)"
     ],
     "text": "Fits. 21.4 GiB / 80 GiB (27%)."
+   }
+  },
+  "text": {
+   "active-percent-display": "100%",
+   "concurrency-display": "16",
+   "context-length-display": "8K",
+   "counting-toggle": "Don’t count my visits",
+   "gpu-count-display": "1",
+   "head-dim-display": "128",
+   "kv-head-count-display": "8",
+   "layer-count-display": "32",
+   "param-count-display": "8B",
+   "shared-experts-display": "0",
+   "shared-prefix-display": "0",
+   "train-batch-size-display": "1",
+   "train-hidden-size-display": "4096",
+   "train-lora-rank-display": "16",
+   "train-lora-targets-display": "4",
+   "train-seq-len-display": "2K"
+  }
+ },
+ "h100-80 x1 — GGUF on a preset's own repo, so a stand-in path, the base tokenizer and the line saying why": {
+  "props": {
+   "url-restore-warning": {
+    "style.display": "none"
+   }
+  },
+  "shows": {
+   "(copied report)": "# LLM VRAM Plan — Llama 3.1 8B ## Model - Parameters: 8B (dense) - Precision: 0.63 bytes/param - KV cache: BF16 - Layers: 32, KV heads: 8, head dim: 128 ## GPU - 1× H100 80GB - Total VRAM: 80 GiB ## VRAM breakdown - Weights: 4.69 GiB - KV cache: 16.0 GiB - Act + overhead: 1.65 GiB - Per-device: 22.3 GiB / 80 GiB (FITS) ## Capacity - Max context (1 user): 525K - Max concurrent @ 8K: 65 - Single-stream decode: ~384 tok/s - Aggregate @ 16 concurrent: ~1.7K tok/s - TTFT: ~294 ms ## Cost (1× H100 80GB) - Hyperscaler: $12.30/hr · $8,979/mo (source: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22) - Specialized: $3.99/hr · $2,913/mo (source: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22) - Spot: $2.25/hr · $1,643/mo (source: not recorded) - In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Spot prices vary, and recent reads came back up to 44% higher: the weekly Vast.ai reads of a single H100 SXM's asking price were 42.5% higher on 2026-09-22 and 44.0% higher on 2026-09-28, while interruptible and hyperscaler spot prices read on 2026-09-28 sat closer to this figure. It stays at this estimate until a later check. Checked 2026-09-29. ## vLLM command ``` # GGUF needs a pre-quantized checkpoint, which meta-llama/Llama-3.1-8B-Instruct is not: replace /opt/models/Llama-3.1-8B-Instruct.gguf with the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file. vllm serve /opt/models/Llama-3.1-8B-Instruct.gguf \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization gguf \\ --tokenizer meta-llama/Llama-3.1-8B-Instruct \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192 ``` ## GGUF on vLLM - GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin. (source: https://github.com/vllm-project/vllm/releases/tag/v0.24.0) - Install `vllm-gguf-plugin` before serving a GGUF model. Point the command at a GGUF checkpoint, either a Hugging Face repo as `repo_id:quant_type` (for example `unsloth/Qwen3-0.6B-GGUF:Q4_K_M`) or a local `.gguf` file, and pass the base model's tokenizer with `--tokenizer`. (source: https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html) - vLLM calls its GGUF support \"highly experimental and under-optimized\". (source: https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html) - For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM.",
+   "capacity-output": {
+    "attrs": [
+     "style=margin-top:0"
+    ],
+    "text": "Max context (1 user, 90% util) 525K tokens 65.7 GiB free for KV Max concurrent @ 8K 65 users Each: 1.00 GiB KV Max concurrent @ 4K 131 users Each: 0.50 GiB KV KV per token 131072 B 2 × 32 L × 8 H × 128 D × 2B"
+   },
+   "command-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "aria-hidden=true",
+     "focusable=false",
+     "focusable=false",
+     "href=#ico-alert-triangle",
+     "href=#ico-copy",
+     "href=https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html",
+     "href=https://docs.vllm.ai/en/v0.30.0/features/quantization/gguf.html",
+     "href=https://github.com/vllm-project/vllm/releases/tag/v0.24.0",
+     "onclick=copyCommand(this)",
+     "style=background:var(--warning-bg);color:var(--warning-text);margin:0 0 8px",
+     "style=color:var(--accent-text)",
+     "style=color:var(--accent-text)",
+     "style=color:var(--accent-text)",
+     "style=font-size:13px",
+     "target=_blank",
+     "target=_blank",
+     "target=_blank"
+    ],
+    "text": "GGUF support left vLLM's core in v0.24.0 and moved to a separate plugin. ( source ) Install vllm-gguf-plugin before serving a GGUF model. Point the command at a GGUF checkpoint, either a Hugging Face repo as repo_id:quant_type (for example unsloth/Qwen3-0.6B-GGUF:Q4_K_M ) or a local .gguf file, and pass the base model's tokenizer with --tokenizer . ( source ) vLLM calls its GGUF support \"highly experimental and under-optimized\". ( source ) For GGUF specifically, llama.cpp or Ollama is the better-supported path; AWQ or GPTQ is the usual choice on vLLM. Copy # GGUF needs a pre-quantized checkpoint, which meta-llama/Llama-3.1-8B-Instruct is not: replace /opt/models/Llama-3.1-8B-Instruct.gguf with the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file. vllm serve /opt/models/Llama-3.1-8B-Instruct.gguf \\ --host 0.0.0.0 --port 8000 \\ --dtype auto \\ --quantization gguf \\ --tokenizer meta-llama/Llama-3.1-8B-Instruct \\ --no-enable-prefix-caching \\ --gpu-memory-utilization 0.90 \\ --max-model-len 8192"
+   },
+   "comparison-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-x",
+     "onclick=removeSnapshot(0)",
+     "style=color:var(--success-text)",
+     "style=font-size:10px;line-height:1.5;text-align:right",
+     "style=grid-template-columns:repeat(1,1fr)",
+     "title=Remove"
+    ],
+    "text": "Llama 3.1 8B GPU 1× H100 80GB Precision 0.63 B/param KV dtype BF16 Weights 4.69 GiB Per-device 22.3 GiB / 80 Max ctx (1u) 525K Max users @8K 65 Per-user / aggregate ~384 / 1.7K tok/s Cost/hr $2.25–$12.30 Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 Spot: not recorded"
+   },
+   "cost-output": {
+    "attrs": [
+     "style=border-bottom:.5px solid var(--border)",
+     "style=border-bottom:.5px solid var(--border)",
+     "style=border-bottom:.5px solid var(--border)",
+     "style=border-collapse:collapse;font-size:13px;margin:8px 0;width:100%",
+     "style=color:var(--success);font-weight:500;padding:8px 10px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px",
+     "style=color:var(--text-muted);font-size:11px;padding:4px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=color:var(--text-secondary);font-size:12px;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=font-weight:500;padding:8px 10px",
+     "style=overflow-x:auto",
+     "style=padding:8px 10px",
+     "style=padding:8px 10px",
+     "style=padding:8px 10px"
+    ],
+    "text": "Provider tier Per board/hr Total/hr (1×) Monthly (730h) Hyperscaler Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 $12.30 $12.30 $8,979 Specialized Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 $3.99 $3.99 $2,913 Spot / marketplace not recorded In the catalog since 2026-05-28 as a mid-2026 estimate, with no provider recorded. Spot prices vary, and recent reads came back up to 44% higher: the weekly Vast.ai reads of a single H100 SXM's asking price were 42.5% higher on 2026-09-22 and 44.0% higher on 2026-09-28, while interruptible and hyperscaler spot prices read on 2026-09-28 sat closer to this figure. It stays at this estimate until a later check. Checked 2026-09-29. $2.25 $2.25 $1,643 Prices per board/hr as of mid-2026. Vary by region, commitment, availability. Reserved typically 30-60% off on-demand."
+   },
+   "exec-summary": {
+    "attrs": [
+     "aria-hidden=true",
+     "aria-hidden=true",
+     "focusable=false",
+     "focusable=false",
+     "href=#ico-check",
+     "href=#ico-check",
+     "style=align-items:center;background:var(--success-bg);border-radius:var(--radius);color:var(--success-text);display:inline-flex;font-size:14px;font-weight:500;gap:6px;margin:0 0 16px;padding:6px 14px",
+     "style=border:none",
+     "style=color:var(--success);margin-right:6px",
+     "style=color:var(--success-text)",
+     "style=color:var(--text-muted);font-size:11px;font-weight:400",
+     "style=font-size:11px",
+     "style=font-size:16px"
+    ],
+    "text": "Llama 3.1 8B READY TO DEPLOY Hardware 1× H100 80GB VRAM used 22.3 GiB / 80 GiB per device (28%) Max concurrent users (8K context) 65 Speed per user ~384 tokens/sec Total server throughput ~1.7K tokens/sec Monthly cost range $1,643 – $8,979/mo Cost source Hyper: Azure · Standard_ND96isr_H100_v5 · eastus · read 2026-09-22 · Spec: Lambda · NVIDIA H100 SXM (80 GB, 208 vCPU tier) · global · read 2026-09-22 · Spot: not recorded Precision FP8"
+   },
+   "gpu-cards": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-device-desktop",
+     "style=background:#1D9E75;width:0.5%",
+     "style=background:#7F77DD;color:#EEEDFE;width:5.6%",
+     "style=background:#888780;width:1.8%",
+     "style=background:#EF9F27;color:#412402;width:19.0%",
+     "style=background:var(--bg-primary);border-left:.5px solid var(--border);color:var(--text-muted);width:68.6%",
+     "style=grid-template-columns:repeat(1,1fr)"
+    ],
+    "text": "Device 0 16.0 GiB 57.7 GiB 22.3 GiB / 80 GiB (28%)"
+   },
+   "gpu-model": {
+    "attrs": [
+     "label=AMD",
+     "label=NVIDIA",
+     "value=a100-40",
+     "value=a100-80",
+     "value=b200-192",
+     "value=h100-80",
+     "value=h200-141",
+     "value=l4-24",
+     "value=l40s-48",
+     "value=mi210-64",
+     "value=mi250x-128",
+     "value=mi300x-192",
+     "value=mi325x-256",
+     "value=rtx4090-24",
+     "value=rtx5090-32",
+     "value=rtx6000ada-48",
+     "value=rtxpro-96",
+     "value=rx7900xtx-24",
+     "value=t4-16"
+    ],
+    "text": "T4 16 GB L4 24 GB RTX 4090 24 GB RTX 5090 32 GB A100 40 GB RTX 6000 Ada 48 GB L40S 48 GB A100 80 GB H100 80 GB RTX PRO 6000 96 GB H200 141 GB B200 192 GB RX 7900 XTX 24 GB MI210 64 GB MI250X 128 GB MI300X 192 GB MI325X 256 GB"
+   },
+   "metrics-output": "Weights 4.69 GiB KV cache (131,072 tok) 16.0 GiB Act + overhead 1.65 GiB Total 22.3 GiB Total VRAM 80 GiB Per-device 22.3 GiB",
+   "notes-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-info-circle"
+    ],
+    "text": "KV cache uses BF16 (2 bytes/value) regardless of weight precision — default vLLM behavior. Throughput is a memory-bandwidth-bound decode estimate. Param estimates from config.json are approximate (5-15% variance). Safetensors index gives exact sizes. GPU prices are mid-2026 per-board/hr figures across 3 tiers — see the cost table above for each tier's source, or \"not recorded\" where it has no confirmed source. Reserved typically 30-60% off on-demand. Training VRAM is an estimate — actual varies by framework (HF Trainer, DeepSpeed, FSDP), mixed precision, and gradient accumulation."
+   },
+   "strategy-badges": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-cpu",
+     "style=background:var(--accent-bg);color:var(--accent-text)",
+     "style=display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px",
+     "style=font-size:13px"
+    ],
+    "text": "Single device"
+   },
+   "throughput-output": {
+    "attrs": [
+     "href=https://github.com/israelhen153/llm-vram-planner/blob/HEAD/CONTRIBUTING.md",
+     "style=background:#1D9E75;width:100.0%",
+     "style=color:var(--accent-text)",
+     "style=color:var(--text-muted);font-size:11px;margin:4px 0;padding:4px 10px",
+     "style=margin-top:0",
+     "target=_blank"
+    ],
+    "text": "Single-stream decode (1 user) ~384 tok/s Bandwidth-bound · H100 80GB @ 3352 GB/s × 70% MBU Aggregate ceiling @ 16 concurrent ~1.7K tok/s Ceiling · observed range ~676–1.5K in practice · 106 tok/s per user under load TTFT estimate ~294 ms Compute-bound prefill at 8K context Max batch at this context 65 seq KV cache has room for your concurrency No published benchmark for H100 80GB at any model size. Theoretical estimate only — contribute one ."
+   },
+   "training-results": {
+    "attrs": [
+     "aria-hidden=true",
+     "aria-hidden=true",
+     "focusable=false",
+     "focusable=false",
+     "href=#ico-check",
+     "href=#ico-info-circle",
+     "style=background:#1D9E75",
+     "style=background:#1D9E75;color:#fff;width:0.6%",
+     "style=background:#7F77DD",
+     "style=background:#7F77DD;color:#fff;width:17.7%",
+     "style=background:#888780",
+     "style=background:#888780;color:#fff;width:1.8%",
+     "style=background:#9F8FEE",
+     "style=background:#9F8FEE;color:#fff;width:0.5%",
+     "style=background:#E87040",
+     "style=background:#E87040;color:#fff;width:0.5%",
+     "style=background:#EF9F27",
+     "style=background:#EF9F27;color:#fff;width:0.5%",
+     "style=background:var(--bg-primary);border-left:.5px solid var(--border);color:var(--text-muted);width:74.9%",
+     "style=background:var(--success-bg);color:var(--success-text)",
+     "style=margin-top:12px",
+     "style=margin-top:4px",
+     "style=margin-top:8px",
+     "style=margin-top:8px",
+     "style=margin-top:8px"
+    ],
+    "text": "Training fits. 17.1 GiB / 80 GiB per device (21%). Weights Adapters Gradients Optimizer Activations Overhead 14.9 GiB 62.9 GiB Method LoRA Trainable params 17M Weights (frozen) 14.9 GiB LoRA adapters 0.03 GiB Gradients 0.03 GiB Optimizer states 0.13 GiB Activations (ckpt) 0.50 GiB Total per device 17.1 GiB Training uses 17.1 GiB/device vs inference at 22.3 GiB/device (1x more). LoRA trains 17M adapter params (rank 16 × 4 modules × 32 layers). Base weights frozen but in VRAM. Gradient checkpointing: ~30% slower, ~60-70% less activation memory. Reduce batch size first if it doesn't fit."
+   },
+   "verdict-output": {
+    "attrs": [
+     "aria-hidden=true",
+     "focusable=false",
+     "href=#ico-check",
+     "style=background:var(--success-bg);color:var(--success-text)"
+    ],
+    "text": "Fits. 22.3 GiB / 80 GiB (28%)."
    }
   },
   "text": {
