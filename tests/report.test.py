@@ -3314,17 +3314,26 @@ def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
                 cmds.add(gr.build_vllm_cmd(cfg, dict(gr.compute(cfg), fits=False)))
     users = ["/mnt/" + "/".join(f"team-{i}/checkpoints-v{i}.{i}" for i in range(8)) + "/model.gguf",
              "some-organisation/" + "-".join(["a-very-long-model-name"] * 6),
-             "/opt/my  models/x & y'z"]
+             "/opt/my  models/x & y'z",
+             # Long enough that a break falls inside the quotes shlex.quote() puts round it.
+             "/srv/team  shared/" + "/".join(f"run {i}" for i in range(16)) + "/model weights.gguf"]
+    # Every length from a line that fits to one that breaks between words (the path on a
+    # line of its own) to one that breaks inside the path, as an absolute path, which the
+    # ROCm command also mounts, and as a hub id.
+    flat = "/srv/" + "/".join(f"d{i:03d}" for i in range(60))
+    users += [flat[:n] for n in range(20, 181, 4)] + ["org/" + "m" * (n - 4) for n in range(20, 181, 4)]
     with tempfile.TemporaryDirectory() as tmp:
         for model in users:
             for slug in ("h100-80", "mi300x-192", "mi250x-128"):
                 for extra in ({}, {"quant": "awq"}, {"quant": "gguf", "bpp": 0.63}):
+                    if model.startswith(("org/", flat[:20])) and extra:
+                        continue
                     config = os.path.join(tmp, "c.json")
                     with open(config, "w") as fh:
                         json.dump(dict(small, gpu=slug, n_gpu=3, hf_model=model, **extra), fh)
                     cfg = gr.from_json(config)
                     cmds.add(gr.build_vllm_cmd(cfg, gr.compute(cfg)))
-    broken = 0
+    broken, kinds = 0, {"between words": 0, "inside a word": 0, "inside quotes": 0}
     for cmd in sorted(cmds):
         paras = obj.command_paragraphs(cmd)
         for p in paras:
@@ -3334,7 +3343,12 @@ def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
         assert shell_words("\n".join(printed)) == shell_words(cmd), \
             f"copied out of the PDF, this is another command:\n{cmd}\n--- the PDF prints ---\n" + "\n".join(printed)
         broken += len(paras) > len(cmd.split("\n"))
+        ends = [line for line in printed if not line.startswith("#")]
+        kinds["between words"] += sum(l.endswith(" \\") for l in ends) - sum(l.endswith(" \\") for l in cmd.split("\n"))
+        kinds["inside a word"] += sum(l.endswith("\\") and not l.endswith((" \\", "'\\")) for l in ends)
+        kinds["inside quotes"] += sum(l.endswith("'\\") for l in ends)
     assert len(cmds) >= 300 and broken >= 40, f"{len(cmds)} commands, {broken} of them broken: the sweep reached too few"
+    assert all(n >= 10 for n in kinds.values()), f"the sweep broke too few lines of some kind: {kinds}"
 
 test("a command copied out of the PDF pastes as the same command, for every preset, precision, card and a user's long or odd path",
      check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command)
