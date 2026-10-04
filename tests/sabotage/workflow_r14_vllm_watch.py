@@ -4,12 +4,16 @@ tests/vllm_watch.test.py).
 
 The watch tells the owner when vLLM ships past the release the planner pins, and what
 to re-check. These put back each way it could stay silent, or say the wrong thing:
-versions compared as text; pre-releases, dev releases or yanked releases counted; the
-pin hard-coded, or taken from one engine when the two disagree; the files to re-check
-given as today's list rather than searched; a new issue every week, or a release
-announced again; a failure to read PyPI passed off as a quiet week, three ways; a
-contract nobody defines dropped from the notice without a word; and its workflow at
-minute 0, given `contents: write`, or kept green with `|| true` or continue-on-error.
+versions compared as text; pre-releases, dev releases or yanked releases counted;
+post-releases counted again, in the release number, beside their release, or in its
+place, or dropped where one is all of a release that can be installed; the pin
+hard-coded, or taken from one engine when the two disagree; the files to re-check given
+as today's list rather than searched; a new issue every week, a release announced
+again, or told again under its post-release's name; a failure to read PyPI passed off as
+a quiet week, three ways, or gh's non-JSON answer read as an empty issue list; a
+contract nobody defines dropped from the notice without a word, or one both engines
+define searched in one engine only; and its workflow at minute 0, given
+`contents: write`, or kept green with `|| true` or continue-on-error.
 
 The hard-coded pin and file list are read from the tree as this driver loads, so each
 is the one that is right today, which is what makes it a sabotage the real tree alone
@@ -43,6 +47,16 @@ S = {
      swap(VW, '    return not (m.group("pre") or m.group("dev")), ', '    return not m.group("pre"), '),
  'V4 yanked releases counted':
      swap(VW, '        installable = [f for f in files if not f["yanked"]]\n', '        installable = files\n'),
+ 'V5 post-releases counted again, the post segment back in the release number':
+     swap(VW, '(int(m.group("epoch") or 0), tuple(release)), post_n\n',
+              '(int(m.group("epoch") or 0), tuple(release), post_n), post_n\n'),
+ 'V6 a release returned beside its own post-releases, one version per release dropped':
+     swap(VW, '            found[release] = min(found.get(release, (post, version)), (post, version))',
+              '            found[(release, post)] = (post, version)'),
+ 'V7 post-releases dropped, so a release whose final is yanked is never told':
+     swap(VW, '        if not is_final:\n', '        if not is_final or post >= 0:\n'),
+ 'V8 a release named by its post-release when its final can be installed too':
+     swap(VW, '            found[release] = min(found.get(', '            found[release] = max(found.get('),
 
  # ---- P: the pin, and what the notice names ----
  'P1 a hard-coded pin':
@@ -54,6 +68,9 @@ S = {
      swap(VW, '    root = root or ROOT\n    bare = ', f'    return {LISTED!r}\n    root = root or ROOT\n    bare = '),
  'P4 a contract nobody defines dropped from the notice without a word':
      swap(VW, '    if missing:\n', '    if False:\n'),
+ 'P5 a contract both engines define searched in generate_report.py only':
+     swap(VW, '    found = [(name, what, [(engine, n) for engine in ENGINES\n',
+              '    found = [(name, what, [(engine, n) for engine in ENGINES[-1:]\n'),
 
  # ---- R: what it tells GitHub ----
  'R1 a new issue every week, the open one ignored':
@@ -61,8 +78,12 @@ S = {
               '    open_issues = []\n'),
  'R2 an announced release announced again':
      swap(VW, '    fresh = [v for v in newer if release_of(v) not in told]\n', '    fresh = list(newer)\n'),
+ "R3 a release told again under its post-release's name, the dedupe by exact string":
+     [(VW, '    told = {release_of(version) for issue in ours\n', '    told = {version for issue in ours\n', 1),
+      (VW, '    fresh = [v for v in newer if release_of(v) not in told]\n',
+           '    fresh = [v for v in newer if v not in told]\n', 1)],
 
- # ---- F: when PyPI cannot be read ----
+ # ---- F: when PyPI or GitHub cannot be read ----
  'F1 a fetch error treated as no news, exit 0':
      swap(VW, '        print(f"vllm watch: {e}", file=sys.stderr)\n        return 1\n',
               '        print(f"vllm watch: {e}", file=sys.stderr)\n        return 0\n'),
@@ -71,6 +92,8 @@ S = {
               '        return {"releases": {"0": [{"yanked": False}]}}\n'),
  'F3 the exit code dropped on the way out of the process':
      swap(VW, '    sys.exit(main())\n', '    main()\n'),
+ "F4 gh's non-JSON answer read as an empty issue list":
+     swap(VW, "        raise WatchError(f\"gh {' '.join(args[:2])} did not answer JSON: {e}\")\n", '        return []\n'),
 
  # ---- W: the watch's own workflow ----
  'W1 the schedule moved to minute 0':
