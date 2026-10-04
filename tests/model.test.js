@@ -1324,7 +1324,7 @@ const RENDER_NAMES = namesIn(HARNESS_SLICE);
 assert.deepStrictEqual(RENDER_NAMES, namesIn(html),
   'index.html declares a render function outside the harness slice, so nothing renders it');
 
-const renderHarness = (inputs = {}) => {
+const renderHarness = (inputs = {}, presetLabel = 'Llama 3.1 8B') => {
   const out = {};
   const values = {
     'train-method': 'lora', 'train-optimizer': 'adam', 'train-grad-ckpt': '1',
@@ -1367,7 +1367,7 @@ const renderHarness = (inputs = {}) => {
     /* The preset dropdown, so a state that names a preset renders the way the
        page renders it: the executive view and the copied report both read the
        selected option's label. */
-    options: [{ text: 'Llama 3.1 8B', textContent: 'Llama 3.1 8B', disabled: false }], selectedIndex: 0,
+    options: [{ text: presetLabel, textContent: presetLabel, disabled: false }], selectedIndex: 0,
     selectedOptions: [{ dataset: { q: '' } }],
     classList: { add() {}, remove() {} },
   });
@@ -3168,7 +3168,7 @@ const surfaceParams = {};
 for (const m of html.matchAll(/function (render\w+)\(([^)]*)\)/g))
   surfaceParams[m[1]] = m[2].split(',').map(x => x.trim().split(/[=\s]/)[0]).filter(Boolean);
 const renderEverything = (st, given) => {
-  const h = renderHarness();
+  const h = renderHarness({}, st.presetLabel);
   const renderers = Object.keys(h).filter(k => /^render/.test(k) && typeof h[k] === 'function');
   const c = given || h.computeInference(st);
   /* readInputState() reads the imported id off a closure variable, not the
@@ -4325,8 +4325,8 @@ console.log('\nThe copied report quotes the command box');
 const WEIGHT_SELECT = html.slice(html.indexOf('<select id="weight-precision"'),
                                  html.indexOf('</select>', html.indexOf('<select id="weight-precision"')));
 /* Each <option>'s own attributes, read in any order. The first version matched
-   value and data-q only when they sat side by side, so the AWQ option, the page's
-   default, which carries `selected` between them, was silently left out. A GGUF
+   value and data-q only when they sat side by side, so the AWQ option, then the page's
+   default, which carried `selected` between them, was silently left out. A GGUF
    banner shown for every AWQ plan then passed every check here (cold check,
    fix/gguf-plugin). Hence the count below: the options read must be all the
    options there are. */
@@ -4596,6 +4596,84 @@ test('the precision control offers no FP8 where vLLM has no FP8 weight kernel, f
   }
 });
 
+test('the default precision is FP8, and BF16 on a card vLLM has no FP8 weight kernel for, on load and on every card change', () => {
+  /* The option the markup selects before anything runs. It was AWQ, and no preset's repo
+     is an AWQ checkpoint, so the default plan's command did not load. Which cards take
+     BF16 is restated here as a literal, not asked of fp8WeightsBlocked(): the three whose
+     LLVM targets have no FP8 weight kernel in vLLM v0.30.0. */
+  const chosen = WEIGHT_OPTION_TAGS.filter(attrs => /\sselected\b/.test(attrs));
+  assert.strictEqual(chosen.length, 1, `the markup selects ${chosen.length} weight options, not one`);
+  assert.deepStrictEqual(WEIGHT_OPTIONS[WEIGHT_OPTION_TAGS.indexOf(chosen[0])], { bytesPerParam: 1, quantMethod: 'fp8' },
+    'the precision the page starts on is not FP8');
+  const BLOCKED = ['mi210-64', 'mi250x-128', 'rx7900xtx-24'];
+  const decl = (re) => { const m = html.match(re); assert.ok(m, `${re} not found in index.html`); return m[0]; };
+  const src = [decl(/^const ROCM = \{[\s\S]*?\n\};$/m), decl(/^function fp8WeightsBlocked\(gpu\) \{[\s\S]*?\n\}$/m),
+               decl(/^let precisionForcedFromFp8 = false;$/m), decl(/^function syncPrecision\(\) \{[\s\S]*?\n\}$/m),
+               decl(/^function choosePrecision\(\) \{[\s\S]*?\n\}$/m)].join('\n');
+  /* The page's <select> as the markup builds it, `selected` and all, on one card. A
+     reader's pick goes through the control's own onchange, read from the markup, and
+     recalculate() is the part of it that runs syncPrecision(). */
+  const onchange = (WEIGHT_SELECT.match(/onchange="(\w+)\(\)"/) || [])[1];
+  const page = (slug, pickBeforeLoad) => {
+    const chosenSet = new Set();
+    const options = WEIGHT_OPTION_TAGS.map((attrs, i) => {
+      const o = { value: String(WEIGHT_OPTIONS[i].bytesPerParam), dataset: { q: WEIGHT_OPTIONS[i].quantMethod },
+                  disabled: false, textContent: '', defaultSelected: /\sselected\b/.test(attrs) };
+      Object.defineProperty(o, 'selected', {
+        get: () => chosenSet.has(o),
+        set: (v) => { if (v) { chosenSet.clear(); chosenSet.add(o); } else chosenSet.delete(o); },
+      });
+      return o;
+    });
+    for (const o of options) if (o.defaultSelected) o.selected = true;
+    const els = { 'gpu-model': { value: slug }, 'weight-precision': { options } };
+    let api;
+    api = new Function('document', 'GPU_TABLE', 'recalculate',
+      `${src}; return { syncPrecision, choosePrecision };`)({ getElementById: (id) => els[id] }, GPU_TABLE,
+      () => api.syncPrecision());
+    // A link or restored state sets the control before the page's first recalculate().
+    if (pickBeforeLoad !== undefined) options[pickBeforeLoad].selected = true;
+    api.syncPrecision();
+    return {
+      options,
+      picked: () => options.findIndex(o => o.selected),
+      card: (s) => { els['gpu-model'].value = s; api.syncPrecision(); },
+      choose: (i) => { options[i].selected = true; api[onchange](); },
+    };
+  };
+  const at = (q) => WEIGHT_OPTIONS.findIndex(o => o.quantMethod === q);
+  const want = (slug) => at(BLOCKED.includes(slug) ? '' : 'fp8');
+  const slugs = Object.keys(GPU_TABLE);
+  assert.ok(slugs.filter(s => BLOCKED.includes(s)).length === 3 && slugs.length > 3, 'the catalog lost a card this sweeps');
+  for (const a of slugs) {
+    assert.strictEqual(page(a).picked(), want(a), `${a}: the page loads on ${WEIGHT_OPTIONS[page(a).picked()].quantMethod || 'bf16'}`);
+    for (const b of slugs) {
+      const p = page(a);
+      p.card(b);
+      assert.strictEqual(p.picked(), want(b), `${a} then ${b}: the default did not follow the card`);
+      p.card(a);
+      assert.strictEqual(p.picked(), want(a), `${a} then ${b} and back: the default did not follow the card`);
+    }
+  }
+  /* A precision the reader chose, or one a link or restored state carried, is kept on
+     every card: BF16 chosen where the default had already fallen back to BF16 came back
+     as FP8 on the next card that runs it, because the fallback was never forgotten. */
+  for (const [i, o] of WEIGHT_OPTIONS.entries()) {
+    if (o.quantMethod === 'fp8') continue;
+    const what = `${o.quantMethod || 'bf16'} at ${o.bytesPerParam} B/param`;
+    for (const a of slugs) {
+      const chose = page(a);
+      chose.choose(i);
+      const linked = page(a, i);
+      for (const b of [...slugs, a]) {
+        chose.card(b); linked.card(b);
+        assert.strictEqual(chose.picked(), i, `${what}, chosen on ${a}, became another precision on ${b}`);
+        assert.strictEqual(linked.picked(), i, `${what}, carried by a link on ${a}, became another precision on ${b}`);
+      }
+    }
+  }
+});
+
 test('a local model is mounted into the ROCm container wherever it lives, and a hub id is not', () => {
   /* The command test's own models held only /opt once, then three listed paths, and a
      mount skipping any path with a dot, or deeper than four levels, passed. Paths
@@ -4855,6 +4933,39 @@ const GOLDEN_PAGE = path.join(__dirname, 'golden', 'page.json');
    the case that moved. Deliberately not the absent-constants probe grid: that
    one exists to vary everything, and a golden that wide would be updated so
    often nobody would read the diff. */
+/* The page as it first loads with no link: the preset, the precision, the KV cache and
+   the switches each <select> marks selected (or its first option), each slider's value,
+   the card the catalog marks default, and the preset applied as applyPreset() applies
+   it. Read from the markup, not restated, so changing a default moves this case. */
+const markupDefaultCase = () => {
+  const selectBlock = (id) => {
+    const at = html.indexOf(`<select id="${id}"`);
+    assert.ok(at > 0, `no <select id="${id}"> in index.html`);
+    return html.slice(at, html.indexOf('</select>', at));
+  };
+  const picked = (id) => {
+    const tags = [...selectBlock(id).matchAll(/<option\b([^>]*)>([^<]*)/g)];
+    const tag = tags.find(m => /\sselected\b/.test(m[1])) || tags[0];
+    return { value: (tag[1].match(/\bvalue="([^"]*)"/) || [])[1], q: (tag[1].match(/\bdata-q="([^"]*)"/) || [])[1], label: tag[2] };
+  };
+  const slider = (id) => Number((html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`))[0].match(/\bvalue="([^"]*)"/) || [])[1]);
+  const presets = new Function(`${html.match(/^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m)[0]}; return MODEL_PRESETS;`)();
+  const presetKey = picked('preset').value, preset = presets[presetKey];
+  const slug = Object.keys(GPU_TABLE).find(k => GPU_TABLE[k].default);
+  const card = GPU_TABLE[slug], weights = picked('weight-precision');
+  return [`(markup defaults) ${slug} — ${picked('preset').label}, as the page first loads`,
+    asState(card, slider('gpu-count'), {
+      params: preset.p, layers: preset.l, kvHeads: preset.kv, headDim: preset.hd, activePercent: preset.a,
+      sharedExperts: preset.se || 0, attnMode: preset.attn || 'standard', swaWindow: preset.swaWin || 0,
+      swaLocalLayers: preset.swaLocal || 0, mlaLatentDim: preset.mlaDim || 0, modelMaxCtx: preset.maxCtx || 131072,
+      bytesPerParam: Number(weights.value), quantMethod: weights.q, kvBytesPerValue: Number(picked('kv-precision').value),
+      prefixCaching: picked('prefix-caching').value === '1', contextLength: slider('context-length'),
+      concurrency: slider('concurrency'), sharedPrefix: slider('shared-prefix'),
+      hasNVLink: picked('interconnect').value === '1' && supportsNVLink(card),
+      presetKey, presetLabel: picked('preset').label, fromMarkup: true,
+    })];
+};
+
 const goldenCases = () => {
   const dense8B = { params: 8, layers: 32, kvHeads: 8, headDim: 128, activePercent: 100 };
   /* NVLink as the page sets it: the control asks for it, and readInputState()
@@ -4898,10 +5009,13 @@ const goldenCases = () => {
     ['h100-80 x1 — a 32K context behind an 8K cached prefix',
      asState(h, 1, { ...dense8B, contextLength: 32768, concurrency: 4,
                      sharedPrefix: 8192, prefixCaching: true })],
-    ['h100-80 x1 — AWQ weights, the page\'s default precision',
+    ['h100-80 x1 — AWQ weights', 
      asState(h, 1, { ...dense8B, bytesPerParam: 0.5, quantMethod: 'awq' })],
     ['h100-80 x1 — GGUF weights, which renderCommand branches on',
      asState(h, 1, { ...dense8B, bytesPerParam: 0.63, quantMethod: 'gguf' })],
+    /* The page as it first loads, read off the markup: every golden case above names
+       its precision, so the default itself was invisible here while it was AWQ. */
+    markupDefaultCase(),
     ['h100-80 x1 — a model imported by id rather than named by a preset',
      asState(h, 1, { ...dense8B, hfModelId: 'org/imported-8b' })],
     /* Hardware with no measured constants. Synthetic, because no catalog row is
@@ -4999,7 +5113,8 @@ test('the golden records every catalog row, and the shapes that change what the 
     'fp8 weights on silicon without them': sts =>
       sts.some(st => st.quantMethod === 'fp8' && !st.gpuFp8),
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
-    'AWQ weights, the default': sts => sts.some(st => st.quantMethod === 'awq'),
+    'AWQ weights': sts => sts.some(st => st.quantMethod === 'awq'),
+    'the page as the markup starts it': sts => sts.some(st => st.fromMarkup),
     'a ROCm command with AITER on': sts => sts.some(st => st.vendor === 'amd' && st.gfx === 'gfx942'),
     'FP8 weights refused on a card vLLM has no FP8 kernel for': sts =>
       sts.some(st => st.quantMethod === 'fp8' && st.vendor === 'amd' && st.gfx !== 'gfx942'),

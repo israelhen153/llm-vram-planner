@@ -266,11 +266,15 @@ body.exec-mode .exec-summary { display: block; }
     <div class="field engineer-only"><label>Weight precision <span class="info-tip" tabindex="0" role="img" aria-label="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0." data-tip="Bytes per parameter for the model weights. Lower saves VRAM with some quality loss: INT4/AWQ/GPTQ is about 0.5, BF16 is 2.0."><svg class="info-ico" aria-hidden="true" focusable="false"><use href="#ico-info"></use></svg></span></label>
       <!-- data-q = the value vLLM's --quantization expects. AWQ and GPTQ are the same
            bytes/param but different kernels and different flags, so they are separate
-           entries rather than one ambiguous "INT4" row. -->
-      <select id="weight-precision" onchange="recalculate()">
+           entries rather than one ambiguous "INT4" row.
+           FP8 is the default: vLLM v0.30.0 loads it from a preset's own checkpoint,
+           quantizing BF16 weights as it loads them, and syncPrecision() moves a card it
+           has no FP8 weight kernel for to BF16. AWQ, GPTQ and GGUF need a pre-quantized checkpoint, which no preset's repo
+           is (docs/research/fp8-on-load.md). -->
+      <select id="weight-precision" onchange="choosePrecision()">
         <option value="2" data-q="">BF16 / FP16 (2.0 B/param)</option>
-        <option value="1" data-q="fp8">FP8 (1.0 B/param)</option>
-        <option value="0.5" selected data-q="awq">AWQ 4-bit (0.50 B/param)</option>
+        <option value="1" selected data-q="fp8">FP8 (1.0 B/param)</option>
+        <option value="0.5" data-q="awq">AWQ 4-bit (0.50 B/param)</option>
         <option value="0.5" data-q="gptq">GPTQ 4-bit (0.50 B/param)</option>
         <option value="0.35" data-q="gguf">GGUF Q2_K (0.35 B/param)</option>
         <option value="0.5" data-q="gguf">GGUF Q3_K_M (0.50 B/param)</option>
@@ -2444,6 +2448,15 @@ function syncPrecision() {
     if (bf16.selected) fp8.selected = true;
     precisionForcedFromFp8 = false;
   }
+}
+
+/* The reader picked a precision, so what the control says is now their choice and not
+   a fallback the gate made: a card that runs FP8 must not turn it back into FP8. The
+   default, FP8, is never a choice, so on a card vLLM has no FP8 weight kernel for it is
+   BF16, and it comes back with the next card that runs FP8. */
+function choosePrecision() {
+  precisionForcedFromFp8 = false;
+  recalculate();
 }
 
 function recalculate() {

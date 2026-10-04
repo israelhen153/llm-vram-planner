@@ -1593,12 +1593,14 @@ def interactive_mode():
     # twice the memory the report sized it for.
     prec_opts = [(2.0, "BF16", ""), (1.0, "FP8", "fp8"), (0.5, "INT4/AWQ", "awq"),
                  (0.63, "Q4_K_M", "gguf"), (0.82, "Q6_K", "gguf")]
-    # No FP8 on a card vLLM has no FP8 weight kernel for, and why; INT4/AWQ stays the default.
+    # No FP8 on a card vLLM has no FP8 weight kernel for, and why. The default is --prec's:
+    # FP8, which loads from a preset's own repo, or BF16 where FP8 is not offered.
     blocked = fp8_weights_blocked(gpu)
     if blocked:
         prec_opts = [o for o in prec_opts if o[1] != "FP8"]
         print(f"FP8 is not offered: {blocked}")
-    default_prec = next(i for i, (_, l, _q) in enumerate(prec_opts, 1) if l == "INT4/AWQ")
+    default_label = "BF16" if default_precision(gpu) == "bf16" else "FP8"
+    default_prec = next(i for i, (_, l, _q) in enumerate(prec_opts, 1) if l == default_label)
     for i, (v, l, _q) in enumerate(prec_opts):
         print(f"  {i+1}. {l} ({v} B/param)")
     prec_choice = int(input(f"Select [{default_prec}]: ").strip() or str(default_prec)) - 1
@@ -1895,14 +1897,24 @@ def gguf_widths():
     return " (GGUF: " + ", ".join(f"{name} {bpp:g}" for bpp, name in levels) + ")"
 
 
+def default_precision(gpu):
+    """--prec when none is given, which depends on the card: FP8, which vLLM v0.30.0
+    loads from a preset's own checkpoint, quantizing BF16 weights as it loads them, or
+    BF16 on a card it has no FP8 weight kernel for. It was AWQ, and a preset's repo is no AWQ checkpoint, so the
+    default plan's command did not load (docs/research/fp8-on-load.md)."""
+    return "bf16" if fp8_weights_blocked(gpu) else "fp8"
+
+
 def from_cli_args(args):
-    if args.prec not in PRECISIONS:
-        raise ValueError(f"Unknown precision: {args.prec}. Available: {', '.join(PRECISIONS)}")
-    preset = PRESETS.get(args.preset)
     gpu = GPUS.get(args.gpu, GPUS[DEFAULT_GPU_KEY])
+    # Resolved once the card is known; a --prec the user gave always wins.
+    prec = default_precision(gpu) if args.prec is None else args.prec
+    if prec not in PRECISIONS:
+        raise ValueError(f"Unknown precision: {prec}. Available: {', '.join(PRECISIONS)}")
+    preset = PRESETS.get(args.preset)
     if preset:
         cfg = arch_fields(preset)
-        bpp, quant = PRECISIONS[args.prec]
+        bpp, quant = PRECISIONS[prec]
         cfg.update({
             "bpp": bpp, "quant": quant,
             "ctx": args.ctx, "conc": args.conc,
@@ -1919,20 +1931,27 @@ def from_cli_args(args):
         raise ValueError(f"Unknown preset: {args.preset}. Available: {', '.join(PRESETS.keys())}")
 
 
-if __name__ == "__main__":
+def build_parser():
+    """The command line, built where a test can read its defaults."""
     parser = argparse.ArgumentParser(description="Generate LLM VRAM Planning Report Card (PDF)")
     parser.add_argument("--json", help="Path to JSON config file")
     parser.add_argument("--preset", help=f"Model preset: {', '.join(PRESETS.keys())}")
     parser.add_argument("--gpu", default=DEFAULT_GPU_KEY, help=f"GPU: {', '.join(GPUS.keys())}")
     parser.add_argument("--ngpu", type=int, default=1, help="Number of GPUs")
-    parser.add_argument("--prec", default="awq", choices=list(PRECISIONS),
-                        help=f"Precision: {', '.join(PRECISIONS)}")
+    # No fixed default: from_cli_args() resolves it once the card is known.
+    parser.add_argument("--prec", default=None, choices=list(PRECISIONS),
+                        help=f"Precision: {', '.join(PRECISIONS)}. Default: fp8, or bf16 on a card "
+                             f"vLLM has no FP8 weight kernel for")
     parser.add_argument("--fp8-kv", action="store_true", help="Use FP8 KV cache")
     parser.add_argument("--no-nvlink", action="store_true", help="PCIe only (no NVLink)")
     parser.add_argument("--ctx", type=int, default=8192, help="Context length")
     parser.add_argument("--conc", type=int, default=1, help="Concurrent requests")
     parser.add_argument("-o", "--output", default="llm-vram-report.pdf", help="Output PDF path")
-    args = parser.parse_args()
+    return parser
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
 
     # A plan vLLM can't run as asked is refused on every path, with the reason and
     # exit status 2, and no PDF is written for it.

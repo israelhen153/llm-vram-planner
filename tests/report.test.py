@@ -252,9 +252,9 @@ def expected_cfg(pd):
     return cfg
 
 
-def cli_args_for(preset_key):
+def cli_args_for(preset_key, prec="awq"):
     return types.SimpleNamespace(
-        preset=preset_key, gpu=REQ["gpu"], prec="awq", ctx=REQ["ctx"],
+        preset=preset_key, gpu=REQ["gpu"], prec=prec, ctx=REQ["ctx"],
         conc=REQ["conc"], ngpu=REQ["n_gpu"], no_nvlink=not REQ["nvlink"],
         fp8_kv=REQ["kv_bpp"] == 1,
     )
@@ -777,11 +777,12 @@ test("a malicious hf_model value is shell-quoted in the generated command, not i
 def check_ordinary_values_are_not_needlessly_quoted():
     # shlex.quote() must be invisible for the common case — no stray quotes
     # around a plain HuggingFace id or quant name that never needed escaping.
-    cfg = gr.from_cli_args(cli_args_for("llama31-8b"))
+    # The CLI's own default precision, which names the preset's repo and FP8.
+    cfg = gr.from_cli_args(cli_args_for("llama31-8b", prec=None))
     cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
     assert "vllm serve meta-llama/Llama-3.1-8B-Instruct \\" in cmd, \
         f"an ordinary HF model id got quoted unnecessarily:\n{cmd}"
-    assert "--quantization awq \\" in cmd, f"an ordinary quant value got quoted unnecessarily:\n{cmd}"
+    assert "--quantization fp8 \\" in cmd, f"an ordinary quant value got quoted unnecessarily:\n{cmd}"
 
 test("ordinary hf_model/quant values render unquoted, exactly as before",
      check_ordinary_values_are_not_needlessly_quoted)
@@ -3195,8 +3196,8 @@ test("FP8 weights are refused on an AMD card whose LLVM target the planner doesn
 
 def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
     """After a gated card is chosen, the precision menu leaves FP8 out and says why,
-    and its default is still INT4/AWQ. On every other card, FP8 is offered and the
-    default is the same. At every one of BOARD_SAMPLE's counts: the test answered one
+    and its default is BF16. On every other card, FP8 is offered and is the default: the
+    menu's default was INT4/AWQ, which a preset's own repo cannot load. At every one of BOARD_SAMPLE's counts: the test answered one
     GPU, and a menu offering FP8 on a gated card above one board passed."""
     for slug, row in gr.GPUS.items():
         for n_gpu in BOARD_SAMPLE:
@@ -3213,10 +3214,53 @@ def check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it():
                 assert f"FP8 is not offered: {fp8_reason(row)}" in out.getvalue(), f"{where}: the reason is missing"
             else:
                 assert "FP8 is not offered" not in out.getvalue(), f"{where}: FP8 said to be withheld on a card that runs it"
-            assert cfg["bpp"] == 0.5, f"{where}: the default precision is {cfg['bpp']}, not INT4/AWQ"
+            want = (2.0, "") if gated else (1.0, "fp8")
+            assert (cfg["bpp"], cfg["quant"]) == want, f"{where}: the default precision is {cfg['bpp']}/{cfg['quant']!r}, not {want}"
 
-test("the interactive menu offers no FP8 on a gated card, says why, and keeps INT4/AWQ as its default",
+test("the interactive menu offers no FP8 on a gated card, says why, and defaults to BF16 there and FP8 elsewhere",
      check_the_interactive_menu_offers_no_fp8_where_vllm_cannot_run_it)
+
+
+print("\nThe default precision follows the card")
+
+# The README's statement of the default, a public claim pinned as a literal.
+README_DEFAULT = ("Without `--prec`, the weights are FP8, which vLLM can load from the preset's own "
+                  "checkpoint, or BF16 on a card vLLM has no FP8 weight kernel for.")
+
+
+def check_the_cli_default_precision_follows_the_card():
+    """--prec as argparse leaves it when none is given, resolved by from_cli_args(): FP8
+    on every card vLLM v0.30.0 loads FP8 weights on, BF16 on the three it has no FP8
+    weight kernel for, on every catalog row and every preset. It was AWQ, and no preset's
+    repo is an AWQ checkpoint, so the default plan's command did not load. A --prec the
+    user gives always wins, FP8 on a gated card included, which is refused rather than
+    quietly planned as BF16."""
+    assert FP8_GATED == {"mi210-64", "mi250x-128", "rx7900xtx-24"}, sorted(FP8_GATED)
+    parser = gr.build_parser()
+    for preset in gr.PRESETS:
+        for slug in gr.GPUS:
+            args = ["--preset", preset, "--gpu", slug]
+            cfg = gr.from_cli_args(parser.parse_args(args))
+            want = (2, "") if slug in FP8_GATED else (1, "fp8")
+            assert (cfg["bpp"], cfg["quant"]) == want, f"{preset} on {slug}: the default is {cfg['bpp']}/{cfg['quant']!r}"
+    for slug in gr.GPUS:
+        for prec, want in (("bf16", (2, "")), ("awq", (0.5, "awq")), ("gptq", (0.5, "gptq")),
+                           ("q4km", (0.63, "gguf")), ("fp8", (1, "fp8"))):
+            args = parser.parse_args(["--preset", "llama31-8b", "--gpu", slug, "--prec", prec])
+            if prec == "fp8" and slug in FP8_GATED:
+                try:
+                    gr.from_cli_args(args)
+                except gr.PlanRefused:
+                    continue
+                raise AssertionError(f"{slug}: an explicit --prec fp8 was planned on a gated card")
+            cfg = gr.from_cli_args(args)
+            assert (cfg["bpp"], cfg["quant"]) == want, f"{slug}: --prec {prec} became {cfg['bpp']}/{cfg['quant']!r}"
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    assert README_DEFAULT in readme, "README.md no longer states the default the CLI takes"
+    assert "--prec awq --fp8-kv" not in readme, "README.md's example asks for AWQ on a preset's own repo again"
+
+test("the CLI's default precision is FP8, and BF16 on a card vLLM has no FP8 weight kernel for; an explicit --prec wins",
+     check_the_cli_default_precision_follows_the_card)
 
 
 # What each interactive menu choice is, as the contract: its bytes per parameter and
@@ -4326,7 +4370,11 @@ def golden_cases():
          cfg(t4, 1, bpp=1, quant="fp8", nvlink=False)),
         ("h100-80 x1 — GGUF weights, so the plugin guidance under the command",
          cfg(h, 1, bpp=0.63, quant="gguf")),
-        ("h100-80 x1 — AWQ weights, the CLI's default precision", cfg(h, 1, bpp=0.5, quant="awq")),
+        ("h100-80 x1 — AWQ weights", cfg(h, 1, bpp=0.5, quant="awq")),
+        # The CLI as it runs with no --prec, through its own parser: every case above
+        # names its precision, so the default itself was invisible here while it was AWQ.
+        ("(CLI defaults) a100-40 x1 — --preset gemma4-26b and nothing else",
+         gr.from_cli_args(gr.build_parser().parse_args(["--preset", "gemma4-26b"]))),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
         # ROCm: vLLM's own image, and the lines that apply to the plan.
         ("mi300x-192 x1 — AWQ weights, so AITER on and the AWQ lines",
@@ -4464,7 +4512,9 @@ def check_the_golden_records_the_shapes_that_matter():
         # The one quantization the report prints guidance for under the command,
         # as the page golden records it under its command panel.
         "GGUF weights": lambda cs: any(c.get("quant") == "gguf" and comp(c)["fits"] for c in cs),
-        "AWQ weights, the default": lambda cs: any(c.get("quant") == "awq" for c in cs),
+        "AWQ weights": lambda cs: any(c.get("quant") == "awq" for c in cs),
+        "the CLI as it runs with no --prec": lambda cs: any(c.get("model_name") == gr.PRESETS["gemma4-26b"]["name"]
+                                                            and c["bpp"] == 1 for c in cs),
         "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),
         "FP8 weights refused on a card vLLM has no FP8 kernel for":
             lambda cs: any(c.get("quant") == "fp8" and c["gpu"]["vendor"] == "amd" and c["gpu"].get("gfx") != "gfx942"

@@ -43,13 +43,13 @@ S = {
     "A4 py: a config's quantization is lowered but not stripped, so ' fp8' gets past the refusal": [
         (REPORT_PY, 'cfg["quant"] = cfg["quant"].strip().lower()', 'cfg["quant"] = cfg["quant"].lower()', 1)],
     "A2 py: from_cli_args() plans a --prec it doesn't know as AWQ": [
-        (REPORT_PY, '    if args.prec not in PRECISIONS:\n'
-                    '        raise ValueError(f"Unknown precision: {args.prec}. Available: {\', \'.join(PRECISIONS)}")\n', "", 1),
-        (REPORT_PY, "        bpp, quant = PRECISIONS[args.prec]\n",
-                    '        bpp, quant = PRECISIONS.get(args.prec, (0.5, "awq"))\n', 1)],
+        (REPORT_PY, '    if prec not in PRECISIONS:\n'
+                    '        raise ValueError(f"Unknown precision: {prec}. Available: {\', \'.join(PRECISIONS)}")\n', "", 1),
+        (REPORT_PY, "        bpp, quant = PRECISIONS[prec]\n",
+                    '        bpp, quant = PRECISIONS.get(prec, (0.5, "awq"))\n', 1)],
     "A3 py: the command line takes any --prec, not only the ones it knows": [
-        (REPORT_PY, 'parser.add_argument("--prec", default="awq", choices=list(PRECISIONS),',
-                    'parser.add_argument("--prec", default="awq",', 1)],
+        (REPORT_PY, 'parser.add_argument("--prec", default=None, choices=list(PRECISIONS),',
+                    'parser.add_argument("--prec", default=None,', 1)],
 
     # ---- 2. inputs the tests never used ----
     "B1 both: a local model is mounted into the ROCm container only under /opt": [
