@@ -4802,6 +4802,25 @@ test('a link\'s precision is restored by the page\'s own loadURLHash(), and a li
   assert.strictEqual(named, 2 * BLOCKED.length, `${named} links' FP8 named in the notice`);
 });
 
+test('a GGUF plan at one byte per parameter is not refused as FP8; FP8 by width alone still is', () => {
+  /* One byte per parameter means FP8 only when no method is named. A GGUF plan at 1 B/param
+     on a card vLLM has no FP8 weight kernel for printed the FP8 refusal in place of its command. */
+  const h = renderHarness();
+  for (const slug of ['mi210-64', 'h100-80']) {
+    const gguf = asState(GPU_TABLE[slug], 1, { ...dense8BPlan, bytesPerParam: 1, quantMethod: 'gguf', hasNVLink: false });
+    const c = h.computeInference(gguf);
+    assert.ok(c.fits, `${slug}: 8B at 1 B/param should fit`);
+    const cmd = h.buildVllmCommand(gguf, c, 'meta-llama/Llama-3.1-8B-Instruct');
+    assert.ok(cmd.split('\n').includes('    --quantization gguf \\') && !cmd.includes('FP8'), `${slug}: ${cmd}`);
+    // And the ROCm lines under it on AMD, which a refused plan does not get.
+    h.renderCommand(gguf, c);
+    assert.strictEqual((h.out['command-output'] || '').includes("vLLM's own ROCm image"), slug === 'mi210-64', `${slug}: the ROCm lines`);
+    const width = asState(GPU_TABLE[slug], 1, { ...dense8BPlan, bytesPerParam: 1, quantMethod: '', hasNVLink: false });
+    assert.strictEqual(h.buildVllmCommand(width, h.computeInference(width), 'm').startsWith('# vLLM v0.30.0 has no FP8 weight kernel'),
+      slug === 'mi210-64', `${slug}: FP8 by width alone`);
+  }
+});
+
 test('a local model is mounted into the ROCm container wherever it lives, and a hub id is not', () => {
   /* The command test's own models held only /opt once, then three listed paths, and a
      mount skipping any path with a dot, or deeper than four levels, passed. Paths

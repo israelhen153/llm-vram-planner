@@ -3264,6 +3264,34 @@ test("the CLI's default precision is FP8, and BF16 on a card vLLM has no FP8 wei
      check_the_cli_default_precision_follows_the_card)
 
 
+def check_a_gguf_plan_at_one_byte_per_parameter_is_not_refused_as_fp8():
+    """One byte per parameter means FP8 only when no method is named: a GGUF plan at 1
+    B/param on a card with no FP8 weight kernel was refused as FP8. Planned there and on an
+    H100, with its command and, on AMD, the ROCm lines; FP8 by width alone, or by an FP8
+    method's name, is still refused on the gated card."""
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "c.json")
+        for slug in ("mi210-64", "h100-80"):
+            with open(config, "w") as fh:
+                json.dump({"preset": "llama31-8b", "gpu": slug, "quant": "gguf", "bpp": 1}, fh)
+            cfg = gr.from_json(config)
+            cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+            assert "    --quantization gguf \\" in cmd.split("\n") and "FP8" not in cmd, f"{slug}:\n{cmd}"
+            assert bool(gr.rocm_guidance(cfg)) == (slug == "mi210-64"), f"{slug}: the ROCm lines"
+        for raw in ({"bpp": 1}, {"quant": "fp8"}, {"quant": "fbgemm_fp8"}):
+            with open(config, "w") as fh:
+                json.dump(dict({"preset": "llama31-8b", "gpu": "mi210-64"}, **raw), fh)
+            try:
+                gr.from_json(config)
+            except gr.PlanRefused as refused:
+                assert "no FP8 weight kernel" in str(refused), (raw, str(refused))
+            else:
+                raise AssertionError(f"{raw}: FP8 weights planned on an MI210")
+
+test("a GGUF plan at one byte per parameter is not refused as FP8; FP8 by width or by name still is",
+     check_a_gguf_plan_at_one_byte_per_parameter_is_not_refused_as_fp8)
+
+
 print("\nA command copied out of the PDF pastes as the same command")
 
 
@@ -3669,7 +3697,9 @@ def json_precision_on(quant, bpp, row):
     """json_precision() on this card: FP8 weights on a card that can't run them get the
     FP8 refusal instead."""
     want = json_precision(None if quant is ABSENT else quant, bpp, row["vendor"])
-    if isinstance(want, tuple) and (want[1] == "fp8" or want[0] == 1) and gr.fp8_weights_blocked(row):
+    # FP8 by an FP8 method's name, or by one byte per parameter with no method named.
+    if isinstance(want, tuple) and (want[1] in FP8_METHODS_CONTRACT or (want[0] == 1 and not want[1])) \
+            and gr.fp8_weights_blocked(row):
         want = fp8_reason(row) + " Choose --prec bf16, awq or gptq."
     return want
 

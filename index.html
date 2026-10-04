@@ -1354,7 +1354,8 @@ function computeInference(state) {
    * that, and already labels such a config FP8. Both engines read both, or they
    * would disagree on a case the parity suite drives from one set of inputs.
    * No GGUF level is exactly 1.0 (Q8_0 is 1.1). */
-  const isFp8 = quantMethod === 'fp8' || bytesPerParam === 1;
+  // One byte per parameter is FP8 only when no method is named: a GGUF level is not.
+  const isFp8 = quantMethod === 'fp8' || (bytesPerParam === 1 && !quantMethod);
 
   /* Every figure from here to the end of this block reads a PERF constant, so
    * every one of them is null when there are none. Declared out here and
@@ -2089,7 +2090,7 @@ const ROCM = {
 function rocmGuidance(state) {
   if (state.vendor !== 'amd') return [];
   // No lines under a command that isn't printed: FP8 refused on this target.
-  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1)
+  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod))
       && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })) return [];
   const arch = ROCM.arch[state.gfx] || {};
   const L = ROCM.lines;
@@ -2143,7 +2144,7 @@ function buildVllmCommand(state, computed, modelPath, fromPreset = false) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
   /* FP8 weights on a card vLLM can't run them on: no command, whatever path brought
      the state here (the control offers no FP8 there, but a link or a snapshot can). */
-  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))
+  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod)) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))
     return `# ${fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })} Choose BF16, AWQ or GPTQ.`;
   // The split computeInference() sharded against, not a second derivation of
   // it: the figures above this command and the command itself are now the same

@@ -33,7 +33,7 @@ tree = ast.parse(src)
 # Every module-level name compute() closes over must be listed here, and must be
 # a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
 # gets skipped, and surfaces as a bare NameError from inside compute() much later.
-wanted = {"GIB", "GPUS", "PERF", "ROCM", "PREQUANTIZED"}
+wanted = {"GIB", "GPUS", "PERF", "ROCM", "PREQUANTIZED", "FP8_METHODS"}
 # build_vllm_cmd/split_parallelism/device_count_for don't close over any of the
 # above (they take cfg/comp as plain dicts and gpu_count as a plain int), so
 # wanted stays as-is — they just need to ride along in the same exec(), because
@@ -41,7 +41,7 @@ wanted = {"GIB", "GPUS", "PERF", "ROCM", "PREQUANTIZED"}
 # split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
               "device_count_for", "interconnect_name", "rocm_guidance", "fp8_weights_blocked",
-              "prequantized_stand_in"}
+              "prequantized_stand_in", "asks_for_fp8_weights"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)

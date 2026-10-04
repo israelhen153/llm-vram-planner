@@ -210,7 +210,7 @@ PY_GGUF_RELEASE_SRC = "     \"https://github.com/vllm-project/vllm/releases/tag/
 # its lines, the notes, the leads, and the overhead's words ----
 JS_R10_FP8_LINE = "  if (!arch.fp8Weights) out.push(L.fp8Weights);\n"
 JS_R10_BLOCKED = "  if (!gpu || gpu.vendor !== 'amd' || (ROCM.arch[gpu.gfx] || {}).fp8Weights) return '';\n"
-JS_R10_BUILD_REFUSE = "  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
+JS_R10_BUILD_REFUSE = "  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod)) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
 JS_R10_ARCH = "  const arch = state.vendor === 'amd' ? (ROCM.arch[state.gfx] || {}) : null;\n"
 JS_R10_AITER = "      + (arch.aiter ? '    --env VLLM_ROCM_USE_AITER=1 \\\\\\n' : '')\n"
 JS_R10_IMAGE = "  \"image\": \"vllm/vllm-openai-rocm:v0.30.0\",\n"
@@ -365,6 +365,9 @@ PY_R27_BETWEEN_WORDS = '            out.append(f"{cur} \\\\")\n            cur =
 JS_R27_NOTICE_PUSH = "      if (refused && bf16) urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val,\n"
 JS_R27_NOTICE_SPLIT = '  const gone = live.filter(e => !e.why), refused = live.filter(e => e.why);\n'
 JS_R27_NOTICE_WHY = "                                                 fallback: bf16.value, why: refused, shown: 'BF16' });\n"
+
+PY_R27_FP8_RULE = '    return quant in FP8_METHODS or (not quant and cfg.get("bpp") == 1)\n'
+JS_R27_ROCM_FP8 = "  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod))\n"
 
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"

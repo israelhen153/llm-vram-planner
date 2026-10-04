@@ -311,7 +311,7 @@ def compute(cfg):
     # already renders as "FP8" through PREC_LABELS — so deriving the flag from
     # bpp as well is what stops the label and the arithmetic disagreeing. No
     # GGUF level is exactly 1.0 (Q8_0 is 1.1), so the test is unambiguous.
-    is_fp8 = cfg.get("quant", "") == "fp8" or bpp == 1
+    is_fp8 = asks_for_fp8_weights(cfg)
     layers = cfg["layers"]
     kv_heads = cfg["kv_heads"]
     h_dim = cfg["h_dim"]
@@ -821,7 +821,7 @@ def rocm_guidance(cfg):
     if gpu.get("vendor") != "amd":
         return []
     # No lines under a command that isn't printed: FP8 refused on this target.
-    if (cfg.get("quant") == "fp8" or cfg.get("bpp") == 1) and fp8_weights_blocked(gpu):
+    if asks_for_fp8_weights(cfg) and fp8_weights_blocked(gpu):
         return []
     arch = ROCM["arch"].get(gpu.get("gfx"), {})
     lines = ROCM["lines"]
@@ -845,6 +845,14 @@ class PlanRefused(ValueError):
     """A plan vLLM can't run as asked, with the reason. The CLI prints it and exits 2."""
 
 
+def asks_for_fp8_weights(cfg):
+    """Whether a plan's weights are FP8: an FP8 method named, or one byte per parameter with
+    no method named. A GGUF plan at 1 B/param was refused as FP8 on a card with no FP8
+    weight kernel. Mirrors the test in buildVllmCommand() and rocmGuidance() in index.html."""
+    quant = cfg.get("quant") or ""
+    return quant in FP8_METHODS or (not quant and cfg.get("bpp") == 1)
+
+
 def fp8_weights_blocked(gpu):
     """Why vLLM can't load FP8 weights on this card, or "" where it can: on AMD, by
     the ROCm table, since v0.30.0's FP8 weight kernels need CDNA3 or newer, or
@@ -863,8 +871,8 @@ def fp8_weights_blocked(gpu):
 
 def refuse_fp8_where_vllm_cannot(cfg):
     """Stop a plan asking for FP8 weights on a card vLLM can't run them on, the same
-    test compute() uses for FP8: quant says fp8, or the bytes per parameter are 1."""
-    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:
+    test compute() uses for FP8 (asks_for_fp8_weights())."""
+    if asks_for_fp8_weights(cfg):
         reason = fp8_weights_blocked(cfg.get("gpu"))
         if reason:
             raise PlanRefused(f"{reason} Choose --prec bf16, awq or gptq.")
@@ -933,7 +941,7 @@ def build_vllm_cmd(cfg, comp):
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
     # FP8 weights on a card vLLM can't run them on: no command, whatever path brought
     # the config here. The CLI and JSON paths refuse it earlier; this is the last line.
-    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:
+    if asks_for_fp8_weights(cfg):
         reason = fp8_weights_blocked(cfg.get("gpu"))
         if reason:
             return f"# {reason} Choose BF16, AWQ or GPTQ."

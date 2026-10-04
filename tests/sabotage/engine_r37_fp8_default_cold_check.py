@@ -62,7 +62,7 @@ JS_RENDER = "  const cmd = buildVllmCommand(state, computed, modelPath, !!preset
 JS_NOTE = ("  return { path, note: `# ${method} needs a pre-quantized checkpoint, which ${baseRepo} is not: "
            "replace ${path} with ${forms}.` };\n")
 JS_ARCH_GFX90A = '    "gfx90a": {\n      "fp8Weights": false,\n'
-JS_BUILDER_REFUSAL = ("  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
+JS_BUILDER_REFUSAL = ("  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod)) && fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName }))\n"
                       "    return `# ${fp8WeightsBlocked({ vendor: state.vendor, gfx: state.gfx, name: state.gpuName })} Choose BF16, AWQ or GPTQ.`;\n")
 JS_RECALC_SYNC = "  syncPrecision();\n  renderRestoreNotice();\n"
 JS_TAIL = "  cmd += `    --max-model-len ${Math.min(computed.maxContextSingleUser, state.contextLength)}`;\n  return cmd;\n"
@@ -90,7 +90,7 @@ PY_GATE = ('    if gpu.get("vendor") != "amd" or ROCM["arch"].get(gpu.get("gfx")
 PY_ARCH_GFX90A = " 'arch': {'gfx90a': {'fp8Weights': False, 'aiter': False, 'fp8KvUnverified': False},\n"
 PY_NOTE = ('    return path, f"# {method} needs a pre-quantized checkpoint, which {base_repo} is not: '
            'replace {path} with {forms}."\n')
-PY_BUILDER_REFUSAL = ('    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:\n'
+PY_BUILDER_REFUSAL = ('    if asks_for_fp8_weights(cfg):\n'
                       '        reason = fp8_weights_blocked(cfg.get("gpu"))\n'
                       '        if reason:\n'
                       '            return f"# {reason} Choose BF16, AWQ or GPTQ."\n')

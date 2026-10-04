@@ -27,7 +27,7 @@ from anchors import (INDEX_HTML, REPORT_PY, JS_R10_SYNC_FORCE, PY_R10_MENU_FILTE
                      PY_R27_TOKENIZER, PY_R27_PATH, PY_R27_PDF_LINES, PY_R27_PDF_SPLIT,
                      PY_R27_COMMENT_TAIL, PY_R27_WORD_BREAK, PY_R27_WORD_REOPEN, PY_R27_FRAME_WIDTH,
                      PY_R27_QUOTED_RUN, PY_R27_BETWEEN_WORDS, JS_R27_NOTICE_PUSH, JS_R27_NOTICE_SPLIT,
-                     JS_R27_NOTICE_WHY)
+                     JS_R27_NOTICE_WHY, JS_R10_BUILD_REFUSE, PY_R27_FP8_RULE, JS_R27_ROCM_FP8)
 
 # The command box, the one place the page writes the command. Used once, so kept here.
 JS_BOX = "<code>${cmd}</code></div>${rocmLines}`);\n"
@@ -131,5 +131,13 @@ S["N2 js: the restore notice drops an entry that carries its reason"] = [
     (INDEX_HTML, JS_R27_NOTICE_SPLIT, JS_R27_NOTICE_SPLIT.replace("refused = live.filter(e => e.why)", "refused = []"), 1)]
 S["N3 js: the entry loses its reason, so the notice says FP8 is not in the tool"] = [
     (INDEX_HTML, JS_R27_NOTICE_WHY, JS_R27_NOTICE_WHY.replace("why: refused, ", ""), 1)]
+
+# ---- round 38's cold check: one byte per parameter is FP8 only when no method is named ----
+S["G1 py: one byte per parameter is FP8 whatever the method named"] = [
+    (REPORT_PY, PY_R27_FP8_RULE, '    return quant in FP8_METHODS or cfg.get("bpp") == 1\n', 1)]
+S["G2 js: the command builder takes one byte per parameter as FP8 whatever the method"] = [
+    (INDEX_HTML, JS_R10_BUILD_REFUSE, JS_R10_BUILD_REFUSE.replace("(state.bytesPerParam === 1 && !state.quantMethod)", "state.bytesPerParam === 1"), 1)]
+S["G3 js: the ROCm lines take one byte per parameter as FP8 whatever the method"] = [
+    (INDEX_HTML, JS_R27_ROCM_FP8, JS_R27_ROCM_FP8.replace("(state.bytesPerParam === 1 && !state.quantMethod)", "state.bytesPerParam === 1"), 1)]
 
 run_driver(S)

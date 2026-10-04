@@ -62,9 +62,9 @@ JS_RECALC = "  syncInterconnect();\n  syncPrecision();\n  renderRestoreNotice();
 JS_LINK_PICK = "      if (match) match.selected = true;\n"
 JS_LINK_REFUSED = "      if (refused && bf16) urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val,\n"
 JS_LINK_WHY = "                                                 fallback: bf16.value, why: refused, shown: 'BF16' });\n"
-JS_BOX_GATE = ("  if ((state.quantMethod === 'fp8' || state.bytesPerParam === 1) && fp8WeightsBlocked({ vendor: state.vendor, "
+JS_BOX_GATE = ("  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod)) && fp8WeightsBlocked({ vendor: state.vendor, "
                "gfx: state.gfx, name: state.gpuName }))\n    return `# ${fp8WeightsBlocked(")
-PY_BOX_GATE = ('    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:\n        reason = fp8_weights_blocked(cfg.get("gpu"))\n'
+PY_BOX_GATE = ('    if asks_for_fp8_weights(cfg):\n        reason = fp8_weights_blocked(cfg.get("gpu"))\n'
                '        if reason:\n            return f"# {reason} Choose BF16, AWQ or GPTQ."\n')
 
 # ---- the CLI and the menu ----------------------------------------------------------------
@@ -130,7 +130,7 @@ S["A11 page: the command box prints FP8 on a blocked card (gate dropped, page on
     (JS, JS_BOX_GATE, JS_BOX_GATE.replace("if ((state.quantMethod", "if (false && (state.quantMethod"), 1)]
 S["A12 both: the command printed on a blocked card by both builders"] = [
     (JS, JS_BOX_GATE, JS_BOX_GATE.replace("if ((state.quantMethod", "if (false && (state.quantMethod"), 1),
-    (PY, PY_BOX_GATE, PY_BOX_GATE.replace('    if cfg.get("quant") == "fp8" or cfg.get("bpp") == 1:\n', "    if False:\n"), 1)]
+    (PY, PY_BOX_GATE, PY_BOX_GATE.replace('    if asks_for_fp8_weights(cfg):\n', "    if False:\n"), 1)]
 # ---- (1) the CLI ----
 S["B1 cli: the default is FP8 on every card"] = [(PY, PY_DEFAULT, '    return "fp8"\n', 1)]
 S["B2 cli: the default is BF16 on every card"] = [(PY, PY_DEFAULT, '    return "bf16"\n', 1)]
