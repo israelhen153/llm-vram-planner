@@ -33,14 +33,15 @@ tree = ast.parse(src)
 # Every module-level name compute() closes over must be listed here, and must be
 # a plain assignment — an annotated one (PERF: dict = {...}) parses as AnnAssign,
 # gets skipped, and surfaces as a bare NameError from inside compute() much later.
-wanted = {"GIB", "GPUS", "PERF", "ROCM"}
+wanted = {"GIB", "GPUS", "PERF", "ROCM", "PREQUANTIZED"}
 # build_vllm_cmd/split_parallelism/device_count_for don't close over any of the
 # above (they take cfg/comp as plain dicts and gpu_count as a plain int), so
 # wanted stays as-is — they just need to ride along in the same exec(), because
 # compute() now calls split_parallelism(device_count_for(cfg)) for the TP/DP
 # split it returns, plus shlex in ns below since build_vllm_cmd shells out to it.
 wanted_fns = {"compute", "build_vllm_cmd", "split_parallelism", "supports_nvlink",
-              "device_count_for", "interconnect_name", "rocm_guidance", "fp8_weights_blocked"}
+              "device_count_for", "interconnect_name", "rocm_guidance", "fp8_weights_blocked",
+              "prequantized_stand_in"}
 nodes = [
     n for n in tree.body
     if (isinstance(n, ast.FunctionDef) and n.name in wanted_fns)
@@ -1122,6 +1123,19 @@ for slug, row in GPUS.items():
                                    "devices": row["devices"], "vendor": "amd", "gfx": row.get("gfx"),
                                    "skip_reason": None})
 
+# A preset's own repo under every precision, on both vendors: AWQ, GPTQ and GGUF name a
+# stand-in path and the line saying what goes there, GGUF the base repo's tokenizer too,
+# and a path the user gave is never replaced, whatever it names. Both engines must print
+# every one of them alike.
+for vendor, gfx, devices in (("nvidia", None, 1), ("amd", "gfx942", 1), ("amd", "gfx90a", 2)):
+    for q in QUANT_VALUES:
+        for from_preset in (True, False):
+            for hf in ("meta-llama/Llama-3.1-8B-Instruct", "google/gemma-4-26B-A4B-it"):
+                MATRIX.append({"n_gpu": 1, "prefix_caching": True, "fits": True, "quant": q,
+                               "is_moe": False, "kv_bpp": 2, "ctx": 4096, "hf_model": hf,
+                               "devices": devices, "vendor": vendor, "gfx": gfx,
+                               "from_preset": from_preset, "skip_reason": None})
+
 for unsafe in UNSAFE_HF_MODELS:
     MATRIX.append({
         "n_gpu": 1, "prefix_caching": True, "fits": True, "quant": None,
@@ -1146,7 +1160,7 @@ py_cmds = [
         {"hf_model": m["hf_model"], "ctx": m["ctx"], "n_gpu": m["n_gpu"],
          "gpu": {"devices": m.get("devices", 1), "vendor": m.get("vendor", "nvidia"), "gfx": m.get("gfx")},
          "quant": m["quant"], "prefix_caching": m["prefix_caching"],
-         "kv_bpp": m["kv_bpp"]},
+         "kv_bpp": m["kv_bpp"], "model_from_preset": m.get("from_preset", False)},
         py_comp(m),
     )
     for m in MATRIX
@@ -1165,7 +1179,9 @@ const rocm = html.match(/^const ROCM = \{[\s\S]*?\n\};$/m);
 if (!rocm) throw new Error('ROCM not found in index.html');
 const src = rocm[0] + '\n' + extract('function fp8WeightsBlocked(gpu) {') + extract('function splitParallelism(gpuCount) {')
           + extract('function parallelismFor(state) {')
-          + extract('function buildVllmCommand(state, computed, modelPath) {');
+          + html.match(/^const PREQUANTIZED = .+;$/m)[0] + '\n'
+          + extract('function prequantizedStandIn(quantMethod, baseRepo) {')
+          + extract('function buildVllmCommand(state, computed, modelPath, fromPreset = false) {');
 const api = new Function(`${src}; return {buildVllmCommand, parallelismFor};`)();
 const scenarios = JSON.parse(process.argv[2]);
 const MAX_CTX_1 = 8192; // must match Python's MAX_CTX_1 above
@@ -1179,7 +1195,7 @@ console.log(JSON.stringify(scenarios.map((m) => {
   return api.buildVllmCommand(
     state,
     {fits: m.fits, isMoE: m.is_moe, maxContextSingleUser: MAX_CTX_1, tp, dp},
-    m.hf_model);
+    m.hf_model, !!m.from_preset);
 })));
 """
 proc = subprocess.run(
@@ -1194,7 +1210,7 @@ else:
         label = (f"{m.get('vendor', 'nvidia')}{('/' + m['gfx']) if m.get('gfx') else ''} "
                  f"n_gpu={m['n_gpu']} prefix_caching={m['prefix_caching']} fits={m['fits']} "
                  f"quant={m['quant']!r} is_moe={m['is_moe']} kv_bpp={m['kv_bpp']} ctx={m['ctx']} "
-                 f"hf_model={m['hf_model']!r}")
+                 f"hf_model={m['hf_model']!r}{' (a preset' + chr(39) + 's own repo)' if m.get('from_preset') else ''}")
         if m["skip_reason"]:
             print(f"  skip {label}")
             print(f"       reason: {m['skip_reason']}")

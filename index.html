@@ -2116,7 +2116,28 @@ function fp8WeightsBlocked(gpu) {
     : `vLLM ${ROCM.vllm} loads FP8 weights only on CDNA3 or newer, or RDNA4, and ${name}'s LLVM target is not one this planner knows.`;
 }
 
-function buildVllmCommand(state, computed, modelPath) {
+/* A preset's repo is the model's own checkpoint, and AWQ, GPTQ and every GGUF level need
+   a pre-quantized one, which no preset's repo is: vLLM v0.30.0 quantizes to FP8 as it
+   loads, and to none of these (docs/research/fp8-on-load.md). So on a preset's own repo
+   the command names a stand-in path where that checkpoint goes, under one line saying
+   so. The path is absolute, so it passes both of the planner's path rules, and holds no
+   space and no <...>, which the PDF reads as markup. GGUF also gets the base repo as
+   --tokenizer, as vLLM's GGUF page and vllm-gguf-plugin's README recommend in every
+   example. A path the reader gave is never replaced. Mirrored by
+   prequantized_stand_in() in generate_report.py. */
+const PREQUANTIZED = { awq: 'AWQ', gptq: 'GPTQ', gguf: 'GGUF' };
+function prequantizedStandIn(quantMethod, baseRepo) {
+  if (!Object.hasOwn(PREQUANTIZED, quantMethod || '')) return null;
+  const method = PREQUANTIZED[quantMethod], name = baseRepo.split('/').pop();
+  const path = quantMethod === 'gguf' ? `/opt/models/${name}.gguf` : `/opt/models/${name}-${method}`;
+  const forms = quantMethod === 'gguf'
+    ? 'the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file'
+    : `the ${method} checkpoint's Hugging Face id, or its absolute path on the GPU server`;
+  return { path, note: `# ${method} needs a pre-quantized checkpoint, which ${baseRepo} is not: replace ${path} with ${forms}.` };
+}
+
+/* fromPreset: modelPath is a preset's own repo, not a path the reader gave. */
+function buildVllmCommand(state, computed, modelPath, fromPreset = false) {
   if (!computed.fits) return '# Does not fit — increase GPUs, lower precision, or reduce context';
   /* FP8 weights on a card vLLM can't run them on: no command, whatever path brought
      the state here (the control offers no FP8 there, but a link or a snapshot can). */
@@ -2126,6 +2147,10 @@ function buildVllmCommand(state, computed, modelPath) {
   // it: the figures above this command and the command itself are now the same
   // number by construction rather than by two call sites agreeing.
   const { tp, dp } = computed;
+  // The stand-in for a pre-quantized checkpoint, on a preset's own repo only (see above).
+  const baseRepo = modelPath;
+  const standIn = fromPreset ? prequantizedStandIn(state.quantMethod, baseRepo) : null;
+  if (standIn) modelPath = standIn.path;
   /* On AMD, vLLM's own ROCm image with the flags its docs give, then the same
      arguments `vllm serve` takes, since the image's entrypoint is `vllm serve`.
      AITER goes on where AMD says to set it, and a local model path is mounted at
@@ -2137,6 +2162,7 @@ function buildVllmCommand(state, computed, modelPath) {
       + (modelPath.startsWith('/') ? `    -v ${modelPath}:${modelPath} \\\n` : '')
       + `    ${ROCM.image} \\\n    ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`
     : `vllm serve ${modelPath} \\\n    --host 0.0.0.0 --port 8000 \\\n`;
+  if (standIn) cmd = `${standIn.note}\n` + cmd;
   /* Emitted whenever more than one device is in play, which is what the board
      count used to mean and still means on every single-device card — so the
      command is unchanged for every catalogued row, including the odd counts
@@ -2153,6 +2179,7 @@ function buildVllmCommand(state, computed, modelPath) {
      activation dtype, where auto is also correct. */
   cmd += '    --dtype auto \\\n';
   if (state.quantMethod) cmd += `    --quantization ${state.quantMethod} \\\n`;
+  if (standIn && state.quantMethod === 'gguf') cmd += `    --tokenizer ${baseRepo} \\\n`;
   if (state.kvBytesPerValue < 2) cmd += '    --kv-cache-dtype fp8 \\\n';
   // APC is on by default in vLLM V1, so only the opt-out is worth emitting.
   if (!state.prefixCaching) cmd += '    --no-enable-prefix-caching \\\n';
@@ -2187,7 +2214,7 @@ const GGUF_GUIDANCE = [
 function renderCommand(state, computed) {
   const preset = MODEL_PRESETS[state.presetKey];
   const modelPath = preset ? preset.hf : (importedModelId && !importedModelId.endsWith('.json') ? importedModelId : '/opt/models/YourModel');
-  const cmd = buildVllmCommand(state, computed, modelPath);
+  const cmd = buildVllmCommand(state, computed, modelPath, !!preset);
 
   let warning = '';
   if (computed.fits) {

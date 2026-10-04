@@ -3263,6 +3263,120 @@ test("the CLI's default precision is FP8, and BF16 on a card vLLM has no FP8 wei
      check_the_cli_default_precision_follows_the_card)
 
 
+print("\nA preset's own repo is no pre-quantized checkpoint")
+
+# The stand-in path a command names on a preset's own repo for AWQ, GPTQ and every GGUF
+# level, and the line saying what goes there: a contract, so literals here with the repo
+# filled in, never read back from generate_report.py. tests/model.test.js holds the page
+# to the same literals, so the two engines print the same thing.
+STAND_IN_FORMS = {"awq": "the AWQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
+                  "gptq": "the GPTQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
+                  "gguf": "the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file"}
+
+
+def stand_in_for(quant, repo):
+    if quant not in STAND_IN_FORMS:
+        return None
+    name = repo.split("/")[-1]
+    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{quant.upper()}"
+    return path, f"# {quant.upper()} needs a pre-quantized checkpoint, which {repo} is not: replace {path} with {STAND_IN_FORMS[quant]}."
+
+
+def assert_command_names(cmd, repo, quant, vendor, replaced, where):
+    """The rule, on one printed command: a stand-in and its line exactly when `replaced`,
+    the base repo as --tokenizer exactly for GGUF then, and the repo itself otherwise."""
+    lines = cmd.split("\n")
+    want = stand_in_for(quant, repo) if replaced else None
+    model = want[0] if want else repo
+    assert (lines[0] == want[1]) if want else not any("pre-quantized" in l for l in lines), \
+        f"{where}: the stand-in's line is {'missing' if want else 'there'}:\n{cmd}"
+    if want:
+        assert model.startswith("/") and not re.search(r"[\s<>]", model) and not gr.unresolvable_model_path(model), \
+            f"{where}: the stand-in {model} is not an absolute path free of spaces and <>"
+    assert (f"    {model} \\" if vendor == "amd" else f"vllm serve {model} \\") in lines, \
+        f"{where}: the command does not name {model}:\n{cmd}"
+    assert (f"    --tokenizer {repo} \\" in lines) == bool(want and quant == "gguf"), \
+        f"{where}: --tokenizer {'missing from' if want and quant == 'gguf' else 'on'} the command:\n{cmd}"
+    return lines
+
+
+def check_every_preset_at_every_precision_names_a_stand_in_exactly_for_awq_gptq_and_gguf():
+    """from_cli_args() for every preset at every --prec on every catalog row, the
+    architecture shrunk to 8B so every plan fits and prints a command: AWQ, GPTQ and each
+    GGUF level name the stand-in under its line, GGUF with the base repo as --tokenizer,
+    and BF16 and FP8 the preset's repo. Then the PDF prints every line of it, on both
+    vendors, at every precision."""
+    parser = gr.build_parser()
+    small = gr.arch_fields(gr.PRESETS["llama31-8b"])
+    named = 0
+    for key, preset in gr.PRESETS.items():
+        for prec in gr.PRECISIONS:
+            for slug, card in gr.GPUS.items():
+                if prec == "fp8" and slug in FP8_GATED:
+                    continue
+                cfg = gr.from_cli_args(parser.parse_args(["--preset", key, "--gpu", slug, "--prec", prec]))
+                cfg.update(small)
+                comp = gr.compute(cfg)
+                if not comp["fits"]:
+                    continue
+                quant = cfg["quant"]
+                assert_command_names(gr.build_vllm_cmd(cfg, comp), preset["hf"], quant, card["vendor"],
+                                     quant in ("awq", "gptq", "gguf"), f"{key} --prec {prec} on {slug}")
+                named += quant in ("awq", "gptq", "gguf")
+    assert named >= len(gr.PRESETS) * 5 * 10, f"only {named} plans named a stand-in"
+    for slug in ("h100-80", "mi300x-192"):
+        for prec in gr.PRECISIONS:
+            cfg = gr.from_cli_args(parser.parse_args(["--preset", "llama31-8b", "--gpu", slug, "--prec", prec]))
+            cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+            strings = [s.strip() for s in story_strings(cfg)]
+            for line in cmd.split("\n"):
+                assert line.strip() in strings, f"--prec {prec} on {slug}: the PDF does not print {line!r}"
+
+test("every preset at every --prec on every card: a stand-in path and its line exactly for AWQ, GPTQ and GGUF, in the command and the PDF",
+     check_every_preset_at_every_precision_names_a_stand_in_exactly_for_awq_gptq_and_gguf)
+
+
+def check_a_model_path_the_user_gave_is_never_replaced():
+    """A JSON config's hf_model, even one naming the preset's own repo, a JSON config with
+    no preset that claims to carry one, and the menu's own model id: never replaced. A
+    preset's repo is, on the JSON and menu paths too."""
+    path = "/srv/models/llama-8b-awq"
+    cases = [({"preset": "llama31-8b", "hf_model": path}, path, False),
+             ({"preset": "llama31-8b", "hf_model": "meta-llama/Llama-3.1-8B-Instruct"},
+              "meta-llama/Llama-3.1-8B-Instruct", False),
+             ({"params": 8, "layers": 32, "kv_heads": 8, "hf_model": path, "model_from_preset": True}, path, False),
+             ({"preset": "llama31-8b"}, "meta-llama/Llama-3.1-8B-Instruct", True)]
+    with tempfile.TemporaryDirectory() as tmp:
+        for raw, repo, replaced in cases:
+            for quant, bpp in (("awq", None), ("gptq", None), ("gguf", 0.63)):
+                for slug in ("h100-80", "mi300x-192"):
+                    config = os.path.join(tmp, "c.json")
+                    with open(config, "w") as fh:
+                        json.dump(dict(raw, gpu=slug, quant=quant, **({"bpp": bpp} if bpp else {})), fh)
+                    cfg = gr.from_json(config)
+                    cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+                    assert_command_names(cmd, repo, quant, gr.GPUS[slug]["vendor"], replaced,
+                                         f"JSON {sorted(raw)} --quantization {quant} on {slug}")
+                    strings = [s.strip() for s in story_strings(cfg)]
+                    assert all(line.strip() in strings for line in cmd.split("\n")), \
+                        f"JSON {sorted(raw)} --quantization {quant}: the PDF does not print the command"
+    # The menu: a model id typed for a custom architecture, then a preset, each at AWQ and Q4_K_M.
+    h100 = str(list(gr.GPUS).index("h100-80") + 1)
+    for choice, typed in (("custom", path), ("custom", "meta-llama/Llama-3.1-8B-Instruct"),
+                          (str(list(gr.PRESETS).index("llama31-8b") + 1), None)):
+        for menu_pick, quant in (("3", "awq"), ("4", "gguf")):
+            answers = ([choice] + (["8", "100", "32", "8", "128", "0", typed, "mine"] if typed else [])
+                       + [h100, "1", menu_pick, "n", "8192", "1"])
+            with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(io.StringIO()):
+                cfg = gr.interactive_mode()
+            assert cfg["quant"] == quant, (choice, menu_pick, cfg["quant"])
+            assert_command_names(gr.build_vllm_cmd(cfg, gr.compute(cfg)), typed or "meta-llama/Llama-3.1-8B-Instruct",
+                                 quant, "nvidia", typed is None, f"the menu's {choice} at {quant}")
+
+test("a model path the user gave is never replaced, on the JSON and menu paths; a preset's own repo is",
+     check_a_model_path_the_user_gave_is_never_replaced)
+
+
 # What each interactive menu choice is, as the contract: its bytes per parameter and
 # the --quantization it means.
 MENU_QUANT = {"BF16": (2.0, ""), "FP8": (1.0, "fp8"), "INT4/AWQ": (0.5, "awq"),
@@ -4373,6 +4487,8 @@ def golden_cases():
         ("h100-80 x1 — AWQ weights", cfg(h, 1, bpp=0.5, quant="awq")),
         # The CLI as it runs with no --prec, through its own parser: every case above
         # names its precision, so the default itself was invisible here while it was AWQ.
+        ("h100-80 x1 — GGUF on a preset's own repo, so a stand-in path, the base tokenizer and the line saying why",
+         gr.from_cli_args(gr.build_parser().parse_args(["--preset", "llama31-8b", "--gpu", "h100-80", "--prec", "q4km"]))),
         ("(CLI defaults) a100-40 x1 — --preset gemma4-26b and nothing else",
          gr.from_cli_args(gr.build_parser().parse_args(["--preset", "gemma4-26b"]))),
         ("h100-80 x1 — 256 at 1K, so the KV queue warning", cfg(h, 1, ctx=1024, conc=256)),
@@ -4513,6 +4629,8 @@ def check_the_golden_records_the_shapes_that_matter():
         # as the page golden records it under its command panel.
         "GGUF weights": lambda cs: any(c.get("quant") == "gguf" and comp(c)["fits"] for c in cs),
         "AWQ weights": lambda cs: any(c.get("quant") == "awq" for c in cs),
+        "a stand-in for a pre-quantized checkpoint": lambda cs: any(
+            c.get("model_from_preset") and c.get("quant") in ("awq", "gptq", "gguf") for c in cs),
         "the CLI as it runs with no --prec": lambda cs: any(c.get("model_name") == gr.PRESETS["gemma4-26b"]["name"]
                                                             and c["bpp"] == 1 for c in cs),
         "a ROCm command with AITER on": lambda cs: any(c["gpu"].get("gfx") == "gfx942" for c in cs),

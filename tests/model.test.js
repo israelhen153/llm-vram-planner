@@ -4359,6 +4359,76 @@ test('the copied report quotes the whole command, for every weight option the pa
   }
 });
 
+console.log('\nA preset\'s own repo is no pre-quantized checkpoint');
+/* The stand-in path a command names on a preset's own repo for AWQ, GPTQ and every GGUF
+   level, and the line saying what goes there: a contract, so literals here with the repo
+   filled in, never read back from the page. */
+const STAND_IN_FORMS = { awq: "the AWQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
+  gptq: "the GPTQ checkpoint's Hugging Face id, or its absolute path on the GPU server",
+  gguf: 'the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file' };
+const standInFor = (q, repo) => {
+  if (!STAND_IN_FORMS[q]) return null;
+  const name = repo.split('/').pop();
+  const path = q === 'gguf' ? `/opt/models/${name}.gguf` : `/opt/models/${name}-${q.toUpperCase()}`;
+  return { path, note: `# ${q.toUpperCase()} needs a pre-quantized checkpoint, which ${repo} is not: replace ${path} with ${STAND_IN_FORMS[q]}.` };
+};
+const PRESET_TABLE = new Function(`${html.match(/^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m)[0]}; return MODEL_PRESETS;`)();
+/* The command box and the copied report for one plan, rendered as the page renders them. */
+const commandSurfaces = (h, st) => {
+  const c = h.computeInference(st);
+  h.renderCommand(st, c);
+  const box = ((h.out['command-output'] || '').match(/<div class="code-box">[\s\S]*?<code>([\s\S]*?)<\/code>/) || [])[1];
+  return { c, box, report: h.exportSummary(st, c) };
+};
+test('every preset at every weight option on every card: a stand-in path and its line exactly for AWQ, GPTQ and GGUF, in the command box and the copied report', () => {
+  const h = renderHarness();
+  let named = 0;
+  for (const [key, preset] of Object.entries(PRESET_TABLE)) {
+    for (const opt of WEIGHT_OPTIONS) {
+      for (const [slug, card] of Object.entries(GPU_TABLE)) {
+        const st = asState(card, 1, { ...dense8BPlan, ...opt, presetKey: key, hasNVLink: false });
+        const { c, box, report } = commandSurfaces(h, st);
+        const where = `${key} at ${opt.quantMethod || 'bf16'} ${opt.bytesPerParam} on ${slug}`;
+        assert.ok(box !== undefined && report.includes('\n## vLLM command\n```\n' + box + '\n```\n'), `${where}: the copied report does not quote the command box`);
+        const lines = box.split('\n');
+        if (!c.fits || box.startsWith('# vLLM')) { assert.ok(!box.includes('pre-quantized'), `${where}: a stand-in line under no command`); continue; }
+        const want = standInFor(opt.quantMethod, preset.hf);
+        const modelLine = card.vendor === 'amd' ? lines.find(l => /^    (\/|[\w.-]+\/)/.test(l) && !l.includes(':')) : lines.find(l => l.startsWith('vllm serve '));
+        if (want) {
+          named++;
+          assert.ok(want.path.startsWith('/') && !/[\s<>]/.test(want.path), `${where}: the stand-in ${want.path} is not an absolute path free of spaces and <>`);
+          assert.strictEqual(lines[0], want.note, `${where}: the command's first line is not the stand-in's line`);
+          assert.strictEqual(modelLine, card.vendor === 'amd' ? `    ${want.path} \\` : `vllm serve ${want.path} \\`, `${where}: the command does not name the stand-in`);
+          if (card.vendor === 'amd') assert.ok(lines.includes(`    -v ${want.path}:${want.path} \\`), `${where}: the stand-in is not mounted`);
+        } else {
+          assert.ok(!box.includes('pre-quantized') && !box.includes('/opt/models/'), `${where}: a stand-in for a precision the preset's repo loads`);
+          assert.strictEqual(modelLine, card.vendor === 'amd' ? `    ${preset.hf} \\` : `vllm serve ${preset.hf} \\`, `${where}: the command does not name the preset's repo`);
+        }
+        assert.strictEqual(lines.includes(`    --tokenizer ${preset.hf} \\`), opt.quantMethod === 'gguf',
+          `${where}: --tokenizer ${opt.quantMethod === 'gguf' ? 'missing from' : 'on'} the command`);
+        assert.strictEqual(lines.filter(l => l.includes(preset.hf)).length, !want ? 1 : opt.quantMethod === 'gguf' ? 2 : 1,
+          `${where}: the preset's repo is named where the command loads weights from`);
+      }
+    }
+  }
+  assert.ok(named >= 16 * 8 * 10, `only ${named} plans named a stand-in`);
+});
+test('a model path the reader gave is never replaced, whatever it names and whatever the precision', () => {
+  const h = renderHarness();
+  for (const id of ['org/imported-8b', 'meta-llama/Llama-3.1-8B-Instruct', '/srv/models/llama-8b-awq']) {
+    for (const opt of WEIGHT_OPTIONS) {
+      for (const slug of ['h100-80', 'mi300x-192']) {
+        h.setImportedModel(id);
+        const st = asState(GPU_TABLE[slug], 1, { ...dense8BPlan, ...opt, presetKey: '', hasNVLink: false });
+        const { box, report } = commandSurfaces(h, st);
+        const where = `${id} at ${opt.quantMethod || 'bf16'} on ${slug}`;
+        assert.ok(box.split('\n').some(l => l === `vllm serve ${id} \\` || l === `    ${id} \\`), `${where}: the reader's path was replaced`);
+        assert.ok(!(box + report).includes('pre-quantized') && !box.includes('--tokenizer'), `${where}: a stand-in line or tokenizer for the reader's own path`);
+      }
+    }
+  }
+});
+
 console.log('\nGGUF guidance says what vLLM needs today');
 /* The sentences are a contract, so they are literals here rather than read back
    from GGUF_GUIDANCE: a test that took its expectation from the page would follow
@@ -5016,6 +5086,8 @@ const goldenCases = () => {
     /* The page as it first loads, read off the markup: every golden case above names
        its precision, so the default itself was invisible here while it was AWQ. */
     markupDefaultCase(),
+    ['h100-80 x1 — GGUF on a preset\'s own repo, so a stand-in path, the base tokenizer and the line saying why',
+     asState(h, 1, { ...dense8B, bytesPerParam: 0.63, quantMethod: 'gguf', presetKey: 'llama31-8b', presetLabel: 'Llama 3.1 8B' })],
     ['h100-80 x1 — a model imported by id rather than named by a preset',
      asState(h, 1, { ...dense8B, hfModelId: 'org/imported-8b' })],
     /* Hardware with no measured constants. Synthetic, because no catalog row is
@@ -5115,6 +5187,7 @@ test('the golden records every catalog row, and the shapes that change what the 
     'GGUF weights': sts => sts.some(st => st.quantMethod === 'gguf'),
     'AWQ weights': sts => sts.some(st => st.quantMethod === 'awq'),
     'the page as the markup starts it': sts => sts.some(st => st.fromMarkup),
+    'a stand-in for a pre-quantized checkpoint': sts => sts.some(st => st.presetKey && ['awq', 'gptq', 'gguf'].includes(st.quantMethod)),
     'a ROCm command with AITER on': sts => sts.some(st => st.vendor === 'amd' && st.gfx === 'gfx942'),
     'FP8 weights refused on a card vLLM has no FP8 kernel for': sts =>
       sts.some(st => st.quantMethod === 'fp8' && st.vendor === 'amd' && st.gfx !== 'gfx942'),

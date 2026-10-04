@@ -903,6 +903,26 @@ def refuse_model_path_the_server_cannot_resolve(cfg):
     return cfg
 
 
+# The methods whose checkpoint a preset's own repo is not. Mirrors PREQUANTIZED and
+# prequantizedStandIn() in index.html, which say why.
+PREQUANTIZED = {"awq": "AWQ", "gptq": "GPTQ", "gguf": "GGUF"}
+
+
+def prequantized_stand_in(quant, base_repo):
+    """The stand-in model path a command names on a preset's own repo for a method that
+    needs a pre-quantized checkpoint, and the line saying what goes there, or None.
+    Absolute, so it passes both path rules, with no space and no <...>, which the PDF
+    reads as markup. Mirrors prequantizedStandIn() in index.html."""
+    method = PREQUANTIZED.get(quant or "")
+    if not method:
+        return None
+    name = base_repo.split("/")[-1]
+    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"
+    forms = ("the GGUF checkpoint as repo_id:quant_type, or the absolute path of its .gguf file"
+             if quant == "gguf" else f"the {method} checkpoint's Hugging Face id, or its absolute path on the GPU server")
+    return path, f"# {method} needs a pre-quantized checkpoint, which {base_repo} is not: replace {path} with {forms}."
+
+
 def build_vllm_cmd(cfg, comp):
     if not comp["fits"]:
         return "# Does not fit — increase GPUs, lower precision, or reduce context"
@@ -918,6 +938,12 @@ def build_vllm_cmd(cfg, comp):
     # shlex.quote() is a no-op on an ordinary value and neutralizes anything
     # that isn't one, instead of executing it.
     model = cfg.get("hf_model", "/opt/models/YourModel")
+    # The stand-in for a pre-quantized checkpoint, on a preset's own repo only: a path
+    # the user gave (model_from_preset false or absent) is never replaced.
+    base_repo = model
+    stand_in = prequantized_stand_in(cfg.get("quant"), base_repo) if cfg.get("model_from_preset") else None
+    if stand_in:
+        model = stand_in[0]
     hf = shlex.quote(model)
     # The split compute() sharded against, not a second derivation of it: the
     # figures above this command and the command itself are now the same number
@@ -938,6 +964,8 @@ def build_vllm_cmd(cfg, comp):
         parts += [f"    {ROCM['image']} \\", f"    {hf} \\"]
     else:
         parts = [f"vllm serve {hf} \\"]
+    if stand_in:
+        parts.insert(0, stand_in[1])
     parts.append("    --host 0.0.0.0 --port 8000 \\")
     # More than one device, which is what the board count used to mean on every
     # single-device card — so the command is unchanged for every catalogued row.
@@ -950,6 +978,8 @@ def build_vllm_cmd(cfg, comp):
     parts.append("    --dtype auto \\")
     if cfg.get("quant"):
         parts.append(f"    --quantization {shlex.quote(cfg['quant'])} \\")
+    if stand_in and cfg.get("quant") == "gguf":
+        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\")
     if cfg.get("kv_bpp", 2) < 2:
         parts.append("    --kv-cache-dtype fp8 \\")
     # APC is on by default in vLLM V1, so only the opt-out is worth emitting —
@@ -1615,6 +1645,8 @@ def interactive_mode():
         "n_gpu": n_gpu, "gpu": gpu, "nvlink": nvlink, "vendor": gpu["vendor"],
         "perfKey": gpu["perfKey"],
         "kv_bpp": kv_bpp, "hf_model": hf_model, "model_name": model_name,
+        # The preset's own repo, not a path the user typed: see prequantized_stand_in().
+        "model_from_preset": choice.lower() != "custom",
     }
 
 
@@ -1811,6 +1843,9 @@ def from_json(path):
             "vendor": gpu["vendor"],
             "perfKey": gpu["perfKey"],
             "kv_bpp": raw.get("kv_bpp", 2),
+            # Whether hf_model below is the preset's own repo, which a JSON key can't
+            # claim: a path the user gave is never replaced (prequantized_stand_in()).
+            "model_from_preset": "hf_model" not in raw,
             # Same "raw wins" rule as everything else in this block — this
             # tool's origin story is an air-gapped deployment, and "pick a
             # preset, point it at my local weights" is the obvious thing to
@@ -1842,6 +1877,8 @@ def from_json(path):
     cfg.setdefault("n_gpu", 1)
     cfg["nvlink"] = nvlink_for(gpu, cfg.get("nvlink", True))
     cfg.setdefault("kv_bpp", 2)
+    # No preset, so no preset's repo, whatever the JSON says.
+    cfg["model_from_preset"] = False
     cfg.setdefault("hf_model", "/opt/models/YourModel")
     cfg.setdefault("model_name", f"{cfg['params']}B model")
     return validate_arch(cfg)
@@ -1923,7 +1960,7 @@ def from_cli_args(args):
             "vendor": gpu["vendor"],
             "perfKey": gpu["perfKey"],
             "kv_bpp": 1 if args.fp8_kv else 2,
-            "hf_model": preset["hf"], "model_name": preset["name"],
+            "hf_model": preset["hf"], "model_name": preset["name"], "model_from_preset": True,
         })
         # --prec fp8 on a card vLLM has no FP8 weight kernel for is refused, not planned.
         return refuse_fp8_where_vllm_cannot(cfg)
