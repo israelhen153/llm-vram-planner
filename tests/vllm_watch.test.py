@@ -50,8 +50,10 @@ def test(name, fn):
 
 
 # GitHub, as gh would answer it, from a state it updates: open issues unless asked for
-# all, the body of a new issue or comment read from its --body-file. Used in-process,
-# and as the gh executable on PATH for the real process and anything that slips past.
+# all, the body of a new issue or comment read from its --body-file. A state with
+# "list_says" has `issue list` answer that text, whatever it is, for gh answering
+# something that is not JSON. Used in-process, and as the gh executable on PATH for the
+# real process and anything that slips past.
 FAKE_GH_LOGIC = '''
 import json
 
@@ -61,6 +63,8 @@ def answer(state, a):
     def flag(name, default=None):
         return a[a.index(name) + 1] if name in a else default
     if a[:2] == ["issue", "list"]:
+        if "list_says" in state:
+            return 0, state["list_says"]
         want = flag("--state", "open")
         return 0, json.dumps([i for i in state["issues"] if want == "all" or i["state"].lower() == want])
     if a[:2] in (["issue", "create"], ["issue", "comment"]):
@@ -427,6 +431,31 @@ def check_an_unread_answer_exits_1():
     assert not wrong, wrong
 
 test("a fetch or parse error exits 1, never 'no news'", check_an_unread_answer_exits_1)
+
+
+print("\nWhen GitHub cannot be read")
+
+
+def check_an_issue_list_that_is_not_json_exits_1():
+    """gh's `issue list` answering something that is not JSON (an HTML error page,
+    nothing at all, a list cut off, a line of text) is a list it could not read, not an
+    empty one: main() exits 1 and writes nothing, no comment and no issue. Read as
+    empty, the week would open a second issue beside the one already open."""
+    new = later(real_pin())
+    answers = {"an HTML error page": "<html><body><h1>502 Bad Gateway</h1></body></html>",
+               "nothing at all": "",
+               "a list cut off": '[{"number": 5, "title": "vLLM has',
+               "a line of text": "HTTP 401: Bad credentials"}
+    wrong = {}
+    for case, text in answers.items():
+        state = {"issues": [issue(5, "OPEN", "earlier")], "list_says": text}
+        code, printed, writes, _ = run_main(state, pypi({new: [False]}))
+        if code != 1 or writes or "did not answer JSON" not in printed:
+            wrong[case] = (code, writes, printed.strip()[-120:])
+    assert not wrong, wrong
+
+test("an issue list that is not JSON exits 1 and writes nothing, never an empty list",
+     check_an_issue_list_that_is_not_json_exits_1)
 
 
 print("\nWhat the notice sends the owner to re-check")
