@@ -315,11 +315,9 @@
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
-     "style=color:var(--text-muted)",
      "style=color:var(--text-muted);font-size:11px;margin:-2px 0 4px;text-align:center",
      "style=color:var(--text-secondary);font-size:12px;margin:0 0 8px",
      "style=display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin:8px 0",
-     "style=font-size:12px",
      "style=font-size:12px",
      "style=font-size:12px",
      "style=font-size:12px",
@@ -327,7 +325,7 @@
      "style=font-size:16px",
      "style=margin:10px 0"
     ],
-    "text": "8× H100 80GB Each device — 23.2 GiB / 80 GiB (29%) 16.3 GiB 56.8 GiB Cluster VRAM 640 GiB Weights sharded 8-way (16.3 GiB/device) Layers per device ~10 of 80 Parallelism TP=8 PCIe — same sharding, 5-12x slower all-reduce"
+    "text": "8× H100 80GB Each device — 23.2 GiB / 80 GiB (29%) 16.3 GiB 56.8 GiB Cluster VRAM 640 GiB Weights sharded 8-way (16.3 GiB/device) Parallelism TP=8 PCIe — same sharding, 5-12x slower all-reduce"
    },
    "gpu-model": {
     "attrs": [
@@ -2944,8 +2942,6 @@
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
-     "style=color:var(--text-muted)",
-     "style=color:var(--text-muted);font-size:10px",
      "style=color:var(--text-muted);font-size:10px",
      "style=color:var(--text-muted);font-size:11px;margin:-2px 0 4px;text-align:center",
      "style=color:var(--text-secondary);font-size:12px;margin:0 0 8px",
@@ -2955,13 +2951,12 @@
      "style=font-size:12px",
      "style=font-size:12px",
      "style=font-size:12px",
-     "style=font-size:12px",
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=font-size:13px;margin-right:4px;vertical-align:-2px",
      "style=font-size:16px",
      "style=margin:10px 0"
     ],
-    "text": "16× H100 80GB Each device — 20.7 GiB / 80 GiB (26%) 16.3 GiB 59.3 GiB Cluster VRAM 1280 GiB Weights sharded 8-way (16.3 GiB/device) inside each of 2 replicas Layers per device ~5 of 80 assumes sharding across all 16 Parallelism TP=8 × DP=2 Unmeasured above 2 devices — heuristic split Est. nodes ~2 (8 devices/node) 16 devices likely span 2+ nodes. TP=8 × DP=2 is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by 8, the sharding the command performs; KV cache is divided by all 16, because data parallelism partitions the request stream rather than replicating the cache. PCIe — 5-12x slower all-reduce"
+    "text": "16× H100 80GB Each device — 20.7 GiB / 80 GiB (26%) 16.3 GiB 59.3 GiB Cluster VRAM 1280 GiB Weights sharded 8-way (16.3 GiB/device) inside each of 2 replicas Parallelism TP=8 × DP=2 Unmeasured above 2 devices — heuristic split Est. nodes ~2 (8 devices/node) 16 devices likely span 2+ nodes. TP=8 × DP=2 is a starting point; the optimal split depends on intra-node NVLink vs inter-node InfiniBand/RoCE topology, and neither that split nor the interconnect factor priced against it is measured above 2 devices. Weights and activations above are divided by 8, the sharding the command performs; KV cache is divided by all 16, because data parallelism partitions the request stream rather than replicating the cache. PCIe — 5-12x slower all-reduce"
    },
    "gpu-model": {
     "attrs": [
@@ -3207,7 +3202,7 @@
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=grid-template-columns:repeat(2,1fr)"
     ],
-    "text": "Device 0 NVLink 24.2 GiB 49.9 GiB 30.1 GiB / 80 GiB (38%) · L0–14 Device 1 NVLink 24.2 GiB 49.9 GiB 30.1 GiB / 80 GiB (38%) · L15–29 NVLink — sharded 2-way, each device holds 1/2 of model"
+    "text": "Device 0 NVLink 24.2 GiB 49.9 GiB 30.1 GiB / 80 GiB (38%) Device 1 NVLink 24.2 GiB 49.9 GiB 30.1 GiB / 80 GiB (38%) NVLink — sharded 2-way, each device holds 1/2 of model"
    },
    "gpu-model": {
     "attrs": [
@@ -3443,7 +3438,7 @@
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=grid-template-columns:repeat(2,1fr)"
     ],
-    "text": "Device 0 NVLink 27.9 GiB 12.0 GiB 38.2 GiB 41.8 GiB / 80 GiB (52%) · L0–23 Device 1 NVLink 27.9 GiB 12.0 GiB 38.2 GiB 41.8 GiB / 80 GiB (52%) · L24–47 NVLink — sharded 2-way, each device holds 1/2 of model"
+    "text": "Device 0 NVLink 27.9 GiB 12.0 GiB 38.2 GiB 41.8 GiB / 80 GiB (52%) Device 1 NVLink 27.9 GiB 12.0 GiB 38.2 GiB 41.8 GiB / 80 GiB (52%) NVLink — sharded 2-way, each device holds 1/2 of model"
    },
    "gpu-model": {
     "attrs": [
@@ -3682,7 +3677,7 @@
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=grid-template-columns:repeat(2,1fr)"
     ],
-    "text": "Device 0 NVLink 625 GiB 631 GiB / 80 GiB (789%) · L0–29 Device 1 NVLink 625 GiB 631 GiB / 80 GiB (789%) · L30–60 NVLink — sharded 2-way, each device holds 1/2 of model"
+    "text": "Device 0 NVLink 625 GiB 631 GiB / 80 GiB (789%) Device 1 NVLink 625 GiB 631 GiB / 80 GiB (789%) NVLink — sharded 2-way, each device holds 1/2 of model"
    },
    "gpu-model": {
     "attrs": [
@@ -3907,7 +3902,6 @@
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
-     "style=color:var(--text-muted)",
      "style=color:var(--text-muted);font-size:11px;margin:-2px 0 4px;text-align:center",
      "style=color:var(--text-secondary);font-size:12px;margin:0 0 8px",
      "style=display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin:8px 0",
@@ -3915,12 +3909,11 @@
      "style=font-size:12px",
      "style=font-size:12px",
      "style=font-size:12px",
-     "style=font-size:12px",
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=font-size:16px",
      "style=margin:10px 0"
     ],
-    "text": "8× H100 80GB NVLink Each device — 23.3 GiB / 80 GiB (29%) 16.3 GiB 56.7 GiB Cluster VRAM 640 GiB Weights sharded 8-way (16.3 GiB/device) Layers per device ~10 of 80 Parallelism TP=8 NVLink — sharded 8-way, each device holds 1/8 of model"
+    "text": "8× H100 80GB NVLink Each device — 23.3 GiB / 80 GiB (29%) 16.3 GiB 56.7 GiB Cluster VRAM 640 GiB Weights sharded 8-way (16.3 GiB/device) Parallelism TP=8 NVLink — sharded 8-way, each device holds 1/8 of model"
    },
    "gpu-model": {
     "attrs": [
@@ -4138,11 +4131,9 @@
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
      "style=color:var(--text-muted)",
-     "style=color:var(--text-muted)",
      "style=color:var(--text-muted);font-size:11px;margin:-2px 0 4px;text-align:center",
      "style=color:var(--text-secondary);font-size:12px;margin:0 0 8px",
      "style=display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin:8px 0",
-     "style=font-size:12px",
      "style=font-size:12px",
      "style=font-size:12px",
      "style=font-size:12px",
@@ -4150,7 +4141,7 @@
      "style=font-size:16px",
      "style=margin:10px 0"
     ],
-    "text": "8× H100 80GB Each device — 23.2 GiB / 80 GiB (29%) 16.3 GiB 56.8 GiB Cluster VRAM 640 GiB Weights sharded 8-way (16.3 GiB/device) Layers per device ~10 of 80 Parallelism TP=8 PCIe — same sharding, 5-12x slower all-reduce"
+    "text": "8× H100 80GB Each device — 23.2 GiB / 80 GiB (29%) 16.3 GiB 56.8 GiB Cluster VRAM 640 GiB Weights sharded 8-way (16.3 GiB/device) Parallelism TP=8 PCIe — same sharding, 5-12x slower all-reduce"
    },
    "gpu-model": {
     "attrs": [
@@ -5779,7 +5770,7 @@
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=grid-template-columns:repeat(4,1fr)"
     ],
-    "text": "Device 0 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) · L0–7 Device 1 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) · L8–15 Device 2 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) · L16–23 Device 3 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) · L24–31 Infinity Fabric — sharded 4-way, each device holds 1/4 of model"
+    "text": "Device 0 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) Device 1 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) Device 2 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) Device 3 Infinity Fabric 54.5 GiB 9.46 GiB / 64 GiB (15%) Infinity Fabric — sharded 4-way, each device holds 1/4 of model"
    },
    "gpu-model": {
     "attrs": [
@@ -6046,7 +6037,7 @@
      "style=font-size:13px;margin-right:3px;vertical-align:-2px",
      "style=grid-template-columns:repeat(2,1fr)"
     ],
-    "text": "Device 0 Infinity Fabric 46.8 GiB 17.2 GiB / 64 GiB (27%) · L0–15 Device 1 Infinity Fabric 46.8 GiB 17.2 GiB / 64 GiB (27%) · L16–31 Infinity Fabric — sharded 2-way, each device holds 1/2 of model"
+    "text": "Device 0 Infinity Fabric 46.8 GiB 17.2 GiB / 64 GiB (27%) Device 1 Infinity Fabric 46.8 GiB 17.2 GiB / 64 GiB (27%) Infinity Fabric — sharded 2-way, each device holds 1/2 of model"
    },
    "gpu-model": {
     "attrs": [

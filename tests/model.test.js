@@ -4827,6 +4827,252 @@ test('the notice retracts itself once the user fixes the field', () => {
     'renderRestoreNotice is never re-run, so the notice cannot retract');
 });
 
+/* ---- no surface states a per-device layer count ---------------------------
+   Dividing layers across devices is pipeline parallelism, and the printed command
+   never asks for it: neither engine emits --pipeline-parallel-size. Under TP × DP
+   every device holds a slice of every layer, which the "Weights sharded" and
+   "Parallelism" tiles already say. The page used to say otherwise twice — an
+   L<start>–<end> range on each card from two to four devices, and a "Layers per
+   device" tile, ~ceil(layers / devices), from five — and both are gone. Every
+   surface is held to that, not only the two that had it: the figure deleted from
+   the cards and printed in the copied report, a comparison card or a badge is the
+   same claim moved.
+
+   The axes are what the tool ships, never a handy fixture: every row of
+   data/gpus.json and the synthetic dual-GCD board above; every device count from 2
+   to 9 and each power of two from 16 to the GPU-count slider's maximum, as boards
+   of each row; the first dense and the first MoE preset in MODEL_PRESETS; NVLink
+   asked for and not, granted as readInputState() grants it. The PDF has the same
+   sweep in tests/report.test.py. */
+const PAGE_PRESETS = new Function(
+  `${html.match(/^const MODEL_PRESETS = \{[\s\S]*?\n\};$/m)[0]}; return MODEL_PRESETS;`)();
+const SLIDER_MAX = Number(((html.match(/<input\b[^>]*\bid="gpu-count"[^>]*>/) || [''])[0]
+  .match(/\bmax="(\d+)"/) || [])[1]);
+const LAYER_SPLIT_DEVICES = [2, 3, 4, 5, 6, 7, 8, 9];
+for (let n = 16; n <= SLIDER_MAX; n *= 2) LAYER_SPLIT_DEVICES.push(n);
+/* Every count the slider reaches, for one card of each kind (below). A cold check put
+   the tile back at exactly 12 devices and it passed a sweep of 2-9 and the powers of
+   two. The rest of the catalog keeps the shorter list, which keeps the suite fast. */
+const LAYER_SPLIT_EVERY = Array.from({ length: 2 * SLIDER_MAX - 1 }, (_, i) => i + 2);
+/* What a reader takes off one surface: visible text with block boundaries as line
+   breaks, so two neighbouring tiles never read as one phrase, plus every attribute
+   value and every write that never touched innerHTML. */
+const readerLines = (views, id) => {
+  const raw = String(views.html[id] ?? '');
+  return [raw.replace(/<\/?(?:div|p|li|tr|td|h\d)\b[^>]*>/gi, '\n').replace(/<[^>]*>/g, ' '),
+          ...[...raw.matchAll(ATTRIBUTE)].map(m => m[1] ?? m[2]),
+          String(views.written[id] ?? ''), ...Object.values(views.props[id] || {}).map(String)]
+    .join('\n')
+    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/&ndash;|&#8211;/g, '–').replace(/[ \t]+/g, ' ');
+};
+/* Every way the claim has been or could be worded. The figure is the one the tile
+   printed, ceil(layers / devices), and its floor beside it, since a rounding
+   change is not a fix. "Beside the word" means on the same line with no other
+   number between them; an "N-way" or "N ways" is a sharding degree, which the page
+   does print beside "layers" for an MoE, and is not a layer count. */
+const layerSplitRules = (layers, devices) => {
+  const figures = [...new Set([Math.ceil(layers / devices), Math.floor(layers / devices)])]
+    .filter(n => n >= 1);
+  const num = (n) => `(?<![\\d.,])~?\\s*${n}(?!\\d|[.,]\\d)`;
+  const gap = '[^\\d.!?;\\n]{0,30}?';
+  return [
+    ['"layers per device" or "per GPU"',
+     /\blayers?\s*(?:per|\/|for each|on each)\s*(?:device|gpu|gcd|card|rank)s?\b/i],
+    // Not after a "#": that is a link to lines of a source file ("…#L353-L394").
+    ['an L<a>–<b> range', /(?<!#)\bL\d+\s*[–-]\s*L?\d+\b/],
+    ['a "layers <a>–<b>" range', /\blayers?:?\s+\d+\s*[–-]\s*\d+/i],
+    [`"~N of ${layers}"`, new RegExp(`~\\s*\\d+\\s+of\\s+${layers}(?!\\d)`)],
+    ...figures.flatMap(n => [
+      [`${n} beside the word "layer"`,
+       new RegExp(`\\blayers?\\b${gap}${num(n)}(?!\\s*-?\\s*ways?\\b)`, 'i')],
+      [`${n} before the word "layer"`, new RegExp(`${num(n)}${gap}\\blayers?\\b`, 'i')],
+      [`${n} of ${layers}`, new RegExp(`${num(n)}\\s+of\\s+${layers}(?!\\d)`)],
+      // A bare figure per device, as "80 layers (~10 per device)" would print it.
+      [`${n} per device`, new RegExp(
+        `${num(n)}\\s*(?:per|\\/|for each|on each)\\s*(?:device|gpu|gcd|card|rank)s?\\b`, 'i')],
+    ]),
+  ];
+};
+const layerSplitClaims = (text, layers, devices) => layerSplitRules(layers, devices)
+  .map(([what, re]) => [what, text.match(re)]).filter(([, m]) => m)
+  .map(([what, m]) => `${what}: "…${text.slice(Math.max(0, m.index - 40), m.index + m[0].length + 40)
+    .replace(/\s+/g, ' ')}…"`);
+const layerSplitPlans = () => {
+  const rows = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'gpus.json'), 'utf8')).data;
+  const cards = [...Object.entries(rows), ['(synthetic) dual-GCD', dualGCD]];
+  const presets = Object.entries(PAGE_PRESETS);
+  const dense = presets.find(([, p]) => !p.moe), moe = presets.find(([, p]) => p.moe);
+  const plans = [];
+  const everyCount = new Set([cards.find(([, c]) => supportsNVLink(c))?.[0],
+    cards.find(([, c]) => !supportsNVLink(c))?.[0], '(synthetic) dual-GCD']);
+  for (const [slug, card] of cards)
+    for (const devices of everyCount.has(slug) ? LAYER_SPLIT_EVERY : LAYER_SPLIT_DEVICES) {
+      const boards = devices / (card.devices || 1);
+      if (!Number.isInteger(boards) || boards > SLIDER_MAX) continue;
+      for (const [key, p] of [dense, moe])
+        for (const asked of [true, false]) {
+          // Asked for on a board without it, NVLink is not granted: the same plan as not asked.
+          if (asked && !supportsNVLink(card)) continue;
+          const hasNVLink = asked;
+          plans.push({ name: `${slug} ×${boards} (${devices} devices), ${key}, ` +
+                             `${asked ? 'NVLink asked' : 'NVLink not asked'}`, slug, devices,
+            st: asState(card, boards, { presetKey: key, params: p.p, layers: p.l, kvHeads: p.kv,
+              headDim: p.hd, activePercent: p.a, sharedExperts: p.se || 0,
+              attnMode: p.attn || 'standard', swaWindow: p.swaWin || 0,
+              swaLocalLayers: Math.min(p.swaLocal || 0, p.l), mlaLatentDim: p.mlaDim || 0,
+              modelMaxCtx: p.maxCtx || 131072, contextLength: 8192, hasNVLink }) });
+        }
+    }
+  return { plans, cards, dense, moe };
+};
+test('the detector finds the per-device layer figures the page used to print', () => {
+  // The removed shapes, built the way the page built them, so a rule that stopped
+  // matching would make the sweep below pass for the wrong reason.
+  const old = [['Layers per device ~10 of 80', 80, 8], ['Device 1 41 GB / 80 GB (52%) · L40–79', 80, 2],
+               ['Layer split ~6 of 48', 48, 8], ['- Layers per GPU: 3', 48, 16],
+               ['Layers/device ~4', 32, 8], ['~16 layers each', 32, 2], ['layers 0-15', 32, 2],
+               ['- Layers: 80 (~10 per device)', 80, 8]];
+  assert.deepStrictEqual(layerSplitClaims('gpu.rocm.inc.md#L353-L394', 32, 2), [],
+    'a link to lines of a source file is not a layer range');
+  for (const [text, layers, devices] of old)
+    assert.ok(layerSplitClaims(text, layers, devices).length, `the detector misses "${text}"`);
+  assert.deepStrictEqual(layerSplitClaims('the dense layers shard only 8 ways', 64, 8), [],
+    'a sharding degree beside "layers" is not a layer count');
+});
+test('no surface states a per-device layer count, on any card, count, model or link', () => {
+  const { plans, cards, dense, moe } = layerSplitPlans();
+  assert.ok(SLIDER_MAX >= 128, `the GPU-count slider's maximum was not read (got ${SLIDER_MAX})`);
+  assert.ok(dense && moe, 'MODEL_PRESETS has no dense or no MoE preset to sweep');
+  // Every count is reached, and every card reaches both layouts the claim lived in:
+  // individual cards up to four devices, the condensed panel from five.
+  const unreached = LAYER_SPLIT_DEVICES.filter(n => !plans.some(p => p.devices === n));
+  assert.deepStrictEqual(unreached, [], `no plan has ${unreached.join(', ')} devices`);
+  for (const [slug] of cards)
+    assert.ok(plans.some(p => p.slug === slug && p.devices <= 4) &&
+              plans.some(p => p.slug === slug && p.devices >= 5),
+      `${slug} does not reach both the per-device cards and the condensed panel`);
+  for (const link of ['NVLink asked', 'NVLink not asked'])
+    assert.ok(plans.some(p => p.name.endsWith(link) && p.st.hasNVLink === (link === 'NVLink asked')),
+      `no plan has ${link}`);
+  const found = [];
+  for (const plan of plans) {
+    const c = computeInference(plan.st);
+    assert.strictEqual(c.deviceCount, plan.devices, `${plan.name}: computed ${c.deviceCount} devices`);
+    const views = renderEverything(plan.st, c);
+    // The surfaces the figure has lived on or could move to are rendered, or this
+    // would pass by reading nothing.
+    for (const id of ['gpu-cards', 'strategy-badges', 'comparison-output', '(copied report)'])
+      assert.ok(readerLines(views, id).trim(), `${plan.name}: ${id} rendered nothing`);
+    assert.ok(/class="compare-card"/.test(views.html['comparison-output']),
+      `${plan.name}: the comparison view holds no card`);
+    for (const id of viewIds(views))
+      for (const claim of layerSplitClaims(readerLines(views, id), plan.st.layers, plan.devices))
+        found.push(`${plan.name} — ${id} shows ${claim}`);
+  }
+  assert.deepStrictEqual(found.slice(0, 6), [],
+    `${found.length} surface(s) state a per-device layer count, which is pipeline-parallel ` +
+    `arithmetic on a command that never emits it:\n  ${found.slice(0, 6).join('\n  ')}`);
+});
+
+/* The rules above know the claim by its words, and words can be changed: a cold
+   check put the tile back as "Transformer blocks", reading "each ~10", and only the
+   page golden saw it, which regenerating the goldens hides. Two things hold the
+   device panel (each card from two to four devices, the condensed panel from five)
+   whatever the figure is called.
+
+   What the figure is: a per-device layer count moves with the layer count, and
+   nothing else on this panel may. Under TP × DP each device holds a slice of every
+   layer however many there are, so the panel describes devices and memory, and
+   memory is the one thing on it the layer count moves, through the KV cache. Each
+   plan of the sweep above is rendered again with as many more layers as it has
+   devices, which moves ceil(L / n), floor(L / n) and every L<a>–<b> range by at
+   least one whatever the rounding, and with its memory figures masked the panel
+   must read the same. Every other surface prints the layer count, the KV cache or
+   the context it allows, which rightly move, so they stay with the rules above.
+
+   What the condensed panel shows: its tiles are a contract, so they are a literal.
+   A tile added or renamed fails until PANEL_TILES is changed on purpose, whatever
+   its value says; so does a label shown twice, or text in the grid outside a tile.
+   Labels are read off the rendered panel, never off the renderer. */
+const PANEL_TILES = ['Cluster VRAM', 'Weights sharded', 'Weights per device', 'Parallelism', 'Est. nodes'];
+const panelTileLabels = (markup) => {
+  const at = markup.search(/<div\b[^>]*\bdisplay:\s*grid\b/);
+  if (at < 0) return null;
+  // Each child of the grid, and whatever lies between two of them.
+  const pieces = [], tag = /<(\/?)div\b[^>]*>/g;
+  tag.lastIndex = at;
+  let depth = 0, from = at;
+  for (let m; (m = tag.exec(markup));) {
+    if (!m[1] && ++depth === 1) from = tag.lastIndex;
+    else if (!m[1] && depth === 2) { pieces.push(markup.slice(from, m.index)); from = m.index; }
+    else if (m[1] && depth-- === 2) { pieces.push(markup.slice(from, tag.lastIndex)); from = tag.lastIndex; }
+    else if (m[1] && depth === 0) { pieces.push(markup.slice(from, m.index)); break; }
+  }
+  // A label is the first line of text a reader meets in the piece: what a figure is read under.
+  return pieces.map(p => p.split(/<br\b[^>]*>/i)
+    .map(s => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ').trim()).find(Boolean)).filter(Boolean);
+};
+// Every figure before a byte unit or a percent sign goes, and nothing else does.
+const withoutMemory = (text) => text.replace(/\d+(?:\.\d+)?\s*(?:[KMGT]i?B\b|%)/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+test('the device panel shows only its own tiles, and nothing on it moves with the layer count', () => {
+  // On the shapes they exist for, so a mask that took every number, or a reader that
+  // found no tile, would fail here instead of passing the sweep by seeing nothing.
+  assert.strictEqual(withoutMemory('Each device — 17.50 GiB / 80 GiB (22%) 8.75 GiB/device'),
+    withoutMemory('Each device — 21.25 GiB / 80 GiB (27%) 9.13 GiB/device'), 'the mask leaves memory in');
+  for (const [was, now] of [['Transformer blocks each ~10', 'Transformer blocks each ~11'],
+                            ['(52%) · L40–79', '(55%) · L44–87'], ['TP=8 · 10 deep', 'TP=8 · 11 deep']])
+    assert.notStrictEqual(withoutMemory(was), withoutMemory(now), `the mask hides "${was}" becoming "${now}"`);
+  const tile = (label, value) =>
+    `<div style="font-size:12px"><span style="color:var(--text-muted)">${label}</span><br>${value}</div>`;
+  assert.deepStrictEqual(panelTileLabels(`<p>Each device</p><div style="display:grid;gap:6px">` +
+    `${tile('Cluster VRAM', '<b>640 GiB</b>')} each ~10 ${tile('Layers per device', '<b>~10</b> of 80<br>' +
+    '<span>assumes sharding across all 8</span>')}<div><br><b>~10</b> blocks</div></div><p>note</p>`),
+    ['Cluster VRAM', 'each ~10', 'Layers per device', '~10 blocks'], 'the tile reader misses a tile');
+  const { plans } = layerSplitPlans();
+  const h = renderHarness();
+  const panel = (st) => {
+    h.renderGPUCards(st, computeInference(st));
+    return { markup: String(h.out['gpu-cards'] ?? ''),
+             text: readerLines({ html: h.out, written: h.shown, props: h.props }, 'gpu-cards') };
+  };
+  const moved = [], strangers = [], seen = new Set();
+  let memoryMoved = 0;
+  for (const plan of plans) {
+    const now = panel(plan.st);
+    assert.ok(now.text.trim(), `${plan.name}: the device panel rendered nothing`);
+    if (plan.devices >= 5) {
+      const labels = panelTileLabels(now.markup);
+      assert.ok(labels && labels.length, `${plan.name}: no tile grid in the condensed panel`);
+      labels.forEach(l => seen.add(l));
+      const odd = labels.filter((l, i) => !PANEL_TILES.includes(l) || labels.indexOf(l) !== i);
+      if (odd.length) strangers.push(`${plan.name}: ${odd.map(l => `"${l}"`).join(', ')}`);
+    }
+    const more = panel({ ...plan.st, layers: plan.st.layers + plan.devices });
+    if (more.text !== now.text) memoryMoved++;
+    const [was, then] = [withoutMemory(now.text), withoutMemory(more.text)];
+    if (was !== then) {
+      let i = 0;
+      while (i < was.length && was[i] === then[i]) i++;
+      const from = Math.max(0, i - 40);
+      moved.push(`${plan.name}: "…${was.slice(from, i + 40)}…" becomes ` +
+                 `"…${then.slice(from, i + 40)}…" with ${plan.devices} more layers`);
+    }
+  }
+  assert.deepStrictEqual(strangers.slice(0, 6), [],
+    `${strangers.length} condensed panel(s) show a tile PANEL_TILES does not name, or one twice; if it ` +
+    `belongs there, add it to the list on purpose:\n  ${strangers.slice(0, 6).join('\n  ')}`);
+  assert.deepStrictEqual([...seen].sort(), [...PANEL_TILES].sort(),
+    'PANEL_TILES and the tiles the sweep shows differ');
+  // The second render reached the panel, or nothing could have moved.
+  assert.ok(memoryMoved, 'no panel changed at all with more layers, so the comparison compared nothing');
+  assert.deepStrictEqual(moved.slice(0, 6), [],
+    `${moved.length} device panel(s) print something besides memory that moves with the layer count, ` +
+    `which is what a per-device layer count does:\n  ${moved.slice(0, 6).join('\n  ')}`);
+});
+
 /* ---- what today's cards display ------------------------------------------
  *
  * Every other test in this file is differential: it renders a card with
