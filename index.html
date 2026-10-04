@@ -2803,13 +2803,19 @@ function renderRestoreNotice() {
   if (!el) return;
   const live = urlRestoreLost.filter(e => document.getElementById(e.id).value === e.fallback);
   if (!live.length) { el.style.display = 'none'; return; }
-  const parts = live.map(e => `${e.label} (“${e.raw}”)`);
+  /* An entry with a why is in the tool and can't be used on this card: it gets its own
+     sentence with the reason, since "not in this version of the tool" would be false. */
+  const gone = live.filter(e => !e.why), refused = live.filter(e => e.why);
+  const parts = gone.map(e => `${e.label} (“${e.raw}”)`);
   const list = parts.length === 1 ? parts[0]
     : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
-  el.textContent = `This link could not be fully restored: ${list} `
+  el.textContent = (parts.length ? `This link could not be fully restored: ${list} `
     + `${parts.length === 1 ? 'is' : 'are'} not in this version of the tool. `
     + `${parts.length === 1 ? 'That field is' : 'Those fields are'} showing a default — `
-    + `set ${parts.length === 1 ? 'it' : 'them'} yourself before trusting these numbers.`;
+    + `set ${parts.length === 1 ? 'it' : 'them'} yourself before trusting these numbers.`
+    : 'This link could not be fully restored.')
+    + refused.map(e => ` ${e.label[0].toUpperCase()}${e.label.slice(1)} (“${e.raw}”) can’t be used on this card. `
+      + `${e.why} That field is showing ${e.shown} instead — set it yourself before trusting these numbers.`).join('');
   el.style.display = '';
 }
 
@@ -2847,6 +2853,12 @@ function loadURLHash() {
       const match = opts.find(o => precisionToken(o) === val) || opts.find(o => o.value === val);
       if (match) match.selected = true;
       else urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val, fallback: sel.value });
+      /* A link's FP8 on a card vLLM has no FP8 weight kernel for: syncPrecision() shows
+         BF16 instead, and the notice says the link's precision was not used, and why. */
+      const refused = match && match.dataset.q === 'fp8' && fp8WeightsBlocked(GPU_TABLE[document.getElementById('gpu-model').value]);
+      const bf16 = opts.find(o => o.dataset.q === '');
+      if (refused && bf16) urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val,
+                                                 fallback: bf16.value, why: refused, shown: 'BF16' });
     }
     if (params.has('kvp')) applyParam('kv-precision', params.get('kvp'), 'the KV cache precision');
     if (params.has('pre') && params.get('pre')) applyParam('preset', params.get('pre'), 'the model preset');

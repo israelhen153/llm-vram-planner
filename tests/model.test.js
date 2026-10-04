@@ -4748,6 +4748,60 @@ test('the default precision is FP8, and BF16 on a card vLLM has no FP8 weight ke
   }
 });
 
+test('a link\'s precision is restored by the page\'s own loadURLHash(), and a link\'s FP8 on a card that can\'t run it is named in the notice', () => {
+  /* The real loadURLHash(), syncPrecision() and renderRestoreNotice(), run as the page runs
+     them on load, on a stub of the controls: every card, every weight option as a link's
+     token, and the bare byte count older links carry. The share-and-reload test resolved
+     tokens with its own copy of loadURLHash(), so a page that dropped a link's precision
+     passed every test (engine_r37_fp8_default_cold_check K44). The FP8 cards are a
+     literal; the reason is the literal the FP8 refusal is pinned to. */
+  const BLOCKED = ['mi210-64', 'mi250x-128', 'rx7900xtx-24'];
+  const decl = (re) => { const m = html.match(re); assert.ok(m, `${re} not found in index.html`); return m[0]; };
+  const src = [decl(/^const ROCM = \{[\s\S]*?\n\};$/m), decl(/^function fp8WeightsBlocked\(gpu\) \{[\s\S]*?\n\}$/m),
+               decl(/^let precisionForcedFromFp8 = false;$/m), decl(/^function syncPrecision\(\) \{[\s\S]*?\n\}$/m),
+               html.slice(html.indexOf('const precisionToken = '), html.indexOf('function copyURL'))].join('\n');
+  const selectOf = (opts) => {
+    let chosen = opts.find(o => o.defaultSelected) || opts[0];
+    for (const o of opts) Object.defineProperty(o, 'selected', { get: () => chosen === o, set: (v) => { if (v) chosen = o; } });
+    return { options: opts, style: {}, get value() { return chosen.value; },
+             set value(v) { chosen = opts.find(o => o.value === v) || chosen; } };
+  };
+  const defaultCard = Object.keys(GPU_TABLE).find(k => GPU_TABLE[k].default);
+  const page = (hash) => {
+    const weights = selectOf(WEIGHT_OPTION_TAGS.map((attrs, i) => ({ value: String(WEIGHT_OPTIONS[i].bytesPerParam),
+      dataset: { q: WEIGHT_OPTIONS[i].quantMethod }, disabled: false, textContent: '', defaultSelected: /\sselected\b/.test(attrs) })));
+    const els = { 'gpu-model': selectOf(Object.keys(GPU_TABLE).map(k => ({ value: k, defaultSelected: k === defaultCard }))),
+                  'weight-precision': weights, 'url-restore-warning': { textContent: '', style: { display: 'none' } } };
+    const api = new Function('document', 'location', 'GPU_TABLE', `${src}; return { loadURLHash, syncPrecision, renderRestoreNotice };`)(
+      { getElementById: (id) => els[id] }, { hash }, GPU_TABLE);
+    const load = () => { api.loadURLHash(); api.syncPrecision(); api.renderRestoreNotice(); };
+    return { load, picked: () => weights.options.findIndex(o => o.selected), warning: els['url-restore-warning'],
+             card: (slug) => { els['gpu-model'].value = slug; api.syncPrecision(); api.renderRestoreNotice(); } };
+  };
+  const at = (q) => WEIGHT_OPTIONS.findIndex(o => o.quantMethod === q);
+  let named = 0;
+  for (const [slug, card] of Object.entries(GPU_TABLE)) {
+    const links = WEIGHT_OPTIONS.map((o, i) => [`${o.quantMethod}:${o.bytesPerParam}`, i, 'pr']).concat([['1', at('fp8'), 'bpp']]);
+    for (const [raw, i, key] of links) {
+      const p = page(`#gpu=${slug}&${key}=${encodeURIComponent(raw)}`);
+      p.load();
+      const refused = BLOCKED.includes(slug) && WEIGHT_OPTIONS[i].quantMethod === 'fp8';
+      const where = `${slug} with a link's ${key}=${raw}`;
+      assert.strictEqual(p.picked(), refused ? at('') : i, `${where}: the page shows ${WEIGHT_OPTIONS[p.picked()].quantMethod || 'bf16'} at ${WEIGHT_OPTIONS[p.picked()].bytesPerParam}`);
+      assert.strictEqual(p.warning.style.display, refused ? '' : 'none', `${where}: the restore notice is ${refused ? 'silent' : 'shown'}`);
+      if (!refused) continue;
+      assert.strictEqual(p.warning.textContent, `This link could not be fully restored. The weight precision (“${raw}”) can’t be used on this card. `
+        + `vLLM v0.30.0 has no FP8 weight kernel for ${card.name} (${card.gfx}): its FP8 matrix kernels need CDNA3 or newer, or RDNA4. `
+        + 'That field is showing BF16 instead — set it yourself before trusting these numbers.', `${where}: the notice`);
+      // On a card that runs FP8 the link's FP8 comes back, and the notice retracts.
+      p.card('h100-80');
+      assert.ok(p.picked() === at('fp8') && p.warning.style.display === 'none', `${where}: the link's FP8 did not come back on an H100`);
+      named++;
+    }
+  }
+  assert.strictEqual(named, 2 * BLOCKED.length, `${named} links' FP8 named in the notice`);
+});
+
 test('a local model is mounted into the ROCm container wherever it lives, and a hub id is not', () => {
   /* The command test's own models held only /opt once, then three listed paths, and a
      mount skipping any path with a dot, or deeper than four levels, passed. Paths

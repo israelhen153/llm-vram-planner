@@ -362,6 +362,9 @@ PY_R27_WORD_REOPEN = '            cur, rest = ("\'" if inside == "\'" else ""), 
 PY_R27_FRAME_WIDTH = '        return Frame(0, 0, A4[0] - 2 * self.margin, A4[1])._aW\n'
 PY_R27_QUOTED_RUN = '            if ch == " " and prev == " ":\n                atoms.append((quote + quote, quote))\n'
 PY_R27_BETWEEN_WORDS = '            out.append(f"{cur} \\\\")\n            cur = word\n'
+JS_R27_NOTICE_PUSH = "      if (refused && bf16) urlRestoreLost.push({ id: 'weight-precision', label: 'the weight precision', raw: val,\n"
+JS_R27_NOTICE_SPLIT = '  const gone = live.filter(e => !e.why), refused = live.filter(e => e.why);\n'
+JS_R27_NOTICE_WHY = "                                                 fallback: bf16.value, why: refused, shown: 'BF16' });\n"
 
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
