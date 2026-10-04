@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import math
+import re
 import os
 import shlex
 import sys
@@ -879,6 +880,15 @@ def refuse_fp8_where_vllm_cannot(cfg):
     return cfg
 
 
+# The characters a model path may not hold: a control character, or whitespace other than
+# a plain space (every character str.isspace() or JavaScript's \\s calls whitespace). The
+# PDF prints them as a space or breaks its line there, and a newline split the command, so
+# a command copied out of it was another command. index.html carries the same ranges and
+# the same words, and tests/parity.test.py holds the two equal.
+MODEL_PATH_REFUSED_CHARS = "\\u0000-\\u001f\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
+MODEL_PATH_CHAR_REASON = "holds a control character or whitespace other than a plain space, which the printed command cannot carry intact"
+
+
 def unresolvable_model_path(model):
     """Why the GPU server couldn't find this model path, or "" if it can. The printed
     command runs there, not where the planner ran: a path starting with ~, or naming
@@ -889,6 +899,8 @@ def unresolvable_model_path(model):
     model = str(model or "")
     if "$" in model:
         return "names a shell variable, which the printed command quotes, so the GPU server never expands it"
+    if re.search(f"[{MODEL_PATH_REFUSED_CHARS}]", model):
+        return MODEL_PATH_CHAR_REASON
     if not model:
         return "is empty"
     if not model or model.startswith("/"):
@@ -1028,8 +1040,13 @@ def _shell_words(line):
             if bare:
                 parts, bare = parts + [("", bare)], ""
             j = i + 1
-            while line[j] != ch:
+            while j < len(line) and line[j] != ch:
                 j += 2 if ch == '"' and line[j] == "\\" else 1
+            if j >= len(line):
+                # No closing quote, which no printed command has: read it as a character.
+                bare += ch
+                i += 1
+                continue
             parts.append((ch, line[i + 1:j]))
             i = j + 1
         else:
@@ -1072,7 +1089,7 @@ def _wrap_comment(line, fits):
     newline whatever precedes it, so a wrapped tail would run as a command."""
     out, cur = [], "#"
     for word in line.strip()[1:].split():
-        while not fits(f"# {word}"):
+        while len(word) > 1 and not fits(f"# {word}"):
             k = max(k for k in range(1, len(word)) if k == 1 or fits(f"# {word[:k]}"))
             if cur != "#":
                 out.append(cur)
@@ -1120,7 +1137,7 @@ def _wrap_shell_line(line, fits):
             # the next line, and after a / or : where one fits in the line's second half.
             ok = [k for k in range(len(rest) - 1)
                   if fits(cur + "".join(t for t, _ in rest[:k + 1]) + ("'\\" if rest[k][1] == "'" else "\\"))]
-            k = max(ok)
+            k = max(ok or [0])
             k = max([j for j in ok if rest[j][0] == ":" and j >= k // 2]
                     or [j for j in ok if rest[j][0] == "/" and j >= k // 2] or [k])
             inside = rest[k][1]
@@ -1146,6 +1163,10 @@ def pdf_command_lines(cmd, fits):
     return out
 
 
+# The smallest the PDF prints a command, in points: see ReportCard.command_paragraphs().
+COMMAND_FONT_FLOOR = 6.5
+
+
 # =============================================================================
 # PDF Generation
 # =============================================================================
@@ -1166,9 +1187,26 @@ class ReportCard:
 
     def command_paragraphs(self, cmd):
         """The command as the PDF's flowables, one per line, none of which the PDF wraps:
-        see pdf_command_lines(). Escaped, since a Paragraph reads & and < as markup."""
-        style, width = self.styles["CmdCode"], self.command_width()
-        fits = lambda text: stringWidth(" ".join(text.split()), style.fontName, style.fontSize) <= width
+        see pdf_command_lines(). Escaped, since a Paragraph reads & and < as markup.
+
+        The font is sized so the block's longest word fits a line with its " \\", from the
+        style's 8 pt down to a floor of COMMAND_FONT_FLOOR, so a line breaks between words
+        and never inside one: pdftotext -layout indents every line, and a shell reads an
+        indented continuation as a new word, so an in-word break survives only an unindented
+        copy. Every preset's command fits this way. Past the floor a word is broken inside:
+        at 6.5 pt the column holds 123 characters, so that is a word over 121 characters, a
+        model path that long on NVIDIA, or one over 60 on AMD, where the -v mount names it
+        twice in one word."""
+        base, width = self.styles["CmdCode"], self.command_width()
+        words = ["".join(text for text, _ in _word_atoms(parts)) for line in cmd.split("\n")
+                 if not line.lstrip().startswith("#") for parts in _shell_words(line)]
+        need = max((stringWidth(f"{word} \\", base.fontName, 1) for word in words), default=0)
+        size = base.fontSize
+        if need * size > width:
+            size = max(COMMAND_FONT_FLOOR, math.floor(width / need * 4) / 4)
+        style = ParagraphStyle(f"CmdCode-{size:g}", parent=base, fontSize=size,
+                               leading=base.leading * size / base.fontSize)
+        fits = lambda text: stringWidth(" ".join(text.split()), style.fontName, size) <= width
         return [Paragraph(escape(line), style) for line in pdf_command_lines(cmd, fits)]
 
     def _setup_styles(self):
@@ -1562,7 +1600,9 @@ class ReportCard:
         # ---- vLLM Command ----
         story.append(Paragraph("vLLM deployment command", self.styles["SectionHead"]))
         cmd = build_vllm_cmd(cfg, c)
-        story += self.command_paragraphs(cmd)
+        # Kept on one page whenever it fits on one: a block that crossed a page pasted out of
+        # the PDF with the footer and the next header inside the command.
+        story.append(KeepTogether(self.command_paragraphs(cmd)))
         # What the page shows beside a GGUF command, with each source as an address:
         # a PDF is forwarded without the page, so the links have to be readable.
         if c["fits"] and cfg.get("quant") == "gguf":

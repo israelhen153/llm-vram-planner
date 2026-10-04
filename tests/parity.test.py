@@ -1226,6 +1226,18 @@ else:
             print(f"  ok   emitted vllm command matches ({label})")
             passed += 1
 
+# The characters a model path may not hold, and the words that refuse it, are maintained
+# twice: the page refuses them in its model id field, the report on every route.
+for name in ("MODEL_PATH_REFUSED_CHARS", "MODEL_PATH_CHAR_REASON"):
+    py_value = re.search(rf'^{name} = "(.*)"$', src, re.M)
+    js_value = re.search(rf"^const {name} = '(.*)';$", open(os.path.join(ROOT, "index.html")).read(), re.M)
+    if py_value and js_value and py_value.group(1) == js_value.group(1):
+        print(f"  ok   {name} is the same in both engines")
+        passed += 1
+    else:
+        print(f"  FAIL {name} differs between the engines, or is missing from one")
+        failed += 1
+
 # The GGUF guidance is maintained twice, like the GPU tables: the page's banner and
 # copied report read index.html's GGUF_GUIDANCE, the PDF reads generate_report.py's.
 # Read the Python one from source, as compute() is above, so reportlab is not needed.

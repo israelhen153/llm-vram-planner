@@ -843,10 +843,26 @@ function parseSafetensorsIndex(data, source) {
   } catch (e) { statusEl.className = 'import-status err'; statusEl.innerHTML = `<svg class="ti-ico" aria-hidden="true" focusable="false"><use href="#ico-x"></use></svg> ${e.message}`; fieldsEl.innerHTML = ''; }
 }
 
+/* The characters a model path may not hold: a control character, or whitespace other than
+   a plain space. The PDF prints them as a space or breaks its line there, and a newline
+   split the command. The same ranges and words as MODEL_PATH_REFUSED_CHARS and
+   MODEL_PATH_CHAR_REASON in generate_report.py; tests/parity.test.py holds them equal. */
+const MODEL_PATH_REFUSED_CHARS = '\\u0000-\\u001f\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff';
+const MODEL_PATH_CHAR_REASON = 'holds a control character or whitespace other than a plain space, which the printed command cannot carry intact';
+function modelPathCharReason(path) {
+  return new RegExp(`[${MODEL_PATH_REFUSED_CHARS}]`).test(path) ? MODEL_PATH_CHAR_REASON : '';
+}
+
 async function fetchFromHuggingFace() {
   const modelId = document.getElementById('hf-model-id').value.trim();
   if (!modelId) return;
   const statusEl = document.getElementById('import-status');
+  // Refused before anything is fetched, with the reason the report gives.
+  if (modelPathCharReason(modelId)) {
+    statusEl.className = 'import-status err';
+    statusEl.textContent = `The model path ${JSON.stringify(modelId)} ${modelPathCharReason(modelId)}.`;
+    return;
+  }
   statusEl.className = 'import-status loading';
   statusEl.innerHTML = `<svg class="ti-ico" style="font-size:14px;vertical-align:-2px;margin-right:4px" aria-hidden="true" focusable="false"><use href="#ico-loader"></use></svg>Fetching from huggingface.co/${modelId}...`;
   setHTML('import-parsed-fields', '');

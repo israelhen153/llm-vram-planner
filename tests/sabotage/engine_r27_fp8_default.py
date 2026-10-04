@@ -27,7 +27,9 @@ from anchors import (INDEX_HTML, REPORT_PY, JS_R10_SYNC_FORCE, PY_R10_MENU_FILTE
                      PY_R27_TOKENIZER, PY_R27_PATH, PY_R27_PDF_LINES, PY_R27_PDF_SPLIT,
                      PY_R27_COMMENT_TAIL, PY_R27_WORD_BREAK, PY_R27_WORD_REOPEN, PY_R27_FRAME_WIDTH,
                      PY_R27_QUOTED_RUN, PY_R27_BETWEEN_WORDS, JS_R27_NOTICE_PUSH, JS_R27_NOTICE_SPLIT,
-                     JS_R27_NOTICE_WHY, JS_R10_BUILD_REFUSE, PY_R27_FP8_RULE, JS_R27_ROCM_FP8)
+                     JS_R27_NOTICE_WHY, JS_R10_BUILD_REFUSE, PY_R27_PATH_CHARS, JS_R27_FIELD_CHARS,
+                     PY_R27_PATH_RANGES, JS_R27_PATH_RANGES, PY_R27_UNCLOSED, PY_R27_FONT_FITS,
+                     PY_R27_FONT_FLOOR, PY_R27_FP8_RULE, JS_R27_ROCM_FP8)
 
 # The command box, the one place the page writes the command. Used once, so kept here.
 JS_BOX = "<code>${cmd}</code></div>${rocmLines}`);\n"
@@ -65,7 +67,7 @@ S["S4 js: the copied report drops the stand-in's line from the command it quotes
      JS_R27_REPORT_CMD.replace("emitted.textContent :", "emitted.textContent.replace(/^# [^\\n]*\\n/, '') :"), 1)]
 S["S5 py: the PDF drops the stand-in's line from the command it prints"] = [
     (REPORT_PY, PY_R27_PDF_LINES,
-     '        story += [p for p in self.command_paragraphs(cmd) if not p.text.startswith("#")]\n', 1)]
+     '        story.append(KeepTogether([p for p in self.command_paragraphs(cmd) if not p.text.startswith("#")]))\n', 1)]
 S["S6 js: the command box hides the stand-in's line, so the copied report loses it too"] = [
     (INDEX_HTML, JS_BOX, JS_BOX.replace("<code>${cmd}</code>", "<code>${cmd.replace(/^# [^\\n]*pre-quantized[^\\n]*\\n/, '')}</code>"), 1)]
 S["S7 js: the stand-in only in the vllm serve command, never in the ROCm one"] = [
@@ -132,7 +134,24 @@ S["N2 js: the restore notice drops an entry that carries its reason"] = [
 S["N3 js: the entry loses its reason, so the notice says FP8 is not in the tool"] = [
     (INDEX_HTML, JS_R27_NOTICE_WHY, JS_R27_NOTICE_WHY.replace("why: refused, ", ""), 1)]
 
-# ---- round 38's cold check: one byte per parameter is FP8 only when no method is named ----
+# ---- round 38's cold check: a path the PDF can't carry, in-word breaks, pages, markup, FP8 by width ----
+S["C1 py: a model path holding a control character or odd whitespace is planned again"] = [
+    (REPORT_PY, PY_R27_PATH_CHARS, "", 1)]
+S["C2 js: the page fetches a model id holding a control character or odd whitespace"] = [
+    (INDEX_HTML, JS_R27_FIELD_CHARS, "  if (false) {\n", 1)]
+S["C3 both: the no-break space leaves the refused characters, in both engines alike"] = [
+    (REPORT_PY, PY_R27_PATH_RANGES, PY_R27_PATH_RANGES.replace("\\\\u00a0", ""), 1),
+    (INDEX_HTML, JS_R27_PATH_RANGES, JS_R27_PATH_RANGES.replace("\\\\u00a0", ""), 1)]
+S["C4 py: an unclosed quote runs _shell_words() off the end of the line again"] = [
+    (REPORT_PY, PY_R27_UNCLOSED, "            while line[j] != ch:\n", 1)]
+S["F1 py: the command font never shrinks, so a preset's long word is broken inside"] = [
+    (REPORT_PY, PY_R27_FONT_FITS, "        if False:\n", 1)]
+S["F2 py: the command font shrinks with no floor"] = [
+    (REPORT_PY, PY_R27_FONT_FLOOR, "            size = math.floor(width / need * 4) / 4\n", 1)]
+S["K1 py: the command block is loose in the story again, free to cross a page"] = [
+    (REPORT_PY, PY_R27_PDF_LINES, "        story += self.command_paragraphs(cmd)\n", 1)]
+S["E8 py: the PDF hands reportlab the command unescaped, so <br/> and &amp; are markup"] = [
+    (REPORT_PY, PY_R27_PDF_SPLIT, PY_R27_PDF_SPLIT.replace("Paragraph(escape(line), style)", "Paragraph(line, style)"), 1)]
 S["G1 py: one byte per parameter is FP8 whatever the method named"] = [
     (REPORT_PY, PY_R27_FP8_RULE, '    return quant in FP8_METHODS or cfg.get("bpp") == 1\n', 1)]
 S["G2 js: the command builder takes one byte per parameter as FP8 whatever the method"] = [

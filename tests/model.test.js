@@ -4802,6 +4802,32 @@ test('a link\'s precision is restored by the page\'s own loadURLHash(), and a li
   assert.strictEqual(named, 2 * BLOCKED.length, `${named} links' FP8 named in the notice`);
 });
 
+test('a model id with a control character or whitespace other than a space is refused by the page, before anything is fetched', () => {
+  /* Every refused character, derived: the controls, and whatever JavaScript's \s or
+     Python's str.isspace() calls whitespace, but a plain space. The page's own
+     fetchFromHuggingFace() runs on a stub of its field, with a fetch that records. The words
+     are the report's (MODEL_PATH_REASONS in tests/report.test.py). */
+  const PY_WHITESPACE = '\x1c\x1d\x1e\x1f\x85';
+  const refused = [...new Set([...Array(0x10000).keys()].map(c => String.fromCharCode(c))
+    .filter(c => c.charCodeAt(0) < 32 || c === '\x7f' || (/\s/.test(c) && c !== ' ') || PY_WHITESPACE.includes(c)))];
+  assert.ok(refused.length >= 40, `${refused.length} refused characters`);
+  const reason = 'holds a control character or whitespace other than a plain space, which the printed command cannot carry intact';
+  const decl = (re) => { const m = html.match(re); assert.ok(m, `${re} not found in index.html`); return m[0]; };
+  const src = [decl(/^const MODEL_PATH_REFUSED_CHARS = .+;$/m), decl(/^const MODEL_PATH_CHAR_REASON = .+;$/m),
+               decl(/^function modelPathCharReason\(path\) \{[\s\S]*?\n\}$/m), decl(/^async function fetchFromHuggingFace\(\) \{[\s\S]*?\n\}$/m)].join('\n');
+  for (const c of [...refused, ' ', '\u00e9']) {
+    const id = `org/a${c}b`, fetched = [];
+    const els = { 'hf-model-id': { value: id }, 'import-status': { className: '', innerHTML: '', textContent: '' } };
+    const api = new Function('document', 'fetch', 'setHTML', 'parseModelConfig', `${src}; return { fetchFromHuggingFace, modelPathCharReason };`)(
+      { getElementById: (k) => els[k] }, (url) => { fetched.push(url); return new Promise(() => {}); }, () => {}, () => {});
+    api.fetchFromHuggingFace();
+    const bad = refused.includes(c), what = `a model id holding U+${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    assert.strictEqual(api.modelPathCharReason(id), bad ? reason : '', `${what}: the reason`);
+    assert.strictEqual(fetched.length, bad ? 0 : 1, `${what}: ${bad ? 'fetched' : 'not fetched'}`);
+    if (bad) assert.strictEqual(els['import-status'].textContent, `The model path ${JSON.stringify(id)} ${reason}.`, `${what}: the status line`);
+  }
+});
+
 test('a GGUF plan at one byte per parameter is not refused as FP8; FP8 by width alone still is', () => {
   /* One byte per parameter means FP8 only when no method is named. A GGUF plan at 1 B/param
      on a card vLLM has no FP8 weight kernel for printed the FP8 refusal in place of its command. */

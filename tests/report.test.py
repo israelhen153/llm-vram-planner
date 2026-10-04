@@ -2708,7 +2708,7 @@ test("a local model is mounted into the ROCm container wherever it lives, and a 
 # $MODEL with no /, a dotted three-part relative path, absolute paths with a ~ or a
 # space inside, then models/llama/, a//b, x$ and a path with both a ~ and a $.
 PATH_STARTS = ("", "/", "/opt/", "~", "~/", "~user/", "./", "../", "$HOME/", "${HOME}/", "/data/$USER/", "-", "--")
-PATH_BODIES = ("m", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
+PATH_BODIES = ("m", "a\tb", "line\nbreak", "nb\u00a0sp", "del\x7fx", "llama-3.1-8b", "model.gguf", "my models/llama", "a~b/c", ".hidden/m",
                "models/llama/x.gguf", "a/b/c/d/e/f", "models/llama/", "a//b")
 BARE_PATHS = ("~", ".", "..", "$MODEL", "${MODEL}", "x$", "~/$HOME/m", "gpt2", "org/model.v2", "models/",
               "", "-", "-8b", "-$X", "-a/b/c")
@@ -2729,13 +2729,24 @@ MODEL_PATH_REASONS = {
                  "the ROCm container that is /vllm-workspace"),
     "empty": "is empty",
     "dash": "starts with -, so vLLM would read it as an option",
+    "control": ("holds a control character or whitespace other than a plain space, which the printed "
+                "command cannot carry intact"),
 }
 MODEL_PATH_FIX = "Give its absolute path on the GPU server instead, for example /opt/models/<name>."
+# What JavaScript's \s matches (ECMAScript's WhiteSpace and LineTerminator), which the page's
+# field refuses too, so the report refuses it as well.
+JS_WHITESPACE = "\t\n\x0b\x0c\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+# Every character a model path may not hold, derived: the controls, and whatever Python or
+# JavaScript calls whitespace, but a plain space.
+REFUSED_PATH_CHARS = sorted({chr(c) for c in range(32)} | {"\x7f"} | set(JS_WHITESPACE) - {" "}
+                            | {c for c in map(chr, range(sys.maxunicode + 1)) if c.isspace() and c != " "})
+REFUSED_PATH_SET = set(REFUSED_PATH_CHARS)
 
 
 def path_kind(path):
     """The requirement, restated: the reason a path is refused for, or None when it is
-    planned. A shell variable anywhere, a leading ~, or a relative path (., .., ./ or
+    planned. A shell variable anywhere, then a control character or whitespace but a plain
+    space anywhere, a leading ~, or a relative path (., .., ./ or
     ../ first, or three or more parts) is refused; an absolute path, or a name with at
     most one / (a Hugging Face id's shape), is planned. An empty path, and one starting
     with - (vLLM would read it as an option), are refused too."""
@@ -2743,6 +2754,8 @@ def path_kind(path):
         return "empty"
     if "$" in path:
         return "variable"
+    if any(c in REFUSED_PATH_SET for c in path):
+        return "control"
     if path.startswith("/"):
         return None
     if path.startswith("-"):
@@ -3264,6 +3277,109 @@ test("the CLI's default precision is FP8, and BF16 on a card vLLM has no FP8 wei
      check_the_cli_default_precision_follows_the_card)
 
 
+print("\nA model path holds no control character and no whitespace but a plain space")
+
+def check_a_model_path_with_a_control_character_or_odd_whitespace_is_refused_on_every_route():
+    """Every refused character, derived from both languages' whitespace and the controls,
+    inside a path on the JSON and menu routes, and three of them through the CLI: refused
+    with the pinned words, before a PDF is built. A newline in a JSON path crashed the PDF
+    build, and a tab or a no-break space pasted out of the PDF as a plain space. A plain
+    space and a printable non-ASCII letter are planned."""
+    assert len(REFUSED_PATH_CHARS) >= 40, len(REFUSED_PATH_CHARS)
+    h100 = str(list(gr.GPUS).index("h100-80") + 1)
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "c.json")
+        for c in REFUSED_PATH_CHARS + [" ", "\u00e9"]:
+            path = f"/opt/models/a{c}b"
+            want = model_path_refusal(path)
+            assert (want is None) == (c in " \u00e9"), (repr(c), want)
+            for preset in (True, False):
+                with open(config, "w") as fh:
+                    json.dump(dict({"preset": "llama31-8b"} if preset else {"params": 8, "layers": 32, "kv_heads": 8},
+                                   gpu="h100-80", hf_model=path), fh)
+                try:
+                    gr.from_json(config)
+                    got = None
+                except gr.PlanRefused as refused:
+                    got = str(refused)
+                assert got == want, f"JSON {repr(c)}: {got!r}"
+            answers = ["custom", "8", "100", "32", "8", "128", "0", path, "mine", h100, "1", "1", "n", "8192", "1"]
+            try:
+                with unittest.mock.patch("builtins.input", side_effect=answers), contextlib.redirect_stdout(io.StringIO()):
+                    gr.interactive_mode()
+                got = None
+            except gr.PlanRefused as refused:
+                got = str(refused)
+            assert got == want, f"menu {repr(c)}: {got!r}"
+        for c in ("\n", "\t", "\u00a0"):
+            with open(config, "w") as fh:
+                json.dump({"preset": "llama31-8b", "gpu": "mi250x-128", "quant": "awq", "hf_model": f"/opt/models/a{c}b"}, fh)
+            run = subprocess.run([sys.executable, os.path.join(ROOT, "generate_report.py"), "--json", config,
+                                  "-o", os.path.join(tmp, "x.pdf")], capture_output=True, text=True)
+            assert run.returncode == 2 and run.stderr.strip() == f"error: {model_path_refusal(f'/opt/models/a{c}b')}", \
+                (repr(c), run.returncode, run.stderr[-300:])
+            assert not os.path.exists(os.path.join(tmp, "x.pdf")), f"CLI {repr(c)}: a PDF was written"
+
+test("a model path with a control character or whitespace other than a space is refused on the JSON, menu and CLI routes",
+     check_a_model_path_with_a_control_character_or_odd_whitespace_is_refused_on_every_route)
+
+
+def check_the_pdf_line_breaker_never_raises():
+    """Arbitrary strings, quotes left open, backslashes at the end, comments, controls and
+    letters outside ASCII among them: breaking them for the PDF, and laying them out, never
+    raises and always ends, at the real column and at a column nothing fits. An unclosed
+    quote ran _shell_words() off the end of a line."""
+    import random
+    rng = random.Random(27)
+    alphabet = "ab /:-_.'\"\\#$&<>\n\t\x00\x7f\u00a0\u00e9\u4e2d \\"
+    obj = gr.ReportCard(gr.from_cli_args(gr.build_parser().parse_args(["--preset", "llama31-8b"])), output_path=os.devnull)
+    for n in range(1500):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 260)))
+        gr.pdf_command_lines(text, lambda line: len(line) < 40)
+        gr.pdf_command_lines(text, lambda line: False)
+        for p in obj.command_paragraphs(text):
+            p.wrap(obj.command_width(), 10_000)
+
+test("the PDF's line breaker never raises on any string, and always ends", check_the_pdf_line_breaker_never_raises)
+
+
+def check_a_command_block_is_kept_on_one_page():
+    """The command's flowables go into the story inside one KeepTogether, and a long plan
+    laid out for real lands on one page: a block that crossed a page pasted out of the PDF
+    with the footer and the next header inside the command."""
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "c.json")
+        with open(config, "w") as fh:
+            json.dump({"preset": "llama31-8b", "gpu": "mi250x-128", "n_gpu": 2, "quant": "awq",
+                       "hf_model": "/srv/" + "m" * 400}, fh)
+        cfg = gr.from_json(config)
+        cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
+        real, seen = gr.SimpleDocTemplate, {"story": None, "pages": []}
+
+        class Recording(real):
+            def build(self, story, **kw):
+                seen["story"] = list(story)
+                return super().build(story, **kw)
+
+            def afterFlowable(self, flowable):
+                if getattr(getattr(flowable, "style", None), "name", "").startswith("CmdCode"):
+                    seen["pages"].append(self.page)
+
+        with unittest.mock.patch.object(gr, "SimpleDocTemplate", Recording), contextlib.redirect_stdout(io.StringIO()):
+            gr.ReportCard(cfg, os.path.join(tmp, "r.pdf")).generate()
+    blocks = [f for f in seen["story"] if isinstance(f, gr.KeepTogether)
+              and any(getattr(p, "style", None) and p.style.name.startswith("CmdCode") for p in f._content)]
+    assert len(blocks) == 1 and all(p.style.name.startswith("CmdCode") for p in blocks[0]._content), \
+        "the command's flowables are not one KeepTogether in the story"
+    assert not [f for f in seen["story"] if getattr(getattr(f, "style", None), "name", "").startswith("CmdCode")], \
+        "a command flowable sits loose in the story"
+    assert len(seen["pages"]) == len(blocks[0]._content) >= 20 and len(set(seen["pages"])) == 1, \
+        f"the command's {len(seen['pages'])} lines landed on pages {sorted(set(seen['pages']))}"
+
+test("the command block is kept on one page, and a long one laid out for real lands on one",
+     check_a_command_block_is_kept_on_one_page)
+
+
 def check_a_gguf_plan_at_one_byte_per_parameter_is_not_refused_as_fp8():
     """One byte per parameter means FP8 only when no method is named: a GGUF plan at 1
     B/param on a card with no FP8 weight kernel was refused as FP8. Planned there and on an
@@ -3345,9 +3461,12 @@ def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
                     cfg.update(bpp=1, quant="fp8")
                 cmds.add(gr.build_vllm_cmd(cfg, gr.compute(cfg)))
                 cmds.add(gr.build_vllm_cmd(cfg, dict(gr.compute(cfg), fits=False)))
+    presets = set(cmds)
     users = ["/mnt/" + "/".join(f"team-{i}/checkpoints-v{i}.{i}" for i in range(8)) + "/model.gguf",
              "some-organisation/" + "-".join(["a-very-long-model-name"] * 6),
              "/opt/my  models/x & y'z",
+             # What a Paragraph reads as markup, which escape() keeps as text.
+             "/opt/models/<x>", "/opt/a>b", "/opt/a&amp;b", "/opt/a<br/>b",
              # Long enough that a break falls inside the quotes shlex.quote() puts round it.
              "/srv/team  shared/" + "/".join(f"run {i}" for i in range(16)) + "/model weights.gguf"]
     # Every length from a line that fits to one that breaks between words (the path on a
@@ -3376,6 +3495,15 @@ def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
         assert shell_words("\n".join(printed)) == shell_words(cmd), \
             f"copied out of the PDF, this is another command:\n{cmd}\n--- the PDF prints ---\n" + "\n".join(printed)
         broken += len(paras) > len(cmd.split("\n"))
+        sizes = {p.style.fontSize for p in paras}
+        assert len(sizes) == 1 and 6.5 <= min(sizes) <= max(sizes) <= 8, f"the block's font sizes {sizes}:\n{cmd}"
+        if cmd in presets:
+            # pdftotext -layout indents every line by a space, and a shell reads an indented
+            # continuation as a new word: a preset's command must paste the same that way too.
+            assert not [l for l in printed if not l.startswith("#") and l.endswith("\\") and not l.endswith(" \\")], \
+                f"a preset's command is broken inside a word:\n" + "\n".join(printed)
+            assert shell_words("\n".join(" " + l for l in printed)) == shell_words(cmd), \
+                "an indented copy of a preset's command is another command:\n" + "\n".join(printed)
         ends = [line for line in printed if not line.startswith("#")]
         kinds["between words"] += sum(l.endswith(" \\") for l in ends) - sum(l.endswith(" \\") for l in cmd.split("\n"))
         kinds["inside a word"] += sum(l.endswith("\\") and not l.endswith((" \\", "'\\")) for l in ends)

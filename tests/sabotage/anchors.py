@@ -354,7 +354,7 @@ PY_R27_NOTE = '    if stand_in:\n        parts.insert(0, stand_in[1])\n'
 PY_R27_TOKENIZER = '    if stand_in and cfg.get("quant") == "gguf":\n        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\\\")\n'
 PY_R27_PATH = '    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"\n'
 
-PY_R27_PDF_LINES = '        story += self.command_paragraphs(cmd)\n'
+PY_R27_PDF_LINES = '        story.append(KeepTogether(self.command_paragraphs(cmd)))\n'
 PY_R27_PDF_SPLIT = '        return [Paragraph(escape(line), style) for line in pdf_command_lines(cmd, fits)]\n'
 PY_R27_COMMENT_TAIL = '            cur = f"# {word}"\n'
 PY_R27_WORD_BREAK = '            out.append(cur + "".join(t for t, _ in rest[:k + 1]) + ("\'\\\\" if inside == "\'" else "\\\\"))\n'
@@ -366,6 +366,13 @@ JS_R27_NOTICE_PUSH = "      if (refused && bf16) urlRestoreLost.push({ id: 'weig
 JS_R27_NOTICE_SPLIT = '  const gone = live.filter(e => !e.why), refused = live.filter(e => e.why);\n'
 JS_R27_NOTICE_WHY = "                                                 fallback: bf16.value, why: refused, shown: 'BF16' });\n"
 
+PY_R27_PATH_CHARS = '    if re.search(f"[{MODEL_PATH_REFUSED_CHARS}]", model):\n        return MODEL_PATH_CHAR_REASON\n'
+JS_R27_FIELD_CHARS = '  if (modelPathCharReason(modelId)) {\n'
+PY_R27_PATH_RANGES = 'MODEL_PATH_REFUSED_CHARS = "\\\\u0000-\\\\u001f\\\\u007f\\\\u0085\\\\u00a0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff"\n'
+JS_R27_PATH_RANGES = "const MODEL_PATH_REFUSED_CHARS = '\\\\u0000-\\\\u001f\\\\u007f\\\\u0085\\\\u00a0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff';\n"
+PY_R27_UNCLOSED = '            while j < len(line) and line[j] != ch:\n'
+PY_R27_FONT_FITS = '        if need * size > width:\n'
+PY_R27_FONT_FLOOR = '            size = max(COMMAND_FONT_FLOOR, math.floor(width / need * 4) / 4)\n'
 PY_R27_FP8_RULE = '    return quant in FP8_METHODS or (not quant and cfg.get("bpp") == 1)\n'
 JS_R27_ROCM_FP8 = "  if ((state.quantMethod === 'fp8' || (state.bytesPerParam === 1 && !state.quantMethod))\n"
 

@@ -84,7 +84,7 @@ PY_NOTE_FIRST = '    if stand_in:\n        parts.insert(0, stand_in[1])\n'
 PY_TOKENIZER = '    if stand_in and cfg.get("quant") == "gguf":\n        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\\\")\n'
 PY_PATH = '    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"\n'
 PY_PREQ = 'PREQUANTIZED = {"awq": "AWQ", "gptq": "GPTQ", "gguf": "GGUF"}\n'
-PY_PDF_LINES = '        story += self.command_paragraphs(cmd)\n'
+PY_PDF_LINES = '        story.append(KeepTogether(self.command_paragraphs(cmd)))\n'
 PY_GATE = ('    if gpu.get("vendor") != "amd" or ROCM["arch"].get(gpu.get("gfx"), {}).get("fp8Weights"):\n'
            '        return ""\n')
 PY_ARCH_GFX90A = " 'arch': {'gfx90a': {'fp8Weights': False, 'aiter': False, 'fp8KvUnverified': False},\n"
