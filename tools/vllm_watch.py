@@ -25,7 +25,9 @@ again, whether that marker spells it 1.21.0 or 1.21.0.post1. A closed issue is n
 written to: a release after it is closed opens a new one.
 
 A failure to fetch PyPI's answer, or to read it, exits 1, never "no news". So do
-engines that disagree on the pin, a contract it cannot find, and a gh call that fails.
+engines that disagree on the pin, a contract it cannot find, a gh call that fails, and
+an issue list that is not the list of issues it reads, which must never pass for an
+empty one.
 
 Run:  python3 tools/vllm_watch.py --repo owner/name
       (needs the gh CLI, and GH_TOKEN with issues:write)
@@ -284,6 +286,33 @@ def gh_json(*args):
         raise WatchError(f"gh {' '.join(args[:2])} did not answer JSON: {e}")
 
 
+# What announce() reads of each issue `gh issue list` answers, and the type JSON gives it.
+ISSUE_FIELDS = (("number", int), ("title", str), ("state", str), ("body", str), ("comments", list))
+
+
+def check_issue_list(listed):
+    """Raise WatchError unless `listed`, the JSON `gh issue list` answered, is the list
+    announce() reads: objects each with a number, title, state and body, and comments
+    that are a list of objects with a body. A list it cannot read must never pass for an
+    empty one: with no issue seen, the week would open a second issue beside the one
+    that is open, and an answer of another shape would crash with a traceback instead."""
+    if not isinstance(listed, list):
+        raise WatchError(f"gh issue list answered {listed!r:.60}, not a list of issues")
+    for at, item in enumerate(listed):
+        if not isinstance(item, dict):
+            raise WatchError(f"gh issue list answered {item!r:.60} as its item {at}, not an issue")
+        for field, kind in ISSUE_FIELDS:
+            if field not in item:
+                raise WatchError(f"gh issue list answered its item {at} without its {field!r}")
+            if type(item[field]) is not kind:
+                raise WatchError(f"gh issue list answered its item {at} with {field!r} as {item[field]!r:.60}, "
+                                 f"not {kind.__name__}")
+        for comment in item["comments"]:
+            if not isinstance(comment, dict) or type(comment.get("body")) is not str:
+                raise WatchError(f"gh issue list answered its item {at} with the comment {comment!r:.60}, "
+                                 f"not an object with a body")
+
+
 def announce(repo, pin, newer, files, where):
     """Announce each release in `newer` that no issue under the title has announced, by
     its release number and not the spelling of its version: a release told as 1.21.0 is
@@ -292,6 +321,7 @@ def announce(repo, pin, newer, files, where):
     announced."""
     listed = gh_json("issue", "list", "--repo", repo, "--state", "all", "--search", f'in:title "{ISSUE_TITLE}"',
                      "--json", "number,title,state,body,comments", "--limit", "200")
+    check_issue_list(listed)
     ours = [i for i in listed if i.get("title") == ISSUE_TITLE]
     told = {release_of(version) for issue in ours
             for text in [issue.get("body") or ""] + [c.get("body") or "" for c in issue.get("comments") or []]

@@ -458,6 +458,44 @@ test("an issue list that is not JSON exits 1 and writes nothing, never an empty 
      check_an_issue_list_that_is_not_json_exits_1)
 
 
+def check_an_issue_list_of_the_wrong_shape_exits_1():
+    """JSON that is not the list of issues announce() reads is a list it cannot read,
+    never an empty one: objects each with a number, title, state and body, and comments
+    that are a list of objects with a body. {} and "" read as no issue open would open a
+    second issue beside the one that is, and null, [1] and gh's own error object would
+    crash with a traceback. Each of them, an issue missing any field the watch reads and
+    a malformed comment must give exit 1, the watch's own message and no write. The
+    fields are a literal here: they are what announce() reads, not what the check says."""
+    new = later(real_pin())
+    good = issue(5, "OPEN", "earlier", comments=["a comment"])
+    cases = {"an empty object": "{}", "an empty string": '""', "null": "null", "a list of numbers": "[1]",
+             "gh's error object": '{"message": "Bad credentials"}', "an issue that is a string": '["issue"]',
+             "a number that is text": json.dumps([{**good, "number": "5"}]),
+             "comments that are not a list": json.dumps([{**good, "comments": {"totalCount": 1}}]),
+             "a comment that is not an object": json.dumps([{**good, "comments": ["text"]}]),
+             "a comment without its body": json.dumps([{**good, "comments": [{"id": "IC_1"}]}])}
+    for field in ("number", "title", "state", "body", "comments"):
+        cases[f"an issue without its {field}"] = json.dumps([{k: v for k, v in good.items() if k != field}])
+    wrong = {}
+    for case, text in cases.items():
+        try:
+            code, printed, writes, _ = run_main({"issues": [good], "list_says": text}, pypi({new: [False]}))
+        except Exception as e:   # a crash is not the watch's own message
+            wrong[case] = f"crashed: {type(e).__name__}: {e}"
+            continue
+        if code != 1 or writes or "vllm watch: gh issue list answered" not in printed:
+            wrong[case] = (code, writes, printed.strip()[-120:])
+    assert not wrong, wrong
+    rich = {**good, "url": "https://github.com/o/r/issues/5", "labels": [],
+            "comments": [{"body": "a comment", "author": {"login": "someone"}, "createdAt": "2026-10-01T00:00:00Z"}]}
+    code, printed, writes, _ = run_main({"issues": [rich]}, pypi({new: [False]}))
+    assert code == 0 and writes == [["issue", "comment", "5"]], (
+        f"an answer carrying more than the watch reads, as gh's does: exit {code}, wrote {writes}: {printed[-200:]}")
+
+test("an issue list of the wrong shape exits 1 and writes nothing: {}, null, a missing field, a bad comment",
+     check_an_issue_list_of_the_wrong_shape_exits_1)
+
+
 print("\nWhat the notice sends the owner to re-check")
 
 
