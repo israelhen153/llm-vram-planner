@@ -16,6 +16,7 @@ import os
 import shlex
 import sys
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -28,6 +29,8 @@ try:
         HRFlowable, KeepTogether, PageBreak
     )
     from reportlab.pdfgen import canvas
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.platypus.frames import Frame
     from reportlab.graphics.shapes import Drawing, Rect, String, Line
     from reportlab.graphics import renderPDF
 except ImportError:
@@ -1001,6 +1004,140 @@ def build_vllm_cmd(cfg, comp):
     return "\n".join(parts)
 
 
+def _shell_words(line):
+    """A command line's words as a shell reads them, each a list of (quote, text) parts,
+    quote being "", "'" or '"'. A quote in a printed command is always closed."""
+    words, parts, bare, i = [], [], "", 0
+    while i < len(line):
+        ch = line[i]
+        if ch == " ":
+            if bare:
+                parts, bare = parts + [("", bare)], ""
+            if parts:
+                words, parts = words + [parts], []
+            i += 1
+        elif ch in "'\"":
+            if bare:
+                parts, bare = parts + [("", bare)], ""
+            j = i + 1
+            while line[j] != ch:
+                j += 2 if ch == '"' and line[j] == "\\" else 1
+            parts.append((ch, line[i + 1:j]))
+            i = j + 1
+        else:
+            step = 2 if ch == "\\" and i + 1 < len(line) else 1
+            bare += line[i:i + step]
+            i += step
+    if bare:
+        parts.append(("", bare))
+    if parts:
+        words.append(parts)
+    return words
+
+
+def _word_atoms(parts):
+    """A word as (text, inside) atoms, inside being the quote a break after the atom falls
+    in. A run of spaces in a quoted part becomes adjacent quoted strings, which a shell
+    joins back, because the PDF prints any run of spaces as one."""
+    atoms = []
+    for quote, text in parts:
+        if not quote:
+            k = 0
+            while k < len(text):
+                step = 2 if text[k] == "\\" else 1
+                atoms.append((text[k:k + step], ""))
+                k += step
+            continue
+        atoms.append((quote, quote))
+        prev = ""
+        for ch in text:
+            if ch == " " and prev == " ":
+                atoms.append((quote + quote, quote))
+            atoms.append((ch, quote))
+            prev = ch
+        atoms.append((quote, ""))
+    return atoms
+
+
+def _wrap_comment(line, fits):
+    """A comment too wide for the column as more comments: a shell ends a comment at its
+    newline whatever precedes it, so a wrapped tail would run as a command."""
+    out, cur = [], "#"
+    for word in line.strip()[1:].split():
+        while not fits(f"# {word}"):
+            k = max(k for k in range(1, len(word)) if k == 1 or fits(f"# {word[:k]}"))
+            if cur != "#":
+                out.append(cur)
+            out.append(f"# {word[:k]}")
+            cur, word = "#", word[k:]
+        if fits(f"{cur} {word}"):
+            cur = f"{cur} {word}"
+        else:
+            out.append(cur)
+            cur = f"# {word}"
+    return out + [cur]
+
+
+def _wrap_shell_line(line, fits):
+    """A command line as lines that each fit the column and paste as the same command:
+    broken between words with " \\", which a shell joins back, and inside a word too long
+    for a line with "\\", which bash removes even there, outside quotes and inside double
+    ones; a single-quoted part is closed before the break and reopened after it."""
+    indent = line[:len(line) - len(line.lstrip(" "))]
+    words = _shell_words(line)
+    tail = words and words[-1] == [("", "\\")]
+    if tail:
+        words = words[:-1]
+    out, cur = [], indent
+    for parts in words:
+        atoms = _word_atoms(parts)
+        word = "".join(text for text, _ in atoms)
+        sep = " " if cur.strip() else ""
+        if fits(f"{cur}{sep}{word} \\"):
+            cur = f"{cur}{sep}{word}"
+            continue
+        if cur.strip() and fits(f"{word} \\"):
+            out.append(f"{cur} \\")
+            cur = word
+            continue
+        # Too long for any line: break inside it, as many atoms per line as fit.
+        if cur.strip():
+            out.append(f"{cur} \\")
+        cur, rest = "", atoms
+        while rest:
+            if fits("".join(text for text, _ in rest) + " \\"):
+                cur += "".join(text for text, _ in rest)
+                break
+            # The longest prefix that fits with its break, leaving at least one atom for
+            # the next line, and after a / or : where one fits in the line's second half.
+            ok = [k for k in range(len(rest) - 1)
+                  if fits(cur + "".join(t for t, _ in rest[:k + 1]) + ("'\\" if rest[k][1] == "'" else "\\"))]
+            k = max(ok)
+            k = max([j for j in ok if rest[j][0] == ":" and j >= k // 2]
+                    or [j for j in ok if rest[j][0] == "/" and j >= k // 2] or [k])
+            inside = rest[k][1]
+            out.append(cur + "".join(t for t, _ in rest[:k + 1]) + ("'\\" if inside == "'" else "\\"))
+            cur, rest = ("'" if inside == "'" else ""), rest[k + 1:]
+    return out + [f"{cur} \\" if tail else cur]
+
+
+def pdf_command_lines(cmd, fits):
+    """The command as the PDF prints it, line by line, each line short enough that the PDF
+    never wraps it, and the whole pasting as the same shell command. The PDF wraps any line
+    wider than its column, and a command copied out of a PDF keeps those breaks: a \\
+    wrapped onto a line of its own ended a docker command before its image, and a wrapped
+    comment ran its tail as a command. So the breaks are made here, where the shell can be
+    told about them. fits(text) says whether a line fits the column; the page and the
+    copied report print the command unbroken, since neither wraps it."""
+    out = []
+    for line in cmd.split("\n"):
+        if line.lstrip().startswith("#"):
+            out += [line] if fits(line) else _wrap_comment(line, fits)
+        else:
+            out += _wrap_shell_line(line, fits)
+    return out
+
+
 # =============================================================================
 # PDF Generation
 # =============================================================================
@@ -1013,6 +1150,18 @@ class ReportCard:
         self.margin = 18 * mm
         self.styles = getSampleStyleSheet()
         self._setup_styles()
+
+    def command_width(self):
+        """The width a command line has in the PDF: the page's frame, inside reportlab's
+        own frame padding, as SimpleDocTemplate lays the story out."""
+        return Frame(0, 0, A4[0] - 2 * self.margin, A4[1])._aW
+
+    def command_paragraphs(self, cmd):
+        """The command as the PDF's flowables, one per line, none of which the PDF wraps:
+        see pdf_command_lines(). Escaped, since a Paragraph reads & and < as markup."""
+        style, width = self.styles["CmdCode"], self.command_width()
+        fits = lambda text: stringWidth(" ".join(text.split()), style.fontName, style.fontSize) <= width
+        return [Paragraph(escape(line), style) for line in pdf_command_lines(cmd, fits)]
 
     def _setup_styles(self):
         self.styles.add(ParagraphStyle(
@@ -1405,8 +1554,7 @@ class ReportCard:
         # ---- vLLM Command ----
         story.append(Paragraph("vLLM deployment command", self.styles["SectionHead"]))
         cmd = build_vllm_cmd(cfg, c)
-        for line in cmd.split("\n"):
-            story.append(Paragraph(line, self.styles["CmdCode"]))
+        story += self.command_paragraphs(cmd)
         # What the page shows beside a GGUF command, with each source as an address:
         # a PDF is forwarded without the page, so the links have to be readable.
         if c["fits"] and cfg.get("quant") == "gguf":

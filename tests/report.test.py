@@ -52,6 +52,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from xml.sax.saxutils import unescape
 import types
 import unittest.mock
 
@@ -3263,6 +3264,82 @@ test("the CLI's default precision is FP8, and BF16 on a card vLLM has no FP8 wei
      check_the_cli_default_precision_follows_the_card)
 
 
+print("\nA command copied out of the PDF pastes as the same command")
+
+
+def shell_words(text):
+    """The words a shell reads from pasted text: a backslash-newline outside single quotes
+    removed, as bash removes it even inside a word, then quotes, escapes and comments read
+    the way a shell reads them."""
+    out, quote, i = "", "", 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and quote != "'" and i + 1 < len(text):
+            out += "" if text[i + 1] == "\n" else text[i:i + 2]
+            i += 2
+            continue
+        if ch in "'\"" and quote in ("", ch):
+            quote = "" if quote else ch
+        out += ch
+        i += 1
+    return shlex.split(out, comments=True)
+
+
+def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
+    """Every command the PDF can print, each line laid out by reportlab at the width of the
+    PDF's own frame: no line wraps, and the lines as the PDF prints them (reportlab's own
+    text, runs of spaces as one) paste as the command's own words. A wrapped `\\` used to
+    land on a line of its own, ending the ROCm command before its image, and a wrapped
+    comment ran its tail as a command. Swept over every preset at every --prec on every
+    card, the FP8 refusal, a plan that does not fit, and model paths a user gives: a long
+    absolute path, a long hub id, and one with a run of spaces, a quote and an &, each on
+    both vendors at three precisions."""
+    parser = gr.build_parser()
+    small = gr.arch_fields(gr.PRESETS["llama31-8b"])
+    obj = gr.ReportCard(gr.from_cli_args(parser.parse_args(["--preset", "llama31-8b"])), output_path=os.devnull)
+    # The frame's text width, from reportlab's own document and frame, not from the report.
+    from reportlab.platypus import SimpleDocTemplate
+    from reportlab.platypus.frames import Frame
+    doc = SimpleDocTemplate(io.BytesIO(), pagesize=gr.A4, leftMargin=obj.margin, rightMargin=obj.margin)
+    width = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height)._aW
+    cmds = set()
+    for key in gr.PRESETS:
+        for prec in gr.PRECISIONS:
+            for slug in gr.GPUS:
+                args = ["--preset", key, "--gpu", slug, "--prec", "bf16" if prec == "fp8" and slug in FP8_GATED else prec]
+                cfg = dict(gr.from_cli_args(parser.parse_args(args)), **small)
+                if prec == "fp8" and slug in FP8_GATED:
+                    cfg.update(bpp=1, quant="fp8")
+                cmds.add(gr.build_vllm_cmd(cfg, gr.compute(cfg)))
+                cmds.add(gr.build_vllm_cmd(cfg, dict(gr.compute(cfg), fits=False)))
+    users = ["/mnt/" + "/".join(f"team-{i}/checkpoints-v{i}.{i}" for i in range(8)) + "/model.gguf",
+             "some-organisation/" + "-".join(["a-very-long-model-name"] * 6),
+             "/opt/my  models/x & y'z"]
+    with tempfile.TemporaryDirectory() as tmp:
+        for model in users:
+            for slug in ("h100-80", "mi300x-192", "mi250x-128"):
+                for extra in ({}, {"quant": "awq"}, {"quant": "gguf", "bpp": 0.63}):
+                    config = os.path.join(tmp, "c.json")
+                    with open(config, "w") as fh:
+                        json.dump(dict(small, gpu=slug, n_gpu=3, hf_model=model, **extra), fh)
+                    cfg = gr.from_json(config)
+                    cmds.add(gr.build_vllm_cmd(cfg, gr.compute(cfg)))
+    broken = 0
+    for cmd in sorted(cmds):
+        paras = obj.command_paragraphs(cmd)
+        for p in paras:
+            p.wrap(width, 10_000)
+            assert len(p.blPara.lines) == 1, f"the PDF wraps {p.text!r} at {width:.1f} pt"
+        printed = [unescape(p.text) for p in paras]
+        assert shell_words("\n".join(printed)) == shell_words(cmd), \
+            f"copied out of the PDF, this is another command:\n{cmd}\n--- the PDF prints ---\n" + "\n".join(printed)
+        broken += len(paras) > len(cmd.split("\n"))
+    assert len(cmds) >= 300 and broken >= 40, f"{len(cmds)} commands, {broken} of them broken: the sweep reached too few"
+
+test("a command copied out of the PDF pastes as the same command, for every preset, precision, card and a user's long or odd path",
+     check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command)
+
+
 print("\nA preset's own repo is no pre-quantized checkpoint")
 
 # The stand-in path a command names on a preset's own repo for AWQ, GPTQ and every GGUF
@@ -3280,6 +3357,15 @@ def stand_in_for(quant, repo):
     name = repo.split("/")[-1]
     path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{quant.upper()}"
     return path, f"# {quant.upper()} needs a pre-quantized checkpoint, which {repo} is not: replace {path} with {STAND_IN_FORMS[quant]}."
+
+
+def pdf_prints(strings, cmd):
+    """Whether the PDF's strings carry every line of the command: a comment the PDF breaks
+    into several (pdf_command_lines()) read back as one."""
+    strings = [s.strip() for s in strings]
+    comments = " ".join(s[1:].strip() for s in strings if s.startswith("#"))
+    return all(" ".join(line.split()[1:]) in comments if line.startswith("#") else line.strip() in strings
+               for line in cmd.split("\n"))
 
 
 def assert_command_names(cmd, repo, quant, vendor, replaced, where):
@@ -3331,9 +3417,7 @@ def check_every_preset_at_every_precision_names_a_stand_in_exactly_for_awq_gptq_
         for prec in gr.PRECISIONS:
             cfg = gr.from_cli_args(parser.parse_args(["--preset", "llama31-8b", "--gpu", slug, "--prec", prec]))
             cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
-            strings = [s.strip() for s in story_strings(cfg)]
-            for line in cmd.split("\n"):
-                assert line.strip() in strings, f"--prec {prec} on {slug}: the PDF does not print {line!r}"
+            assert pdf_prints(story_strings(cfg), cmd), f"--prec {prec} on {slug}: the PDF does not print the command"
 
 test("every preset at every --prec on every card: a stand-in path and its line exactly for AWQ, GPTQ and GGUF, in the command and the PDF",
      check_every_preset_at_every_precision_names_a_stand_in_exactly_for_awq_gptq_and_gguf)
@@ -3360,8 +3444,7 @@ def check_a_model_path_the_user_gave_is_never_replaced():
                     cmd = gr.build_vllm_cmd(cfg, gr.compute(cfg))
                     assert_command_names(cmd, repo, quant, gr.GPUS[slug]["vendor"], replaced,
                                          f"JSON {sorted(raw)} --quantization {quant} on {slug}")
-                    strings = [s.strip() for s in story_strings(cfg)]
-                    assert all(line.strip() in strings for line in cmd.split("\n")), \
+                    assert pdf_prints(story_strings(cfg), cmd), \
                         f"JSON {sorted(raw)} --quantization {quant}: the PDF does not print the command"
     # The menu: a model id typed for a custom architecture, then a preset, each at AWQ and Q4_K_M.
     h100 = str(list(gr.GPUS).index("h100-80") + 1)

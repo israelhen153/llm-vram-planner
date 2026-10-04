@@ -84,7 +84,7 @@ PY_NOTE_FIRST = '    if stand_in:\n        parts.insert(0, stand_in[1])\n'
 PY_TOKENIZER = '    if stand_in and cfg.get("quant") == "gguf":\n        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\\\")\n'
 PY_PATH = '    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"\n'
 PY_PREQ = 'PREQUANTIZED = {"awq": "AWQ", "gptq": "GPTQ", "gguf": "GGUF"}\n'
-PY_PDF_LINES = '        for line in cmd.split("\\n"):\n            story.append(Paragraph(line, self.styles["CmdCode"]))\n'
+PY_PDF_LINES = '        story += self.command_paragraphs(cmd)\n'
 PY_GATE = ('    if gpu.get("vendor") != "amd" or ROCM["arch"].get(gpu.get("gfx"), {}).get("fp8Weights"):\n'
            '        return ""\n')
 PY_ARCH_GFX90A = " 'arch': {'gfx90a': {'fp8Weights': False, 'aiter': False, 'fp8KvUnverified': False},\n"
@@ -199,7 +199,7 @@ S = {
         (REPORT_PY, PY_NOTE, PY_NOTE.replace("replace {path} with", "replace <{path}> with"), 1)],
     # ---- one engine or one surface: parity and the surface tests should see these ----
     "K34 py: the PDF prints the command without its first line, the stand-in's": [
-        (REPORT_PY, PY_PDF_LINES, PY_PDF_LINES.replace('split("\\n"):', 'split("\\n")[1:]:'), 1)],
+        (REPORT_PY, PY_PDF_LINES, PY_PDF_LINES.replace("command_paragraphs(cmd)", "command_paragraphs(cmd)[1:]"), 1)],
     "K35 py: a JSON config's own hf_model is replaced on the preset branch": [
         (REPORT_PY, PY_JSON_FROM_PRESET, '            "model_from_preset": True,\n', 1)],
     "K40 py: a JSON config with no preset that claims model_from_preset keeps the claim": [

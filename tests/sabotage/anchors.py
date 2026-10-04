@@ -353,7 +353,15 @@ PY_R27_STAND_IN = '    stand_in = prequantized_stand_in(cfg.get("quant"), base_r
 PY_R27_NOTE = '    if stand_in:\n        parts.insert(0, stand_in[1])\n'
 PY_R27_TOKENIZER = '    if stand_in and cfg.get("quant") == "gguf":\n        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\\\")\n'
 PY_R27_PATH = '    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"\n'
-PY_R27_PDF_LINES = '        for line in cmd.split("\\n"):\n            story.append(Paragraph(line, self.styles["CmdCode"]))\n'
+
+PY_R27_PDF_LINES = '        story += self.command_paragraphs(cmd)\n'
+PY_R27_PDF_SPLIT = '        return [Paragraph(escape(line), style) for line in pdf_command_lines(cmd, fits)]\n'
+PY_R27_COMMENT_TAIL = '            cur = f"# {word}"\n'
+PY_R27_WORD_BREAK = '            out.append(cur + "".join(t for t, _ in rest[:k + 1]) + ("\'\\\\" if inside == "\'" else "\\\\"))\n'
+PY_R27_WORD_REOPEN = '            cur, rest = ("\'" if inside == "\'" else ""), rest[k + 1:]\n'
+PY_R27_FRAME_WIDTH = '        return Frame(0, 0, A4[0] - 2 * self.margin, A4[1])._aW\n'
+PY_R27_QUOTED_RUN = '            if ch == " " and prev == " ":\n                atoms.append((quote + quote, quote))\n'
+PY_R27_BETWEEN_WORDS = '            out.append(f"{cur} \\\\")\n            cur = word\n'
 
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"

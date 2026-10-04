@@ -24,7 +24,9 @@ from anchors import (INDEX_HTML, REPORT_PY, JS_R10_SYNC_FORCE, PY_R10_MENU_FILTE
                      JS_R27_TOKENIZER, JS_R27_PATH, JS_R27_REPORT_CMD, PY_R27_PREC_ARG,
                      PY_R27_MENU_DEFAULT, PY_R27_DEFAULT_RULE, PY_R27_CLI_FLAG, PY_R27_JSON_FLAG,
                      PY_R27_JSON_OWN, PY_R27_MENU_FLAG, PY_R27_STAND_IN, PY_R27_NOTE,
-                     PY_R27_TOKENIZER, PY_R27_PATH, PY_R27_PDF_LINES)
+                     PY_R27_TOKENIZER, PY_R27_PATH, PY_R27_PDF_LINES, PY_R27_PDF_SPLIT,
+                     PY_R27_COMMENT_TAIL, PY_R27_WORD_BREAK, PY_R27_WORD_REOPEN, PY_R27_FRAME_WIDTH,
+                     PY_R27_QUOTED_RUN, PY_R27_BETWEEN_WORDS)
 
 # The command box, the one place the page writes the command. Used once, so kept here.
 JS_BOX = "<code>${cmd}</code></div>${rocmLines}`);\n"
@@ -62,7 +64,7 @@ S["S4 js: the copied report drops the stand-in's line from the command it quotes
      JS_R27_REPORT_CMD.replace("emitted.textContent :", "emitted.textContent.replace(/^# [^\\n]*\\n/, '') :"), 1)]
 S["S5 py: the PDF drops the stand-in's line from the command it prints"] = [
     (REPORT_PY, PY_R27_PDF_LINES,
-     PY_R27_PDF_LINES.replace('cmd.split("\\n"):', '[l for l in cmd.split("\\n") if "pre-quantized" not in l]:'), 1)]
+     '        story += [p for p in self.command_paragraphs(cmd) if not p.text.startswith("#")]\n', 1)]
 S["S6 js: the command box hides the stand-in's line, so the copied report loses it too"] = [
     (INDEX_HTML, JS_BOX, JS_BOX.replace("<code>${cmd}</code>", "<code>${cmd.replace(/^# [^\\n]*pre-quantized[^\\n]*\\n/, '')}</code>"), 1)]
 S["S7 js: the stand-in only in the vllm serve command, never in the ROCm one"] = [
@@ -103,5 +105,22 @@ S["P1 both: the stand-in is a relative path, in both engines alike"] = [
 S["P2 both: the stand-in carries <...>, in both engines alike"] = [
     (INDEX_HTML, JS_R27_PATH, JS_R27_PATH.replace("${name}-${method}", "<${name}>-${method}"), 1),
     (REPORT_PY, PY_R27_PATH, PY_R27_PATH.replace("{name}-{method}", "<{name}>-{method}"), 1)]
+
+# ---- Q: a command copied out of the PDF pasting as another command (round 37's cold check) ----
+S["Q1 py: the PDF hands reportlab the command's own lines, which it wraps"] = [
+    (REPORT_PY, PY_R27_PDF_SPLIT, PY_R27_PDF_SPLIT.replace("pdf_command_lines(cmd, fits)", 'cmd.split("\\n")'), 1)]
+S["Q2 py: a comment broken for the PDF continues without its #"] = [
+    (REPORT_PY, PY_R27_COMMENT_TAIL, "            cur = word\n", 1)]
+S["Q3 py: a word broken for the PDF loses its backslash"] = [
+    (REPORT_PY, PY_R27_WORD_BREAK, PY_R27_WORD_BREAK.replace('("\'\\\\" if inside == "\'" else "\\\\")', '("\'" if inside == "\'" else "")'), 1)]
+S["Q4 py: a single-quoted part broken for the PDF without closing and reopening it"] = [
+    (REPORT_PY, PY_R27_WORD_BREAK, PY_R27_WORD_BREAK.replace('("\'\\\\" if inside == "\'" else "\\\\")', '"\\\\"'), 1),
+    (REPORT_PY, PY_R27_WORD_REOPEN, '            cur, rest = "", rest[k + 1:]\n', 1)]
+S["Q5 py: the command column measured without the frame's padding, so lines still wrap"] = [
+    (REPORT_PY, PY_R27_FRAME_WIDTH, "        return A4[0] - 2 * self.margin\n", 1)]
+S["Q6 py: a run of spaces inside quotes printed as is, which the PDF prints as one"] = [
+    (REPORT_PY, PY_R27_QUOTED_RUN, "", 1)]
+S["Q7 py: a line broken between words without the \\ that joins it back"] = [
+    (REPORT_PY, PY_R27_BETWEEN_WORDS, "            out.append(cur)\n            cur = word\n", 1)]
 
 run_driver(S)
