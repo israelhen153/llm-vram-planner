@@ -4975,6 +4975,104 @@ test('no surface states a per-device layer count, on any card, count, model or l
     `arithmetic on a command that never emits it:\n  ${found.slice(0, 6).join('\n  ')}`);
 });
 
+/* The rules above know the claim by its words, and words can be changed: a cold
+   check put the tile back as "Transformer blocks", reading "each ~10", and only the
+   page golden saw it, which regenerating the goldens hides. Two things hold the
+   device panel (each card from two to four devices, the condensed panel from five)
+   whatever the figure is called.
+
+   What the figure is: a per-device layer count moves with the layer count, and
+   nothing else on this panel may. Under TP × DP each device holds a slice of every
+   layer however many there are, so the panel describes devices and memory, and
+   memory is the one thing on it the layer count moves, through the KV cache. Each
+   plan of the sweep above is rendered again with as many more layers as it has
+   devices, which moves ceil(L / n), floor(L / n) and every L<a>–<b> range by at
+   least one whatever the rounding, and with its memory figures masked the panel
+   must read the same. Every other surface prints the layer count, the KV cache or
+   the context it allows, which rightly move, so they stay with the rules above.
+
+   What the condensed panel shows: its tiles are a contract, so they are a literal.
+   A tile added or renamed fails until PANEL_TILES is changed on purpose, whatever
+   its value says; so does a label shown twice, or text in the grid outside a tile.
+   Labels are read off the rendered panel, never off the renderer. */
+const PANEL_TILES = ['Cluster VRAM', 'Weights sharded', 'Weights per device', 'Parallelism', 'Est. nodes'];
+const panelTileLabels = (markup) => {
+  const at = markup.search(/<div\b[^>]*\bdisplay:\s*grid\b/);
+  if (at < 0) return null;
+  // Each child of the grid, and whatever lies between two of them.
+  const pieces = [], tag = /<(\/?)div\b[^>]*>/g;
+  tag.lastIndex = at;
+  let depth = 0, from = at;
+  for (let m; (m = tag.exec(markup));) {
+    if (!m[1] && ++depth === 1) from = tag.lastIndex;
+    else if (!m[1] && depth === 2) { pieces.push(markup.slice(from, m.index)); from = m.index; }
+    else if (m[1] && depth-- === 2) { pieces.push(markup.slice(from, tag.lastIndex)); from = tag.lastIndex; }
+    else if (m[1] && depth === 0) { pieces.push(markup.slice(from, m.index)); break; }
+  }
+  // A label is the first line of text a reader meets in the piece: what a figure is read under.
+  return pieces.map(p => p.split(/<br\b[^>]*>/i)
+    .map(s => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ').trim()).find(Boolean)).filter(Boolean);
+};
+// Every figure before a byte unit or a percent sign goes, and nothing else does.
+const withoutMemory = (text) => text.replace(/\d+(?:\.\d+)?\s*(?:[KMGT]i?B\b|%)/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+test('the device panel shows only its own tiles, and nothing on it moves with the layer count', () => {
+  // On the shapes they exist for, so a mask that took every number, or a reader that
+  // found no tile, would fail here instead of passing the sweep by seeing nothing.
+  assert.strictEqual(withoutMemory('Each device — 17.50 GiB / 80 GiB (22%) 8.75 GiB/device'),
+    withoutMemory('Each device — 21.25 GiB / 80 GiB (27%) 9.13 GiB/device'), 'the mask leaves memory in');
+  for (const [was, now] of [['Transformer blocks each ~10', 'Transformer blocks each ~11'],
+                            ['(52%) · L40–79', '(55%) · L44–87'], ['TP=8 · 10 deep', 'TP=8 · 11 deep']])
+    assert.notStrictEqual(withoutMemory(was), withoutMemory(now), `the mask hides "${was}" becoming "${now}"`);
+  const tile = (label, value) =>
+    `<div style="font-size:12px"><span style="color:var(--text-muted)">${label}</span><br>${value}</div>`;
+  assert.deepStrictEqual(panelTileLabels(`<p>Each device</p><div style="display:grid;gap:6px">` +
+    `${tile('Cluster VRAM', '<b>640 GiB</b>')} each ~10 ${tile('Layers per device', '<b>~10</b> of 80<br>' +
+    '<span>assumes sharding across all 8</span>')}<div><br><b>~10</b> blocks</div></div><p>note</p>`),
+    ['Cluster VRAM', 'each ~10', 'Layers per device', '~10 blocks'], 'the tile reader misses a tile');
+  const { plans } = layerSplitPlans();
+  const h = renderHarness();
+  const panel = (st) => {
+    h.renderGPUCards(st, computeInference(st));
+    return { markup: String(h.out['gpu-cards'] ?? ''),
+             text: readerLines({ html: h.out, written: h.shown, props: h.props }, 'gpu-cards') };
+  };
+  const moved = [], strangers = [], seen = new Set();
+  let memoryMoved = 0;
+  for (const plan of plans) {
+    const now = panel(plan.st);
+    assert.ok(now.text.trim(), `${plan.name}: the device panel rendered nothing`);
+    if (plan.devices >= 5) {
+      const labels = panelTileLabels(now.markup);
+      assert.ok(labels && labels.length, `${plan.name}: no tile grid in the condensed panel`);
+      labels.forEach(l => seen.add(l));
+      const odd = labels.filter((l, i) => !PANEL_TILES.includes(l) || labels.indexOf(l) !== i);
+      if (odd.length) strangers.push(`${plan.name}: ${odd.map(l => `"${l}"`).join(', ')}`);
+    }
+    const more = panel({ ...plan.st, layers: plan.st.layers + plan.devices });
+    if (more.text !== now.text) memoryMoved++;
+    const [was, then] = [withoutMemory(now.text), withoutMemory(more.text)];
+    if (was !== then) {
+      let i = 0;
+      while (i < was.length && was[i] === then[i]) i++;
+      const from = Math.max(0, i - 40);
+      moved.push(`${plan.name}: "…${was.slice(from, i + 40)}…" becomes ` +
+                 `"…${then.slice(from, i + 40)}…" with ${plan.devices} more layers`);
+    }
+  }
+  assert.deepStrictEqual(strangers.slice(0, 6), [],
+    `${strangers.length} condensed panel(s) show a tile PANEL_TILES does not name, or one twice; if it ` +
+    `belongs there, add it to the list on purpose:\n  ${strangers.slice(0, 6).join('\n  ')}`);
+  assert.deepStrictEqual([...seen].sort(), [...PANEL_TILES].sort(),
+    'PANEL_TILES and the tiles the sweep shows differ');
+  // The second render reached the panel, or nothing could have moved.
+  assert.ok(memoryMoved, 'no panel changed at all with more layers, so the comparison compared nothing');
+  assert.deepStrictEqual(moved.slice(0, 6), [],
+    `${moved.length} device panel(s) print something besides memory that moves with the layer count, ` +
+    `which is what a per-device layer count does:\n  ${moved.slice(0, 6).join('\n  ')}`);
+});
+
 /* ---- what today's cards display ------------------------------------------
  *
  * Every other test in this file is differential: it renders a card with
