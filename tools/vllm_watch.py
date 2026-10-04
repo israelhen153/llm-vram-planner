@@ -14,9 +14,15 @@ pin it opens one issue, or adds to the one open, saying what to re-check: every 
 file that mentions the pin, searched at run time, and where each contract a release
 decides lives, found at run time. It changes nothing in the tree.
 
-Each version is announced once. The notice carries a marker per version, and a version
-an issue under the title already carries, open or closed, is not announced again. A
-closed issue is never written to: a release after it is closed opens a new one.
+A release counts by its number alone. A post-release (1.20.9.post1) is a fix to a
+release, not a newer one: small patches do not count (the owner, 2026-10-04). A final
+release and its post-releases are one release, named by the final release when any of
+its files can be installed, and otherwise by its lowest post-release that can.
+
+Each release is announced once. The notice carries a marker per version, and a release
+an issue under the title already carries a marker for, open or closed, is not announced
+again, whether that marker spells it 1.21.0 or 1.21.0.post1. A closed issue is never
+written to: a release after it is closed opens a new one.
 
 A failure to fetch PyPI's answer, or to read it, exits 1, never "no news". So do
 engines that disagree on the pin, a contract it cannot find, and a gh call that fails.
@@ -76,17 +82,21 @@ VERSION = re.compile(r"""
 
 
 def parse(version):
-    """(final, key) for a version. `final` is False for an alpha, beta, rc or dev
-    release. `key` orders final releases as numbers, never as text: PyPI lists vLLM's
-    releases sorted as strings (on 2026-10-02 its last key was 0.9.2 and its newest
-    release 0.30.0), and vLLM ships four-part versions too (0.9.0.1, 0.10.1.1).
+    """(final, release, post) for a version. `final` is False for an alpha, beta, rc or
+    dev release. `release` is its release number, the epoch and the numeric parts, which
+    order releases as numbers, never as text: PyPI lists vLLM's releases sorted as
+    strings (on 2026-10-02 its last key was 0.9.2 and its newest release 0.30.0), and
+    vLLM ships four-part versions too (0.9.0.1, 0.10.1.1), which are releases. `post`
+    is the post-release number, or -1 for a version that is not one, so a release sorts
+    before its fixes.
 
-    A post-release counts, and sorts after its release and before the next. PEP 440
-    does not call it a pre-release and pip installs it without --pre, and vLLM uses
-    them to ship fixes: on 2026-10-02 PyPI listed 10, from 0.2.1.post1 to 0.8.5.post1,
-    and every file of 0.2.1 itself is yanked, so its post-release was the only 0.2.1
-    anyone could install. A watch that skipped them would stay silent about the build
-    pip actually installs. A post-release of a pre-release is still a pre-release."""
+    A post-release is not a newer release: 1.20.9.post1 has the release number of
+    1.20.9, and counts for nothing beside it (the owner, 2026-10-04: small patches do
+    not count). It is still a build pip installs without --pre, and the only one when
+    its release was yanked: on 2026-10-02 PyPI listed 10, from 0.2.1.post1 to
+    0.8.5.post1, and every file of 0.2.1 itself is yanked, so its post-release was the
+    only 0.2.1 anyone could install, which newer_releases() still counts, under that
+    name. A post-release of a pre-release is still a pre-release."""
     m = VERSION.fullmatch(str(version).strip())
     if not m:
         raise WatchError(f"{version!r} is not a version PEP 440 allows, so it cannot be ordered")
@@ -95,33 +105,47 @@ def parse(version):
         release.pop()
     post = m.group("post")
     post_n = -1 if post is None else int(re.sub(r"[^0-9]", "", post) or 0)
-    return not (m.group("pre") or m.group("dev")), (int(m.group("epoch") or 0), tuple(release), post_n)
+    return not (m.group("pre") or m.group("dev")), (int(m.group("epoch") or 0), tuple(release)), post_n
+
+
+def release_of(version):
+    """The release number of a final version, whether it is spelled 1.21.0 or
+    1.21.0.post1, or None for a string that is no final version. A marker in an issue
+    is read with this, and one the watch did not write may say anything."""
+    try:
+        final, release, _ = parse(version)
+    except WatchError:
+        return None
+    return release if final else None
 
 
 def newer_releases(pin, data):
-    """The final releases in PyPI's answer `data` that are newer than `pin`, oldest
-    first. A release none of whose files can be installed is skipped: one whose files
-    are all yanked, or which has none."""
+    """One version for each final release in PyPI's answer `data` that is newer than
+    `pin`, oldest first. A release is newer by its number alone (see parse()), so a
+    release and its post-releases are one, named by the final release when any of its
+    files can be installed, and otherwise by its lowest post-release that can. A
+    release none of whose versions has a file that can be installed is skipped: every
+    file yanked, or none."""
     releases = data.get("releases") if isinstance(data, dict) else None
     if not isinstance(releases, dict) or not releases:
         raise WatchError("PyPI's answer lists no releases, so it says nothing about what vLLM shipped")
-    final, pin_key = parse(pin)
+    final, pin_release, _ = parse(pin)
     if not final:
         raise WatchError(f"the pin {pin!r} is not a final release, and only final releases are compared")
-    found = []
+    found = {}   # release number -> (post, version) of the version that names it
     for version, files in releases.items():
         if not isinstance(files, list) or not all(isinstance(f, dict) and isinstance(f.get("yanked"), bool)
                                                   for f in files):
             raise WatchError(f"PyPI's files for {version!r} are not a list of files each marked yanked or not")
-        is_final, key = parse(version)
+        is_final, release, post = parse(version)
         if not is_final:
             continue
         installable = [f for f in files if not f["yanked"]]
         if not installable:
             continue
-        if key > pin_key:
-            found.append((key, version))
-    return [version for _, version in sorted(found)]
+        if release > pin_release:
+            found[release] = min(found.get(release, (post, version)), (post, version))   # a final's post is -1
+    return [version for _, (_, version) in sorted(found.items())]
 
 
 def fetch(url=PYPI_URL):
@@ -261,16 +285,18 @@ def gh_json(*args):
 
 
 def announce(repo, pin, newer, files, where):
-    """Announce each release in `newer` that no issue under the title has announced:
-    as a comment on the open issue, or as a new issue when none is open. Returns the
-    releases it announced."""
+    """Announce each release in `newer` that no issue under the title has announced, by
+    its release number and not the spelling of its version: a release told as 1.21.0 is
+    not told again as 1.21.0.post1, nor the reverse. The announcement is a comment on
+    the open issue, or a new issue when none is open. Returns the versions it
+    announced."""
     listed = gh_json("issue", "list", "--repo", repo, "--state", "all", "--search", f'in:title "{ISSUE_TITLE}"',
                      "--json", "number,title,state,body,comments", "--limit", "200")
     ours = [i for i in listed if i.get("title") == ISSUE_TITLE]
-    told = {version for issue in ours
+    told = {release_of(version) for issue in ours
             for text in [issue.get("body") or ""] + [c.get("body") or "" for c in issue.get("comments") or []]
-            for version in MARKED.findall(text)}
-    fresh = [v for v in newer if v not in told]
+            for version in MARKED.findall(text)}   # None for a marker that names no final release
+    fresh = [v for v in newer if release_of(v) not in told]
     if not fresh:
         return []
     open_issues = sorted(i["number"] for i in ours if str(i.get("state", "")).lower() == "open")

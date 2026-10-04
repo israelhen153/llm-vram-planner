@@ -5,9 +5,10 @@ it cannot read PyPI, and what its notice sends the owner to re-check.
 
 The watch is only as good as what this file holds. It must read the pin from both
 engines and refuse when they disagree; count final, installable releases only, in
-numeric order; announce each release once, on one open issue; exit 1 whenever it
-could not read the answer, because "no news" is what a broken watch looks like; and
-find the files and contracts its notice names by searching the tree it runs in.
+numeric order, a release and its post-releases as one; announce each release once,
+on one open issue, whichever way its version is spelled; exit 1 whenever it could
+not read the answer, because "no news" is what a broken watch looks like; and find
+the files and contracts its notice names by searching the tree it runs in.
 
 No test here reaches the network or GitHub. PyPI is answered from fixtures, a proxy
 that refuses every connection is set for anything that slips past, and a fake gh
@@ -228,14 +229,14 @@ print("\nThe releases it counts, and their order")
 def check_only_final_installable_releases_count():
     """Alpha, beta, rc and dev releases are not final, and neither is a post-release
     of one. A release whose files are all yanked, or which has none, cannot be
-    installed. A post-release of a final release counts (see parse()), and so does a
-    release with one file yanked and another not."""
+    installed. A post-release of the pin's own release is not newer (see parse()), and
+    a release with one file yanked and another not counts."""
     data = pypi({"1.21.0rc1": [False], "1.21.0a2": [False], "1.21.0b1": [False], "1.21.0.dev0": [False],
                  "1.21.0rc1.post1": [False], "1.21.1.dev2": [False],
                  "1.21.1": [True, True], "1.21.2": [],
                  "1.21.3": [True, False], "1.20.9.post1": [False], "1.20.9": [False], "1.20.8": [False]})
     got = vw.newer_releases("v1.20.9", data)
-    assert got == ["1.20.9.post1", "1.21.3"], f"newer than v1.20.9: {got}"
+    assert got == ["1.21.3"], f"newer than v1.20.9: {got}"
 
 test("only final, installable releases count: no pre-release, dev release or yanked release",
      check_only_final_installable_releases_count)
@@ -251,6 +252,52 @@ def check_versions_are_compared_as_numbers():
     assert got == ["1.20.9.1", "1.20.10", "1.100.0", "2.0"], f"newer than v1.20.9, oldest first: {got}"
 
 test("versions are compared as numbers, never as text", check_versions_are_compared_as_numbers)
+
+
+def in_both_orders(releases):
+    """PyPI's JSON for {version: [whether each file is yanked]}, listed as given and
+    in reverse: PyPI sorts its list as strings, so no result may depend on its order."""
+    return [pypi(releases), pypi(dict(reversed(list(releases.items()))))]
+
+
+def check_a_release_and_its_post_releases_are_one_release():
+    """Small patches do not count (the owner, 2026-10-04): a post-release has its
+    release's number, so it is never newer than the pin's own release, and beside a
+    newer release it adds nothing: the release is named, not its fixes. A four-part
+    version is a release, with post-releases of its own; and a pin that is itself a
+    post-release is compared by its release number."""
+    cases = [("v1.20.9", {"1.21.0": [False], "1.21.0.post1": [False], "1.21.0.post2": [False],
+                          "1.20.9": [False], "1.20.9.post1": [False]}, ["1.21.0"]),
+             ("v0.9.0", {"0.9.0": [False], "0.9.0.post1": [False], "0.9.0.1": [False],
+                         "0.9.0.1.post1": [False]}, ["0.9.0.1"]),
+             ("v1.20.9.post1", {"1.20.9": [False], "1.20.9.post1": [False], "1.20.9.post2": [False],
+                                "1.21.0": [False]}, ["1.21.0"])]
+    wrong = {(pin, tuple(data["releases"])): got for pin, releases, want in cases
+             for data in in_both_orders(releases) for got in [vw.newer_releases(pin, data)] if got != want}
+    assert not wrong, f"newer than the pin, wrongly: {wrong}"
+
+test("a release and its post-releases are one release: the release is named, its fixes are not",
+     check_a_release_and_its_post_releases_are_one_release)
+
+
+def check_a_release_known_only_by_a_post_release_still_counts():
+    """vLLM's 0.2.1 had every file yanked, and 0.2.1.post1 was the only 0.2.1 anyone
+    could install: such a release still counts, under the name of its lowest
+    post-release that can be installed. A release with nothing installable under any
+    of its names does not count, and one whose final release can be installed is
+    named by it, with a post-release listed beside it."""
+    releases = {"1.21.0": [True, True], "1.21.0.post1": [True], "1.21.0.post2": [False], "1.21.0.post3": [False],
+                "1.21.1": [True], "1.21.1.post1": [True],
+                "1.21.2": [True], "1.21.2.post1": [False],
+                "1.21.3": [False], "1.21.3.post1": [False],
+                "1.20.9": [False]}
+    want = ["1.21.0.post2", "1.21.2.post1", "1.21.3"]
+    wrong = {tuple(data["releases"]): got for data in in_both_orders(releases)
+             for got in [vw.newer_releases("v1.20.9", data)] if got != want}
+    assert not wrong, f"wanted {want}, and in these orders it gave: {wrong}"
+
+test("a release whose final is yanked, with an installable post-release, counts under the post-release's name",
+     check_a_release_known_only_by_a_post_release_still_counts)
 
 
 print("\nWhat it tells GitHub, and how often")
@@ -311,6 +358,41 @@ def check_a_release_is_announced_once():
         f"a third release with the issue closed wrote {writes}, and the closed issue has {len(ours['comments'])} comments")
 
 test("each release is announced once, open issue or closed", check_a_release_is_announced_once)
+
+
+def check_a_release_is_told_once_under_either_name():
+    """A release and its post-release are one release, so one told as X is not told
+    again as X.post1, nor the reverse: the final yanked after it was announced, leaving
+    its post-release; or the post-release announced while the final was yanked, and the
+    final restored. Asserted on the writes it makes, from the markers it wrote itself.
+    A newer release is still told, and a marker that names no final release (a
+    pre-release, or text that is no version) tells nothing and breaks nothing."""
+    pin = real_pin()
+    rel, post, newest = later(pin), later(pin) + ".post1", later(pin, 2)
+    cases = {"announced as the release, then only its post-release installs":
+                 (rel, {rel: [False]}, {rel: [True], post: [False]}),
+             "announced as the post-release, then the release installs":
+                 (post, {rel: [True], post: [False]}, {rel: [False], post: [False]})}
+    for case, (named, first, then) in cases.items():
+        state = {"issues": []}
+        code, printed, writes, _ = run_main(state, pypi(first))
+        assert code == 0 and writes == [["issue", "create"]] and vw.MARK.format(named) in state["issues"][0]["body"], (
+            f"{case}: week 1 exit {code}, wrote {writes}, named {named}: {printed[-200:]}")
+        code, printed, writes, _ = run_main(state, pypi(then))
+        assert code == 0 and writes == [] and "already announced" in printed, (
+            f"{case}: week 2 exit {code}, wrote {writes}: {printed[-200:]}")
+        code, printed, writes, _ = run_main(state, pypi({**then, newest: [False]}))
+        said = (state["issues"][0]["comments"] or [{"body": ""}])[-1]["body"]
+        assert code == 0 and writes == [["issue", "comment", "1"]] and vw.MARK.format(newest) in said and (
+            vw.MARK.format(named) not in said), f"{case}: week 3 exit {code}, wrote {writes}: {said[-300:]}"
+    stray = [vw.MARK.format("latest"), vw.MARK.format(rel + "rc1")]
+    state = {"issues": [issue(3, "OPEN", "earlier", comments=stray)]}
+    code, printed, writes, _ = run_main(state, pypi({rel: [False]}))
+    assert code == 0 and writes == [["issue", "comment", "3"]], (
+        f"markers that name no final release: exit {code}, wrote {writes}: {printed[-200:]}")
+
+test("a release is told once, under either name: the release, or its post-release",
+     check_a_release_is_told_once_under_either_name)
 
 
 print("\nWhen PyPI cannot be read")

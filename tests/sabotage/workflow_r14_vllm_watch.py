@@ -36,7 +36,7 @@ def swap(f, old, new):
 S = {
  # ---- V: which releases count, and in what order ----
  'V1 versions compared as strings':
-     swap(VW, '        if key > pin_key:\n', '        if version > pin.lstrip("vV"):\n'),
+     swap(VW, '        if release > pin_release:\n', '        if version > pin.lstrip("vV"):\n'),
  'V2 pre-releases counted':
      swap(VW, '    return not (m.group("pre") or m.group("dev")), ', '    return not m.group("dev"), '),
  'V3 dev releases counted':
@@ -60,7 +60,7 @@ S = {
      swap(VW, '    open_issues = sorted(i["number"] for i in ours if str(i.get("state", "")).lower() == "open")\n',
               '    open_issues = []\n'),
  'R2 an announced release announced again':
-     swap(VW, '    fresh = [v for v in newer if v not in told]\n', '    fresh = list(newer)\n'),
+     swap(VW, '    fresh = [v for v in newer if release_of(v) not in told]\n', '    fresh = list(newer)\n'),
 
  # ---- F: when PyPI cannot be read ----
  'F1 a fetch error treated as no news, exit 0':
