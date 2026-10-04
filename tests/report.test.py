@@ -3268,21 +3268,26 @@ print("\nA command copied out of the PDF pastes as the same command")
 
 
 def shell_words(text):
-    """The words a shell reads from pasted text: a backslash-newline outside single quotes
-    removed, as bash removes it even inside a word, then quotes, escapes and comments read
-    the way a shell reads them."""
-    out, quote, i = "", "", 0
+    """The commands a shell reads from pasted text, each as its words: a backslash-newline
+    outside single quotes removed, as bash removes it even inside a word; any other newline
+    outside quotes ending a command, which shlex alone would read as a space; then quotes,
+    escapes and comments read the way a shell reads them. Comment-only lines read as none."""
+    commands, out, quote, i = [], "", "", 0
     while i < len(text):
         ch = text[i]
         if ch == "\\" and quote != "'" and i + 1 < len(text):
             out += "" if text[i + 1] == "\n" else text[i:i + 2]
             i += 2
             continue
+        if ch == "\n" and not quote:
+            commands, out = commands + [out], ""
+            i += 1
+            continue
         if ch in "'\"" and quote in ("", ch):
             quote = "" if quote else ch
         out += ch
         i += 1
-    return shlex.split(out, comments=True)
+    return [words for words in (shlex.split(c, comments=True) for c in commands + [out]) if words]
 
 
 def check_a_command_copied_out_of_the_pdf_pastes_as_the_same_command():
