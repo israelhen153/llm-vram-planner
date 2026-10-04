@@ -333,6 +333,28 @@ PY_FP8_METHODS_TAIL = '               "mxfp8", "modelopt_mxfp8")\n'
 PY_QUANT_NVIDIA_TAIL = '               "nvfp4_per_token", "mxfp8", "gguf"),\n'
 PY_QUANT_AMD_TAIL = '            "gguf"),\n'
 
+# ---- fix/fp8-default (engine_r27_fp8_default.py): the default precision follows the card,
+# and a stand-in path names the pre-quantized checkpoint on a preset's own repo ----
+JS_R27_DEFAULT_OPTIONS = '        <option value="1" selected data-q="fp8">FP8 (1.0 B/param)</option>\n        <option value="0.5" data-q="awq">AWQ 4-bit (0.50 B/param)</option>\n'
+JS_R27_RENDER_CALL = '  const cmd = buildVllmCommand(state, computed, modelPath, !!preset);\n'
+JS_R27_STAND_IN = '  const standIn = fromPreset ? prequantizedStandIn(state.quantMethod, baseRepo) : null;\n'
+JS_R27_NOTE = '  if (standIn) cmd = `${standIn.note}\\n` + cmd;\n'
+JS_R27_TOKENIZER = "  if (standIn && state.quantMethod === 'gguf') cmd += `    --tokenizer ${baseRepo} \\\\\\n`;\n"
+JS_R27_PATH = "  const path = quantMethod === 'gguf' ? `/opt/models/${name}.gguf` : `/opt/models/${name}-${method}`;\n"
+JS_R27_REPORT_CMD = "  report += `\\n## vLLM command\\n\\`\\`\\`\\n${emitted ? emitted.textContent : ''}\\n\\`\\`\\`\\n`;\n"
+PY_R27_PREC_ARG = '    parser.add_argument("--prec", default=None, choices=list(PRECISIONS),\n'
+PY_R27_MENU_DEFAULT = '    default_label = "BF16" if default_precision(gpu) == "bf16" else "FP8"\n'
+PY_R27_DEFAULT_RULE = '    return "bf16" if fp8_weights_blocked(gpu) else "fp8"\n'
+PY_R27_CLI_FLAG = '            "hf_model": preset["hf"], "model_name": preset["name"], "model_from_preset": True,\n'
+PY_R27_JSON_FLAG = '            "model_from_preset": "hf_model" not in raw,\n'
+PY_R27_JSON_OWN = '    cfg["model_from_preset"] = False\n'
+PY_R27_MENU_FLAG = '        "model_from_preset": choice.lower() != "custom",\n'
+PY_R27_STAND_IN = '    stand_in = prequantized_stand_in(cfg.get("quant"), base_repo) if cfg.get("model_from_preset") else None\n'
+PY_R27_NOTE = '    if stand_in:\n        parts.insert(0, stand_in[1])\n'
+PY_R27_TOKENIZER = '    if stand_in and cfg.get("quant") == "gguf":\n        parts.append(f"    --tokenizer {shlex.quote(base_repo)} \\\\")\n'
+PY_R27_PATH = '    path = f"/opt/models/{name}.gguf" if quant == "gguf" else f"/opt/models/{name}-{method}"\n'
+PY_R27_PDF_LINES = '        for line in cmd.split("\\n"):\n            story.append(Paragraph(line, self.styles["CmdCode"]))\n'
+
 REPORT_PY = "generate_report.py"
 SYNC_PY = "tools/sync_data.py"
 PRICE_PY = "tools/price_check.py"
