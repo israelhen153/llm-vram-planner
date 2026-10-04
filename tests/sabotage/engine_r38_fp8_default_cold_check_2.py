@@ -19,14 +19,17 @@ into bash with `docker` and `vllm` stubbed:
     the FP8 reason (`bpp == 1` stands for FP8 in both gates), while the same config on an
     H100 plans GGUF at one byte.
 
-Sabotages that SURVIVED the suite at cab6341 (test gaps):
+Run at cab6341 (33da351 carries the driver): 40 caught, 1 survived.
 
-  * E2  the `''` a run of spaces in a quoted path gets at the break (`_word_atoms`) dropped,
-        so the PDF collapses the run — the paste test reads reportlab's `p.text`, the
-        source string, not what the PDF prints, so it cannot see a collapse the PDF makes.
+SURVIVED (a test gap):
 
-Caught (the rest): the page's markup starting on AWQ or BF16; the fallback dropped, landing
-on AWQ, never given back, forgotten by choosePrecision(), or recalculate() without
+  * E7  the escape dropped from command_paragraphs(), so reportlab's Paragraph reads the
+        command as markup. The paste test's odd paths carry `&` followed by a space, which
+        the parser tolerates, and no `<`, `>` or `&amp;`: a path such as
+        `/opt/models/<org>/m` is what the escape exists for, and no test supplies one.
+
+Caught (the other forty): the page's markup starting on AWQ or BF16; the fallback dropped,
+landing on AWQ, never given back, forgotten by choosePrecision(), or recalculate() without
 syncPrecision(); a link's refused FP8 left out of the notice, given no reason, or never
 restored; the command box printing FP8 on a blocked card (page only, and both builders);
 --prec's default FP8 or BF16 everywhere, AWQ where blocked, fixed by argparse, an explicit
@@ -34,9 +37,11 @@ fp8 quietly planned as the default; the menu's default pinned to option 1 or 2, 
 a blocked card; the stand-in in both engines at once — GGUF out of the set, a user's path
 replaced, --tokenizer dropped, the path relative or holding a space, the line after the
 command or respelled; the PDF skipping comment lines; the menu, the JSON path and the page
-mis-flagging the preset's repo; and the PDF's breaks — no wrapping, a single-quoted part
-broken open, a comment's tail without #, a between-words break without ` \\`, the column
-measured without the frame's padding, the escape dropped, an in-word break without `\\`.
+mis-flagging the preset's repo; and the PDF's breaks — no wrapping, a run of spaces in
+quotes left to collapse (reportlab's Paragraph cleans its text as it is built, so the paste
+test does see this), a single-quoted part broken open, a comment's tail without #, a
+between-words break without ` \\`, the column measured without the frame's padding, an
+in-word break without `\\`. Every catch's first failing test is a real one, none a golden.
 """
 import os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
