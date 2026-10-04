@@ -54,13 +54,17 @@ urlopen = urllib.request.urlopen   # tests answer in its place
 # The contracts a vLLM release decides, by the names the engines give them. Where each
 # lives is found at run time in both engines; one found in neither is an error, because
 # a notice that quietly drops a contract sends its reader past it. The ROCm table's
-# `checked` date is found inside that table, in contracts() below.
+# `checked` date is found inside that table, in contracts() below. The FP8 refusal is
+# the rule itself, which each engine mirrors under its own name and a vLLM upgrade edits
+# (which cards load FP8 weights, and the message that says so), not the gate that calls
+# it, refuse_fp8_where_vllm_cannot, which holds no version.
 CONTRACTS = [
     ("`VLLM_QUANTIZATIONS`", "the quantization names each vendor's vLLM accepts",
      r"(?:const\s+)?VLLM_QUANTIZATIONS\s*="),
     ("`FP8_METHODS`", "the methods vLLM loads as FP8", r"(?:const\s+)?FP8_METHODS\s*="),
     ("`GGUF_GUIDANCE`", "what the planner says vLLM needs to serve GGUF", r"(?:const\s+)?GGUF_GUIDANCE\s*="),
-    ("the FP8 refusal", "no command where vLLM cannot run FP8 weights", r"def refuse_fp8_where_vllm_cannot\("),
+    ("the FP8 refusal", "where vLLM cannot run FP8 weights, and the message that says so",
+     r"(?:def\s+fp8_weights_blocked|function\s+fp8WeightsBlocked)\("),
 ]
 CHECKED_KEY = r"\s*[\"']checked[\"']\s*:"
 

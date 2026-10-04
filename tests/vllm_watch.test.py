@@ -523,39 +523,40 @@ test("the files to re-check are found by searching the tree, not listed",
      check_the_files_are_found_by_search)
 
 
-# A contract, so it is a literal: what each contract is called in the notice, and the
-# text its line must carry where the watch says it lives.
-CONTRACT_LINES = {"`VLLM_QUANTIZATIONS`": "VLLM_QUANTIZATIONS", "`FP8_METHODS`": "FP8_METHODS",
-                  "the ROCm table's `checked`": "checked", "`GGUF_GUIDANCE`": "GGUF_GUIDANCE",
-                  "the FP8 refusal": "def refuse_fp8_where_vllm_cannot("}
-# And in which engines each lives, written out from the engines as they are and never
-# from the patterns the watch searches by: a watch that searched one engine for a
-# contract both define would still find it, and send its reader to one copy. Today
-# index.html defines neither VLLM_QUANTIZATIONS nor FP8_METHODS, and has no such def.
-CONTRACT_ENGINES = {"`VLLM_QUANTIZATIONS`": {"generate_report.py"}, "`FP8_METHODS`": {"generate_report.py"},
-                    "the ROCm table's `checked`": {"index.html", "generate_report.py"},
-                    "`GGUF_GUIDANCE`": {"index.html", "generate_report.py"},
-                    "the FP8 refusal": {"generate_report.py"}}
+# A contract, so it is a literal: what each contract is called in the notice, the engines
+# that define it, and the text its line must carry in each. Written out from the engines
+# as they are and never from the patterns the watch searches by: a watch that searched
+# one engine for a contract both define would still find it, and send its reader to one
+# copy. index.html defines neither VLLM_QUANTIZATIONS nor FP8_METHODS. The FP8 refusal
+# is the rule each engine mirrors under its own name, the lines a vLLM upgrade edits.
+CONTRACT_SITES = {
+    "`VLLM_QUANTIZATIONS`": {"generate_report.py": "VLLM_QUANTIZATIONS"},
+    "`FP8_METHODS`": {"generate_report.py": "FP8_METHODS"},
+    "the ROCm table's `checked`": {"index.html": "checked", "generate_report.py": "checked"},
+    "`GGUF_GUIDANCE`": {"index.html": "GGUF_GUIDANCE", "generate_report.py": "GGUF_GUIDANCE"},
+    "the FP8 refusal": {"index.html": "function fp8WeightsBlocked(", "generate_report.py": "def fp8_weights_blocked("},
+}
 
 
 def check_each_contract_is_found_where_it_lives():
     """Each contract, at a file:line that carries it, and in exactly the engines that
-    define it, which is both for GGUF_GUIDANCE and the `checked` date of the ROCm table
-    and generate_report.py alone for the rest; lines that move when the engines grow; a
-    contract that has gone refused; and every site in the notice main() writes."""
+    define it: both for GGUF_GUIDANCE, the `checked` date of the ROCm table and the FP8
+    refusal, and generate_report.py alone for the other two; lines that move when the
+    engines grow; a contract that has gone refused; and every site in the notice
+    main() writes."""
     def lines_of(root, engine):
         with open(os.path.join(root, engine), encoding="utf-8") as fh:
             return fh.read().split("\n")
     where = vw.contracts()
-    assert [name for name, _, _ in where] == list(CONTRACT_LINES), [name for name, _, _ in where]
+    assert [name for name, _, _ in where] == list(CONTRACT_SITES), [name for name, _, _ in where]
     for name, _, sites in where:
         assert sites, f"{name} was found nowhere"
         for engine, n in sites:
-            assert CONTRACT_LINES[name] in lines_of(ROOT, engine)[n - 1], f"{name} is not at {engine}:{n}"
+            text = CONTRACT_SITES[name].get(engine)
+            assert text and text in lines_of(ROOT, engine)[n - 1], f"{name} is not at {engine}:{n}"
     sites = dict((name, s) for name, _, s in where)
-    assert list(CONTRACT_ENGINES) == list(CONTRACT_LINES), "the two literals name different contracts"
-    wrong = {name: (sorted({e for e, _ in sites[name]}), sorted(want)) for name, want in CONTRACT_ENGINES.items()
-             if {e for e, _ in sites[name]} != want}
+    wrong = {name: (sorted({e for e, _ in sites[name]}), sorted(want)) for name, want in CONTRACT_SITES.items()
+             if {e for e, _ in sites[name]} != set(want)}
     assert not wrong, f"contract: (the engines it was found in, the engines that define it): {wrong}"
     grown =tree(lambda engine, text: "\n" * 5 + text)
     moved = vw.contracts(grown)
