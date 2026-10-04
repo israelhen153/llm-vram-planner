@@ -10,9 +10,15 @@ and the synthetic dual-GCD board, 2 to 9 devices and each power of two up to the
 slider's maximum, a dense and an MoE preset, and NVLink asked for and not.
 
 Each sabotage puts the figure back: as it was; gated on one axis the sweep varies
-(a dual-GCD row, PCIe, more than one NVLink domain); under another name; or on a
+(a dual-GCD row, PCIe, more than one NVLink domain); under another name; on a
 surface it never had (the copied report, a comparison card, a strategy badge, the
-PDF). Each must be caught by those tests, not only by a golden.
+PDF); or reworded past every word those tests' rules know. Each must be caught by
+those tests, not only by a golden.
+
+The reworded ones are the cold check's P7, which the page golden alone caught, and
+two neighbours. They are held by what the figure is rather than what it is called:
+nothing on the device panel but memory may move with the layer count, and the
+condensed panel shows only the tiles a literal list names.
 """
 import os, sys
 sys.dont_write_bytecode = True   # see the note in harness.py
@@ -36,6 +42,10 @@ COMPARE_MAX_CTX = ('    html += `<div class="row"><span class="label">Max ctx (1
 BADGE_FP8_KV = ("  if (state.kvBytesPerValue < 2) html += '<span class=\"badge\" style=\"background:"
                 "var(--success-bg);color:var(--success-text)\">FP8 KV cache</span>';\n")
 PDF_LAYERS = '            ["Layers", str(cfg["layers"])],\n'
+# The condensed panel's "Parallelism" tile, up to the end of its value.
+PARALLELISM = ("<span style=\"color:var(--text-muted)\">Parallelism</span><br><b>TP=${tp}"
+               "${dp > 1 ? ' × DP=' + dp : ''}</b>")
+PER_DEVICE = "${Math.ceil(state.layers / computed.deviceCount)}"
 
 
 def tile(label="Layers per device", gate=""):
@@ -63,6 +73,16 @@ S = {
     # ---- under another name ----
     "T6 the tile is back, renamed \"Layer split\"": [
         (PAGE, PANEL_NEXT, tile(label="Layer split") + PANEL_NEXT, 1)],
+    # ---- reworded past every word the rules know ----
+    "T7 (the cold check's P7) the tile is back as \"Transformer blocks\", reading \"each ~N\"": [
+        (PAGE, PANEL_NEXT,
+         '    html += `<div style="font-size:12px"><span style="color:var(--text-muted)">Transformer '
+         'blocks</span><br><b>each ~' + PER_DEVICE + '</b></div>`;\n' + PANEL_NEXT, 1)],
+    "T8 no new tile: the figure sits in the Parallelism tile's value as \"~N blocks each\"": [
+        (PAGE, PARALLELISM, PARALLELISM + " · ~" + PER_DEVICE + " blocks each", 1)],
+    "T9 each card's range is back as \"blocks <a>–<b>\"": [
+        (PAGE, CARD_DETAIL, CARD_DETAIL.replace(
+            "%)</p></div>", "%)" + CARD_RANGE.replace("' · L'", "' · blocks '") + "</p></div>"), 1)],
     # ---- on a surface it never had ----
     "M1 the figure moves into the copied report": [
         (PAGE, REPORT_LAYERS, REPORT_LAYERS.replace(
