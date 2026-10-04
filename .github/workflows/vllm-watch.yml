@@ -1,0 +1,40 @@
+# Notice when vLLM ships a final release newer than the one the planner pins — see
+# tools/vllm_watch.py.
+#
+# The planner pins vLLM's ROCm image at one release, and what it says about that
+# release (the quantization names vLLM accepts, its FP8 methods, the FP8 refusal, GGUF,
+# the ROCm lines and the date they were checked) goes stale the week vLLM ships again.
+# Once a week this asks PyPI, and when a final release is newer than the pin it opens
+# one issue, or adds to the one open, naming what to re-check. It changes nothing.
+#
+# It fails, and shows red, whenever it cannot read PyPI's answer or the pin: a watch
+# that reads nothing must never pass for a quiet week. It runs off the hour, where
+# GitHub delays and drops scheduled runs, and away from the price job (Monday 06:17)
+# and its watchdog (Tuesday 07:43). tests/vllm_watch.test.py pins this file whole.
+name: vLLM release watch
+
+on:
+  schedule:
+    - cron: "29 5 * * 3" # Wednesday 05:29 UTC
+  workflow_dispatch: {} # manual run, e.g. the day vLLM announces a release
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # to check out the engines and search the tree for the pin
+      issues: write # to open, or add to, the issue it reports on
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Compare vLLM's releases with the pinned one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/vllm_watch.py --repo "$GITHUB_REPOSITORY"
